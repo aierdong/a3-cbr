@@ -37,3 +37,9 @@ Adhere to a documentation-centric workflow to ensure consistency across the mono
 - `kiro-review`: Adversarial review for tasks.
 - `kiro-debug`: Root-cause-first debugging.
 - `kiro-verify-completion`: Fresh-evidence gate before success claims.
+
+## Python Readability Execution Guard
+- For backend Python implementation, run readability checks before claiming completion:
+  - `ruff check backend`
+  - `python scripts/readability_check.py --path backend --max-lines 100`
+- CI integration is optional and not required by default at this stage.

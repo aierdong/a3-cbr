@@ -6,7 +6,7 @@ A3 案例通常包含较长的自然语言描述、根因分析和解决步骤�
 
 ## Current State
 
-`docs/mvp-product.md` 明确 LLM 用于摘要、结构化提取和推荐结果生成，但不承担主检索职责。当前尚未定义 LLM 的编排边界、结构化输出约束和失败处理策略。
+`docs/product-overview.md` 定义了 A3+CBR 的产品主线；`docs/mvp-product.md` 在 MVP 阶段补充 LLM 用于摘要、结构化提取和推荐结果生成，但不承担主检索职责。当前尚未定义 LLM 的编排边界、结构化输出约束和失败处理策略。
 
 ## Desired Outcome
 

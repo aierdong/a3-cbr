@@ -2,19 +2,19 @@
 
 ## Problem
 
-门店和督导需要按标准 A3 流程记录经营辅导问题。当前仓库还没有可落地的数据模型、API 和页面契约。缺少这套结构化案例底座，后续的 LLM 增强、向量索引、CBR 推荐和反馈流程都难以稳定落地。
+门店和督导需要按标准 A3 流程记录经营辅导问题。现在仓库里还没有可直接落地的数据模型、API 和页面契约。没有这套结构化案例底座，后续 LLM 增强、向量索引、CBR 推荐和反馈流程都很难稳定推进。
 
 ## Current State
 
-`docs/product-overview.md` 已定义 A3 标准步骤和知识沉淀目标，`docs/mvp-product.md` 已明确案例创建、编辑、查询以及结构化字段要求。仓库目前没有应用代码和既有规格，第一步需要先补齐案例域基础契约。
+`docs/product-overview.md` 已定义 A3 标准步骤和知识沉淀目标；`docs/mvp-product.md` 仅作为 MVP 交付边界补充。当前仓库还没有应用代码和可复用规格，第一步要先补齐案例域基础契约。
 
 ## Desired Outcome
 
-系统能够创建、编辑、查看和查询 A3 案例，并用结构化字段保存问题、门店/品牌、问题类型、上下文、根因、解决步骤、效果、标签和创建时间。案例数据要作为后续 AI 增强、向量索引、检索推荐和前端页面的统一基础。
+系统需要支持创建、编辑、查看和查询 A3 案例，并用结构化字段保存问题、门店/品牌、问题类型、上下文、根因、解决步骤、效果和创建时间。案例数据将作为后续 AI 增强、向量索引、检索推荐和前端页面的统一底座。
 
 ## Approach
 
-先定义独立的 A3 案例管理规格，聚焦数据模型、字段校验、状态、基础 CRUD API 和列表查询能力。本规格不处理 LLM、embedding、CBR 或反馈逻辑，只负责提供稳定的案例数据边界。
+先定义独立的 A3 案例管理规格，聚焦数据模型、字段校验、状态、基础 CRUD API 和列表查询。本规格不处理 LLM、embedding、Reranker、CBR 或反馈逻辑，只提供稳定的案例数据边界。
 
 ## Scope
 
@@ -35,7 +35,7 @@
 
 ## Upstream / Downstream
 
-- **Upstream**: `docs/product-overview.md`、`docs/mvp-product.md`。
+- **Upstream**: `docs/product-overview.md`（默认权威入口）；`docs/mvp-product.md`（仅在 MVP 范围裁剪时补充引用）。
 - **Downstream**: `llm-case-enrichment`、`case-vector-indexing`、`cbr-retrieval-recommendation`、`recommendation-feedback`、`mvp-admin-frontend`。
 
 ## Existing Spec Touchpoints
@@ -45,4 +45,4 @@
 
 ## Constraints
 
-案例模型要同时支持结构化过滤和语义检索输入。字段命名、状态和标识需要保持稳定，避免后续规格反复重写基础契约。
+案例模型要同时支持结构化过滤和语义检索输入。字段命名、状态和标识必须保持稳定，避免后续规格反复改写基础契约。

@@ -6,7 +6,7 @@ MVP 需要一个可操作的后台入口，来验证案例录入、检索推荐�
 
 ## Current State
 
-`docs/mvp-product.md` 要求提供基础后台管理页面，前端技术栈为 Vue。当前仓库还没有前端应用、页面路由、表单和 API 对接约定。
+`docs/product-overview.md` 是产品权威入口；`docs/mvp-product.md` 在当前阶段要求提供基础后台管理页面，前端技术栈为 Vue。当前仓库还没有前端应用、页面路由、表单和 API 对接约定。
 
 ## Desired Outcome
 
