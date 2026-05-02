@@ -231,7 +231,7 @@
 
 **4. CBR 实现技术栈**
 
-- **CBRkit（Python）  +  pgvector  +  BGE_M3 + Reranker**
+- **案例推理引擎（Python）  +  pgvector  +  BGE_M3 + Reranker**
 - pgvector 支持 ANN 近似检索，性能良好，百万级数据支撑
 - LLM：DeepSeek（OpenAI兼容即可，具体选型试情形而定）
 

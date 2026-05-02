@@ -54,6 +54,7 @@
 - 下游规格需要新增过滤字段或改变案例可用性判断。
 - 后端项目结构或运行配置发生会影响下游集成的变化。
 - `OutcomeResult`、`ProblemType`、`CaseStatus` 等受控枚举集合发生变化。
+- `CaseDetailResponse` 的对外 JSON 属性、必填性或语义发生破坏性变更时，须同步修订 `docs/contract-a3-case-detail-for-enrichment.md`（及其他引用该详情的下游契约文档），以便 `llm-case-enrichment` 等消费者递增 `case_contract_version` 并回归。
 
 ## Architecture
 
@@ -452,8 +453,10 @@ erDiagram
 | ---------- | ---------- | ------------ |
 | `draft`    | `active`   | 允许           |
 | `active`   | `archived` | 允许           |
-| `draft`    | `archived` | 不允许          |
+| `draft`    | `archived` | 不允许（见下方说明）    |
 | `archived` | 任意         | 不允许（禁止回滚/解档） |
+
+**`draft → archived` 禁止的业务理由**: `draft` 表示案例尚未经过完整业务处理流程（文本摘要、结构化提取、向量化等下游步骤）。未走完业务处理的案例不具备沉淀为知识资产的条件，直接归档没有业务意义；必须先进入 `active` 完成业务处理后，方可归档。
 
 
 更新接口如请求修改 `status`：
@@ -545,6 +548,8 @@ erDiagram
 - Includes all base fields.
 - Includes joined store profile fields from `StoreInfo`.
 - Excludes embedding, summary, recommendation reason, similarity score and feedback data.
+- **`case_contract_version`**（string，详情响应必填）：服务端根据应用配置或构建常量写入的**只读**契约版本标识，与 `docs/contract-a3-case-detail-for-enrichment.md` §6 的版本策略一致；**不在** `CreateCaseRequest` / `UpdateCaseRequest` 中接受客户端传入。破坏性变更详情形状时须同步递增该值并协调下游 `llm-case-enrichment` 期望配置。
+- **下游字段级契约**：`llm-case-enrichment` 的 `CaseSnapshotProvider` 所依赖的详情 JSON 最小稳定字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
 
 **CaseListItem**
 

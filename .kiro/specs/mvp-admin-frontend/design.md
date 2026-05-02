@@ -265,6 +265,12 @@ sequenceDiagram
 
 ### API Integration Layer
 
+#### 环境与认证（MVP）
+
+- **全匿名**：不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header（若后续产品规格要求认证，须单独立项并修订本设计）。
+- **仅 dev 代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求，不把「浏览器直连跨域后端」作为 MVP 默认路径。
+- **配置**：代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源；生产与预发的网关、TLS、CORS 不在本 MVP 交付范围内，若脱离 dev 代理再单独约定。
+
 #### ApiClient
 
 | Field | Detail |
@@ -273,6 +279,7 @@ sequenceDiagram
 | Requirements | 1.4, 6.1, 6.2, 6.4 |
 
 **Responsibilities & Constraints**
+- 遵循上文「环境与认证（MVP）」：匿名、开发代理下的 base URL 与路径约定。
 - 统一设置 API base URL、JSON headers、超时或取消策略。
 - 将字段级错误、未找到、冲突、降级成功和系统错误映射为前端可处理结构。
 - 错误对象只包含稳定 `code`、用户可读 `message`、可选 `fields` 和 HTTP status，不保存完整敏感正文。

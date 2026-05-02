@@ -23,6 +23,9 @@
 1.3 When 案例基础内容在上次增强后发生变化, the LLM 案例增强服务 shall 能识别既有派生结果已过期并允许重新生成。
 1.4 The LLM 案例增强服务 shall 不要求案例创建或编辑流程等待 LLM 增强完成。
 1.5 Where 案例状态或字段语义发生上游变更, the LLM 案例增强服务 shall 要求重新校验输入映射后再继续处理。
+1.6 When 受理案例 LLM 增强请求, the LLM 案例增强服务 shall 仅从 `a3-case-management` 的 `CaseDetailResponse` 读取 `case_contract_version` 并与本服务配置的期望版本比对；**不得**要求终端用户或前端客户端在请求中携带契约版本号；并须已配置非空的 **`mapping_version`**（标识 `CaseInputSnapshot` 映射规则版本）。
+1.7 If 案例详情缺失 `case_contract_version`、或其值与期望不一致、`mapping_version` 未配置，或契约就绪校验未完成, then the LLM 案例增强服务 shall **fail-closed**（不调用外部 LLM），并返回稳定错误码 **`CASE_INPUT_CONTRACT_MISMATCH`** 及调用方可理解的错误说明。
+1.8 When 创建 `CaseEnrichmentRun`, the LLM 案例增强服务 shall 持久化 **`input_contract_version`**（本次快照所依赖的上游详情中的 `case_contract_version` 值）与 **`mapping_version`**（本次所用的本地映射版本），供审计与问题回溯。
 
 ### Requirement 2: 问题摘要与方案摘要生成
 
@@ -56,9 +59,11 @@
 
 4.1 When LLM 返回增强结果, the LLM 案例增强服务 shall 按预定义 schema 校验字段、类型、必填项、枚举值和长度限制。
 4.2 If LLM 输出无法解析或 schema 校验失败, then the LLM 案例增强服务 shall 不发布该结果，并记录失败原因、失败阶段和可重试状态。
-4.3 When 增强结果通过校验, the LLM 案例增强服务 shall 将其标记为可供下游消费的派生结果。
-4.4 While 派生结果处于生成中、校验失败、待审核或已过期状态, the LLM 案例增强服务 shall 对下游返回明确状态，避免被误用为已发布内容。
+4.3 When 增强结果通过校验, the LLM 案例增强服务 shall 默认将其标记为 `pending_review`，不得自动发布为可供下游消费的 `published` 结果。
+4.4 When 人工审核者确认或覆盖增强结果, the LLM 案例增强服务 shall 将审核后的派生结果标记为 `published`，并仅允许该状态被向量索引、推荐展示和后台页面作为正式 AI 派生内容消费。
 4.5 The LLM 案例增强服务 shall 保留每次生成所依据的案例更新时间和输出版本，支持审计和重新生成判断。
+4.6 While 派生结果处于生成中、校验失败、待审核或已过期状态, the LLM 案例增强服务 shall 对下游返回明确状态，避免被误用为已发布内容。
+4.7 When 同一案例已存在 `pending_review` 派生结果且再次触发新的增强运行并通过校验准备写入新派生结果, the LLM 案例增强服务 shall 仅在写入新结果之前的同一持久化原子步骤内将既有 `pending_review` 记录标为 `stale`，而不得在受理运行或校验失败路径上作废旧待审核；并保证同一 `case_id` 至多一条 `pending_review`，须借助事务与并发控制避免落库时出现多条待审核并存。
 
 ### Requirement 5: 推荐理由文案生成
 

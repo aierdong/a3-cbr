@@ -27,7 +27,7 @@ MVP 核心目标包括:
 
 ## 3. 技术栈
 
-- **CBRKit**：案例推理编排、检索与重排
+- **案例推理引擎**：案例推理编排、检索与重排
 - **PostgreSQL + Pgvector**：存储案例、向量和反馈
 - **Embedding 模型**：采用 BGE-M3（模型id: bge-large-zh）
 - **Reranker 模型**: 采用 Qwen3-Reranker-8B （模型id: qwen3-reranker-8b）
@@ -52,7 +52,7 @@ MVP 核心目标包括:
 2. 系统对输入做标准化
 3. 生成查询向量
 4. 在 Pgvector 中做 Top-K 检索
-5. CBRKit 对召回结果进行重排与组装
+5. 案例推理引擎对召回结果进行重排与组装
 6. 返回相似案例与推荐步骤 
 
 ## 4.3 反馈流程
@@ -108,9 +108,9 @@ A3 案例应至少包含以下字段：
 
 ## 7. 系统架构
 
-系统采用“应用层 + 检索层 + 数据层”三层结构
+系统采用”应用层 + 检索层 + 数据层”三层结构
 - 应用层负责页面与 API
-- 检索层由 CBRKit 承担
+- 检索层由案例推理引擎承担
 - 数据层使用 PostgreSQL + Pgvector 保存案例和向量
 - LLM 主要用于文本摘要、结构化提取和推荐结果生成，不承担主检索职责
 
@@ -118,7 +118,7 @@ A3 案例应至少包含以下字段：
 flowchart LR
     U[用户/督导/门店] --> P[前端页面]
     P --> API[后端 API]
-    API --> CBR[CBRKit 推理服务]
+    API --> CBR[案例推理服务]
     CBR --> V[(PostgreSQL + Pgvector)]
     CBR --> LLM[LLM 摘要/解释]
     API --> V

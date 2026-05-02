@@ -1,9 +1,9 @@
 {
   "feature_name": "cbr-retrieval-recommendation",
   "created_at": "2026-04-28T14:24:00+08:00",
-  "updated_at": "2026-04-28T14:24:00+08:00",
+  "updated_at": "2026-05-02T23:45:00+08:00",
   "language": "zh",
-  "phase": "tasks-generated",
+  "phase": "design-validated",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -11,12 +11,23 @@
     },
     "design": {
       "generated": true,
-      "approved": true
+      "approved": true,
+      "validated": true,
+      "validation_date": "2026-05-02T23:59:00+08:00",
+      "validation_notes": "已通过设计审查并完成关键问题修复：(1) 通过 PoC 验证 CBRKit 不适配，改用自实现 ScoreAggregator；(2) 引入 RecommendationRunContext 上下文管理器简化运行记录终态保证；(3) 明确多模型配置隔离实施方案（独立配置类）"
     },
     "tasks": {
       "generated": true,
       "approved": true
     }
   },
-  "ready_for_implementation": true
+  "ready_for_implementation": true,
+  "implementation_prerequisites": [
+    "建立 FastAPI 项目脚手架（backend/app/main.py）",
+    "配置统一配置管理（backend/app/core/config.py）",
+    "实现共享 LLM 客户端（backend/app/common/llm_client.py）",
+    "建立数据库基础设施（backend/app/db/）",
+    "配置统一错误处理（backend/app/core/errors.py）"
+  ]
 }
+

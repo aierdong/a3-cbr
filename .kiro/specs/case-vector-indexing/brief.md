@@ -10,15 +10,15 @@
 
 ## Desired Outcome
 
-案例创建或更新后，系统需稳定生成问题侧 embedding，并将向量与结构化字段一并写入 PostgreSQL + pgvector。当案例发生修改、删除或状态变化时，向量索引需保持一致，以支撑后续 Top-K 问题语义召回。
+案例创建或更新后，由调用方明确触发向量刷新，系统生成问题侧 embedding，并将成功生成的向量与结构化字段一并写入 PostgreSQL + pgvector。当案例发生修改、删除或状态变化时，通过手动刷新或不可检索标记保持向量索引一致，以支撑后续 Top-K 问题语义召回。
 
 ## Approach
 
-本规格单独定义向量索引，覆盖以下内容：问题侧 embedding 输入文本策略、远程 embedding API 适配、向量字段、pgvector 索引、更新/删除一致性保障和错误处理。MVP 阶段优先单库部署，不引入独立向量数据库。
+本规格单独定义向量索引，覆盖以下内容：问题侧 embedding 输入文本策略、远程 embedding API 适配、成功向量字段、pgvector 索引、手动更新/删除一致性保障和错误处理。MVP 阶段只做单库部署，不引入独立向量数据库。
 
 ## Scope
 
-- **In**: 问题侧 embedding 输入文本策略、云端 embedding API 调用、BGE-M3（模型 ID: bge-large-zh）默认适配、云端替代方案评估边界、pgvector 字段和索引、案例问题向量创建/更新/删除、索引状态记录。
+- **In**: 问题侧 embedding 输入文本策略、云端 embedding API 调用、BGE-M3（模型 ID: bge-large-zh）默认适配、云端替代方案评估边界、pgvector 字段和索引、案例问题向量手动创建/更新/移除、索引状态记录。
 - **Out**: CBRKit 重排、推荐理由生成、反馈学习排序、Milvus 等独立向量库、模型本地部署及推理成本优化。
 
 ## Boundary Candidates

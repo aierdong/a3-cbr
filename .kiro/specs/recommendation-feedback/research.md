@@ -6,7 +6,7 @@
 - **Discovery Scope**: Extension
 - **Key Findings**:
   - 上游 `cbr-retrieval-recommendation` 已明确提供 `recommendation_run_id` 和 `recommendation_item_id`，并保存推荐运行与推荐项快照，是反馈关联的唯一稳定锚点。
-  - MVP 产品文档只要求有用/无用、简单评分、是否采纳和查询命中记录，不要求自动调权、复杂看板或反馈学习排序。
+  - 面向一线使用负担，本规格将用户反馈收敛为有用/无用 + 可选备注；评分与采纳不纳入 MVP 采集，不要求自动调权、复杂看板或反馈学习排序。
   - 当前仓库尚无后端代码，设计需要以 planned backend 结构为准，保持 Python + FastAPI + PostgreSQL 的文档契约一致。
 
 ## Research Log
@@ -28,7 +28,7 @@
 - **Context**: 反馈闭环容易扩展为学习排序、运营分析和前端体验，需要收敛 MVP 边界。
 - **Sources Consulted**: `docs/product-overview.md`、`.kiro/steering/roadmap.md`、`brief.md`。
 - **Findings**:
-  - MVP 明确要求基础反馈记录：有用/无用、简单评分、是否采纳、查询文本、命中案例和反馈结果。
+  - MVP 本次收敛后的基础反馈记录：有用/无用、可选备注、查询哈希/摘要、过滤条件、命中案例和反馈结果。
   - Roadmap 将反馈闭环放在推荐之后、前端后台之前，说明反馈依赖推荐结果但不拥有 UI。
   - 复杂学习排序、A/B 实验、行业库审核和质量评分回写均在当前边界外。
 - **Implications**:
@@ -88,7 +88,7 @@
 - **Selected Approach**: 提供反馈明细、运行反馈查询和基础统计 API。
 - **Rationale**: 满足产品验证闭环，同时避免吸收前端 UI 和实验平台职责。
 - **Trade-offs**: 复杂维度分析需后续规格扩展。
-- **Follow-up**: 统计口径保持简单：数量、有用率、平均评分、采纳率。
+- **Follow-up**: 统计口径保持简单：数量、有用率与有用性分布。
 
 ## Risks & Mitigations
 

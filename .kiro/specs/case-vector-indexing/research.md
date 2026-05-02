@@ -23,6 +23,7 @@
   - `a3-case-management` 拥有 `A3Case` 基础实体、`case_id`、状态、过滤字段、`created_at`、`updated_at`，并明确不保存向量、相似度、推荐或反馈字段。
   - `llm-case-enrichment` 拥有 `CaseEnrichmentResult` 和运行状态，发布可消费派生内容，但不生成 embedding，不负责 pgvector，也不决定候选搜索、过滤或排序。
   - 推荐文案接口和推荐排序属于 LLM/CBR 下游边界，本规格仅提供候选向量搜索结果。
+  - 问题侧索引 embedding 的七个输入段落与 `A3Case` / `CaseEnrichmentResult` 字段的一一（含同段多字段）映射已写入 **`design.md`** 中 `EmbeddingInputComposer` 小节 **「问题侧 embedding 输入段落与上游字段映射（案例索引）」**，以实现时可据此实现 Composer 与快照测试。
 - **Implications**:
   - 设计中引入 `CaseIndexSourceProvider`，只读取案例快照和可消费派生结果，不修改上游数据。
   - 向量表通过 `case_id` 关联上游案例，但不反向扩展 `a3_cases` 表。

@@ -3,19 +3,21 @@
 - [ ] 1. 建立 LLM 增强基础设施
 
 - [ ] 1.1 扩展运行配置和错误码
-  - 增加 LLM 供应商、模型、超时、重试次数、生产隐私确认和启用开关配置。
+  - **建立多模型配置隔离基础设施**（作为首个使用 LLM 的规格）：在 `backend/app/core/config.py` 中定义 4 个独立配置类 `EnrichmentLLMConfig`（本规格使用）、`NormalizerLLMConfig`（供 `cbr-retrieval-recommendation` 使用）、`EmbeddingConfig`（供 `case-vector-indexing` 使用）、`RerankerConfig`（供 `cbr-retrieval-recommendation` 使用），每个配置类包含独立的 `provider`、`model_id`、`base_url`、`timeout_ms`、`max_retries`、`privacy_acknowledged` 等字段。
+  - 确保 4 个配置对象在应用启动时独立构造，运行时不可变（immutable），通过依赖注入传递给各自的客户端或服务，禁止共享实例引用。
   - 增加上游契约门控配置：`case_contract_version`、`mapping_version`，并定义不匹配错误码 `CASE_INPUT_CONTRACT_MISMATCH`。
   - 增加 LLM 增强相关错误码，覆盖案例不可增强、输出校验失败、供应商失败和隐私配置缺失。
   - 仅向共享配置和错误映射追加本规格所需配置值与错误码，不拥有 `backend/app/core/config.py`、`backend/app/core/errors.py` 或 `ErrorMapper` 基础实现。
-  - 完成后应用可在配置缺失时 fail closed，并返回稳定错误结构。
-  - _Requirements: 1.2, 1.5, 6.3, 6.4, 6.5_
+  - 完成后应用可在配置缺失时 fail closed，并返回稳定错误结构；4 个模型配置完全独立，修改任一配置不影响其他模型。
+  - _Requirements: 1.2, 1.5, 1.6, 1.7, 6.3, 6.4, 6.5_
 
 - [ ] 1.2 建立派生结果和运行记录迁移
   - 创建案例增强结果、案例增强运行记录和推荐文案运行记录的数据结构。
   - 为运行记录补充 `request_purpose`、`input_contract_version`、`mapping_version` 字段，用于审计与契约追溯。
   - 数据结构通过 `case_id` 关联上游案例，不修改案例基础表，不包含向量或相似度字段；`RecommendationCopyRun` 仅记录 LLM 调用审计、成本和 schema 校验结果，不作为推荐运行、召回或排序持久化记录。
+  - `recommendation_copy_runs` 表索引仅含 `created_at` 和 `status`；若后续需按 `case_id` 追溯推荐文案历史，可为 `candidate_case_ids` JSONB 字段添加 GIN 索引，MVP 阶段暂不启用。
   - 完成后测试数据库可以应用迁移并查询到新增表和索引。
-  - _Requirements: 2.4, 2.5, 4.2, 4.3, 4.4, 4.5, 6.3_
+  - _Requirements: 1.8, 2.4, 2.5, 4.2, 4.3, 4.4, 4.5, 6.3_
 
 - [ ] 1.3 定义 LLM 增强请求响应和状态契约
   - 定义案例增强运行、当前增强状态、人工审核、推荐文案请求响应和错误响应契约。
@@ -28,11 +30,11 @@
 
 - [ ] 2.1 (P) 实现上游案例快照读取
   - 通过上游案例管理能力读取案例标识、基础字段、状态、过滤字段和更新时间。
-  - 增加运行时契约握手检查：上游契约版本与本服务 `case_contract_version`/`mapping_version` 不匹配时直接拒绝运行。
+  - 增加运行时契约握手检查：从上游 **`CaseDetailResponse.case_contract_version`** 读取的值须与本服务配置的期望 `case_contract_version` 一致；`mapping_version` 已配置且每次运行落库。不匹配时直接拒绝运行（fail-closed）。
   - 明确输入状态门控：仅 `active`、`archived` 可进入增强流程，`draft` 请求直接拒绝并返回可识别原因。
   - 将案例正文裁剪为 LLM 任务所需输入，排除向量、推荐分值、反馈和未授权扩展字段。
   - 完成后不存在或不可作为输入的案例会被拒绝，并返回可识别原因。
-  - _Requirements: 1.1, 1.2, 1.5, 6.1_
+  - _Requirements: 1.1, 1.2, 1.5, 1.6, 1.7, 6.1_
   - _Boundary: CaseSnapshotProvider_
 
 - [ ] 2.2 (P) 实现 Prompt 模板和安全约束
@@ -42,12 +44,14 @@
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 5.1, 6.2_
   - _Boundary: PromptCatalog_
 
-- [ ] 2.3 (P) 实现 LLM 客户端适配
+- [ ] 2.3 (P) 实现共享 LLM 客户端基础设施
+  - 在 `backend/app/common/llm_client.py` 中实现共享 `LLMClient` 类，支持配置命名空间（通过构造函数接收 `Union[EnrichmentLLMConfig, NormalizerLLMConfig]` 等配置对象）。
+  - 提供 HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
   - 接入 `deepseek-v4-pro` 或兼容模型配置，统一处理超时、限流、供应商错误和不可解析响应。
   - 记录供应商、模型、`request_purpose`、任务类型、状态和错误类型，不记录完整案例正文。
-  - 完成后 LLM 调用可通过 fake client 或 mock client 在测试中稳定替换。
+  - 完成后 LLM 调用可通过 fake client 或 mock client 在测试中稳定替换；共享客户端可被本规格和 `cbr-retrieval-recommendation` 规格共同使用。
   - _Requirements: 4.2, 6.3, 6.4, 6.5_
-  - _Boundary: LLMClient_
+  - _Boundary: LLMClient (shared infrastructure)_
 
 - [ ] 2.4 (P) 实现 LLM 输出校验
   - 校验摘要、结构化建议、标签建议、来源引用、推荐文案和候选引用是否符合 schema。
@@ -61,15 +65,17 @@
   - 保存案例增强运行的开始、成功、失败、校验失败和可重试状态。
   - 保存 `request_purpose`、`input_contract_version`、`mapping_version`，保证审计与问题追溯可查询。
   - 保存当前派生结果、案例输入更新时间、输出版本、来源引用和审核状态。
+  - 校验通过、写入新 `pending_review` 时：在同一事务（或等价原子边界）内将该 `case_id` 下既有 `pending_review` 标为 `stale` 再写入新派生结果；创建运行记录本身不预先作废旧待审核。
   - 完成后可以按 `case_id` 查询当前可用结果，并按 `run_id` 查询失败原因和重试状态。
-  - _Requirements: 1.3, 2.4, 3.4, 4.2, 4.3, 4.4, 4.5, 6.3_
+  - _Requirements: 1.3, 1.8, 2.4, 3.4, 4.2, 4.3, 4.4, 4.5, 4.7, 6.3_
   - _Boundary: EnrichmentRepository_
 
 - [ ] 2.6 实现案例增强服务编排
   - 编排案例快照读取、Prompt 构造、LLM 调用、输出校验、结果保存和失败记录。
   - 内容不足时返回缺失信息说明，不生成或发布编造摘要。
+  - 新建运行与流水线执行遵循 Req 4.7：仅在校验通过后的持久化步骤内先作废既有 `pending_review` 再写入新结果；失败或未通过校验不得清空旧待审核。
   - 完成后合法案例可以生成问题摘要、方案摘要、结构化字段建议和标签建议，且不修改案例基础字段。
-  - _Requirements: 1.1, 1.3, 1.4, 2.1, 2.2, 2.3, 2.5, 3.1, 3.2, 3.5, 4.3_
+  - _Requirements: 1.1, 1.3, 1.4, 2.1, 2.2, 2.3, 2.5, 3.1, 3.2, 3.5, 4.3, 4.7_
   - _Boundary: EnrichmentService_
   - _Depends: 2.1, 2.2, 2.3, 2.4, 2.5_
 
@@ -84,7 +90,8 @@
 - [ ] 3. 实现推荐文案生成能力
 
 - [ ] 3.1 实现推荐候选文案服务
-  - 接收当前问题、已排序候选案例和候选来源信息，生成推荐理由、参考解决点和注意事项。
+  - 接收当前问题、已排序候选案例和候选来源信息，将所有候选合入同一 prompt 一次性调用 LLM 生成全部候选的推荐理由、参考解决点和注意事项。
+  - 候选数量上限由配置 `max_recommendation_candidates` 指定（默认 10，与 CBR Top-K 对齐），超出时拒绝请求。
   - 保留输入候选顺序和 `case_id` 引用，不新增候选、不过滤候选、不改变相似度或排序。
   - 记录的文案运行仅用于 LLM 调用审计、成本和 schema 校验追踪；推荐运行和推荐项快照仍由 CBR 推荐规格持久化。
   - 完成后每个可解释候选都有一条可追溯文案；信息不足时通过 `missing_information[]` 返回无法生成原因。
@@ -93,7 +100,7 @@
   - _Depends: 2.2, 2.3, 2.4_
 
 - [ ] 3.2 实现推荐文案失败降级响应
-  - 为 LLM 失败、校验失败、候选信息不足和部分候选失败定义响应结构。
+  - 任一候选 LLM 调用失败或校验失败时，整体降级：`status` 标记为 `degraded`，成功项保留文案、失败项填充 `degradation_reason`。
   - 保证下游推荐流程可以继续展示结构化候选信息，而不依赖 LLM 文案成功。
   - 完成后推荐文案接口失败不会产生排序副作用，并能返回稳定降级信息。
   - _Requirements: 5.3, 5.4, 5.5, 6.4_
@@ -104,6 +111,7 @@
 
 - [ ] 4.1 实现案例增强 API
   - 暴露创建增强运行、查询当前增强状态、审核派生结果和重试运行接口。
+  - 健康检查端点 `GET /api/enrichment/health` 返回 `expected_case_contract_version`、`mapping_version` 和 `last_successful_input_contract_version`（最近一次成功运行的上游契约版本，无历史时为 `null`）。
   - 成功响应包含 `run_id`、派生结果状态、输出版本和上游案例更新时间。
   - 完成后客户端可通过 HTTP 触发增强、查看状态、提交人工审核和执行允许的重试。
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 3.4, 4.4, 4.5, 6.4_
@@ -154,7 +162,7 @@
   - _Depends: 2.7_
 
 - [ ] 5.3 编写推荐文案测试
-  - 覆盖完整候选、候选信息不足、LLM 失败、部分失败和输出候选顺序校验。
+  - 覆盖逐候选调用、完整候选成功、单候选 LLM 失败触发整体降级、候选信息不足、超出 `max_recommendation_candidates` 拒绝、输出候选顺序校验。
   - 断言接口不会返回排序变更、相似度变更、过滤结果或新增候选。
   - 完成后推荐文案能力可与 CBR 推荐边界安全集成。
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
@@ -166,7 +174,13 @@
   - 覆盖上游契约版本不匹配时的 fail-closed 行为与 `CASE_INPUT_CONTRACT_MISMATCH` 返回。
   - 覆盖运行记录审计字段（`request_purpose`、`input_contract_version`、`mapping_version`）写入和查询。
   - 覆盖生产隐私配置缺失、供应商超时、限流和日志脱敏。
-  - 完成后 API 层、错误结构、隐私门控和失败降级都有端到端验证。
-  - _Requirements: 1.4, 1.5, 3.4, 4.2, 4.4, 5.5, 6.1, 6.3, 6.4, 6.5_
+  - 覆盖 `wait_for_completion` 行为：`false`（默认）时立即返回 HTTP 202 + `running`；`true` + LLM 超时时返回 HTTP 202 + `running`。
+  - 覆盖 `possibly_outdated` 标志：`published` 结果的 `case_updated_at` 早于案例 `updated_at` 时，GET 状态响应须包含 `possibly_outdated: true`。
+  - **多模型配置隔离验证测试**（作为基础设施建立者的职责）：
+    - 测试用例 1：修改 `EnrichmentLLMConfig.timeout_ms` 为非默认值，验证其他模型配置（normalizer/embedding/reranker）的超时参数未变化。
+    - 测试用例 2：在应用启动后，验证 4 个配置对象是独立实例：`id(app_config.enrichment_llm) != id(app_config.normalizer_llm) != id(app_config.reranker) != id(app_config.embedding)`。
+    - 测试用例 3：验证共享 `LLMClient` 通过构造函数接收配置对象，不从全局状态读取配置（通过依赖注入测试验证）。
+  - 完成后 API 层、错误结构、隐私门控、失败降级和多模型配置隔离都有端到端验证。
+  - _Requirements: 1.3, 1.4, 1.5, 3.4, 4.2, 4.4, 4.6, 5.5, 6.1, 6.3, 6.4, 6.5_
   - _Boundary: EnrichmentRouter, LLMClient, ErrorMapper_
   - _Depends: 4.3_
