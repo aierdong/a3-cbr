@@ -26,6 +26,7 @@ You are a specialized skill for conducting interactive quality review of technic
 
 If steering/spec context is already available from conversation, skip redundant file reads.
 Otherwise, load all necessary context:
+- **MANDATORY**: Read `CLAUDE.md` Design Review Principles section, especially the Issue Filter criteria
 - Read `.kiro/specs/{feature}/spec.json` for language and metadata
 - Read `.kiro/specs/{feature}/requirements.md` for requirements
 - Read `.kiro/specs/{feature}/design.md` for design document
@@ -36,15 +37,23 @@ Otherwise, load all necessary context:
 #### Parallel Research
 
 The following research areas are independent and can be executed in parallel:
-1. **Context & rules loading**: Spec documents, core steering, task-relevant extra steering, relevant local agent skills/playbooks, and `rules/design-review.md` from this skill's directory for review criteria
+1. **Context & rules loading**: `CLAUDE.md` Design Review Principles, spec documents, core steering, task-relevant extra steering, relevant local agent skills/playbooks, and `rules/design-review.md` from this skill's directory for review criteria
 2. **Codebase pattern survey**: Gather existing architecture patterns, naming conventions, and component structure from the codebase to use as reference during review
 
 After all parallel research completes, synthesize findings for review.
 
 ### Step 2: Execute Design Review
 - Reference conversation history: leverage prior requirements discussion and user's stated design intent
+- **Apply Issue Filter from CLAUDE.md**: Before raising any issue, verify it meets at least ONE criterion:
+  1. Does it block core business?
+  2. Would it occur in production with reasonable probability (ignore extremely low probability)?
+  3. Must it be resolved at design phase?
+  4. Is it a logic confusion?
+  5. Is it a critical non-detail issue?
+  - **If ANY answer is "yes", it qualifies as an issue** — otherwise do not include it in the review
 - Follow design-review.md process: Analysis → Critical Issues → Strengths → GO/NO-GO
 - Limit to 3 most important concerns
+- **In review summary, explicitly answer the 5 Issue Filter questions for each identified issue**
 - Engage interactively with user — ask clarifying questions, propose alternatives
 - Use language specified in spec.json for output
 
@@ -53,6 +62,7 @@ After all parallel research completes, synthesize findings for review.
 - Provide specific actionable next steps (see Next Phase below)
 
 ## Important Constraints
+- **Issue Filter Discipline**: Apply CLAUDE.md Issue Filter strictly — each finding must pass at least ONE criterion (blocks core business, occurs in production with reasonable probability, must resolve at design phase, is logic confusion, is critical non-detail). If ANY answer is "yes", raise it as an issue.
 - **Quality assurance, not perfection seeking**: Accept acceptable risk
 - **Critical focus only**: Maximum 3 issues, only those significantly impacting success
 - **Conversation-aware**: Leverage discussion history for requirements context and user intent
@@ -60,9 +70,11 @@ After all parallel research completes, synthesize findings for review.
 - **Balanced assessment**: Recognize both strengths and weaknesses
 - **Actionable feedback**: All suggestions must be implementable
 - **Context Discipline**: Start with core steering and expand only with review-relevant steering or use-case-aligned local agent skills/playbooks
+- **Document Coupling**: Assess whether requirements.md, design.md, tasks.md, research.md need updates — do not target design.md alone
+- **Avoid Over-Defensive Programming**: Do not introduce unnecessary complexity for minor edge cases unless risk is material and likely
 
 ## Tool Guidance
-- **Read first**: Load spec, core steering, relevant local playbooks/agent skills, and rules before review
+- **Read first**: Load CLAUDE.md Design Review Principles, spec, core steering, relevant local playbooks/agent skills, and rules before review
 - **Grep if needed**: Search codebase for pattern validation or integration checks
 - **Interactive**: Engage with user throughout the review process
 

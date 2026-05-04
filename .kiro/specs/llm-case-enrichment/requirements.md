@@ -2,11 +2,11 @@
 
 ## Introduction
 
-`llm-case-enrichment` 为 A3 案例和相似案例推荐结果提供 LLM 增强能力。当前 MVP 已把案例基础数据边界交给 `a3-case-management`，并明确 LLM 只负责摘要、结构化提取、标签建议和推荐文案生成，不承担主检索、向量索引或 CBR 排序职责。本规格稳定 LLM 输出、校验、审核覆盖、失败降级和隐私安全要求，让后续向量索引、CBR 推荐和后台页面可以消费受控的 AI 派生内容。
+`llm-case-enrichment` 为 A3 案例和相似案例推荐结果提供 LLM 增强能力。当前 MVP 已把案例基础数据边界交给 `a3-case-management`，并明确 LLM 只负责摘要、结构化提取、标签建议和推荐文案生成，不承担主检索、向量索引或 CBR 排序职责。本规格稳定 LLM 输出、校验、失败处理和隐私安全要求，让后续向量索引、CBR 推荐和后台页面可以消费受控的 AI 派生内容。
 
 ## Boundary Context
 
-- **In scope**: 基于 A3 案例基础字段生成问题摘要、方案摘要、结构化字段建议、标签建议和推荐理由文案；定义结构化输出约束、校验、派生结果状态、失败记录、重试边界、人工审核覆盖和隐私安全要求。
+- **In scope**: 基于 A3 案例基础字段生成问题摘要、方案摘要、结构化字段建议、标签建议和推荐理由文案；定义结构化输出约束、校验、派生结果状态、失败记录、重试边界和隐私安全要求。
 - **Out of scope**: A3 案例 CRUD、案例基础字段生命周期、embedding 生成、pgvector 索引、reranker Top-K 召回、CBRKit 重排、相似度计算、反馈学习排序、复杂多轮追问、模型微调和本地大模型部署。
 - **Adjacent expectations**: 本规格消费 `a3-case-management` 提供的 `case_id`、基础字段、状态、过滤字段和时间戳；`case-vector-indexing` 可消费已校验的摘要或规范化文本；`cbr-retrieval-recommendation` 可消费推荐文案生成能力，但召回和排序规则不由本规格决定。
 
@@ -20,12 +20,8 @@
 
 1.1 When 用户或下游流程请求对某个案例执行 LLM 增强, the LLM 案例增强服务 shall 只读取 `a3-case-management` 已定义的案例标识、基础字段、状态、过滤字段和更新时间作为输入，且仅允许状态为 `active` 或 `archived` 的案例进入增强流程。
 1.2 If 请求引用的案例不存在、状态为 `draft` 或因其他原因不可作为增强输入, then the LLM 案例增强服务 shall 拒绝处理并返回可识别的失败原因。
-1.3 When 案例基础内容在上次增强后发生变化, the LLM 案例增强服务 shall 能识别既有派生结果已过期并允许重新生成。
+1.3 When 案例基础内容在上次增强后发生变化, the LLM 案例增强服务 shall 能识别既有派生结果已过时并允许重新生成。
 1.4 The LLM 案例增强服务 shall 不要求案例创建或编辑流程等待 LLM 增强完成。
-1.5 Where 案例状态或字段语义发生上游变更, the LLM 案例增强服务 shall 要求重新校验输入映射后再继续处理。
-1.6 When 受理案例 LLM 增强请求, the LLM 案例增强服务 shall 仅从 `a3-case-management` 的 `CaseDetailResponse` 读取 `case_contract_version` 并与本服务配置的期望版本比对；**不得**要求终端用户或前端客户端在请求中携带契约版本号；并须已配置非空的 **`mapping_version`**（标识 `CaseInputSnapshot` 映射规则版本）。
-1.7 If 案例详情缺失 `case_contract_version`、或其值与期望不一致、`mapping_version` 未配置，或契约就绪校验未完成, then the LLM 案例增强服务 shall **fail-closed**（不调用外部 LLM），并返回稳定错误码 **`CASE_INPUT_CONTRACT_MISMATCH`** 及调用方可理解的错误说明。
-1.8 When 创建 `CaseEnrichmentRun`, the LLM 案例增强服务 shall 持久化 **`input_contract_version`**（本次快照所依赖的上游详情中的 `case_contract_version` 值）与 **`mapping_version`**（本次所用的本地映射版本），供审计与问题回溯。
 
 ### Requirement 2: 问题摘要与方案摘要生成
 
@@ -36,7 +32,7 @@
 2.1 When 案例包含可用的问题描述、场景上下文和根因分析, the LLM 案例增强服务 shall 生成问题摘要，概括问题现象、发生场景和主要根因。
 2.2 When 案例包含解决步骤和效果结果, the LLM 案例增强服务 shall 生成方案摘要，概括关键处理步骤和可观察改善结果。
 2.3 If 案例内容不足以生成可信摘要, then the LLM 案例增强服务 shall 返回缺失信息说明而不是编造摘要。
-2.4 The LLM 案例增强服务 shall 保留摘要与原始案例内容的来源关联，便于人工审核和后续追溯。
+2.4 The LLM 案例增强服务 shall 保留摘要与原始案例内容的来源关联，便于后续追溯。
 2.5 The LLM 案例增强服务 shall 将 AI 摘要作为派生内容保存，不直接替换用户录入的原始案例字段。
 
 ### Requirement 3: 结构化提取与标签建议
@@ -48,8 +44,7 @@
 3.1 When 案例内容可分析, the LLM 案例增强服务 shall 输出问题类型建议、根因分类建议、适用场景建议和标签建议。
 3.2 The LLM 案例增强服务 shall 区分已由案例管理系统提供的基础字段和 LLM 推断出的建议字段。
 3.3 If LLM 输出的标签列表为空、重复、包含无效标签、越界或不符合标签规则, then the LLM 案例增强服务 shall 按规则拒绝或规范化标签，并在输出里说明处理结果。
-3.4 When 人工审核者修改或确认建议结果, the LLM 案例增强服务 shall 保留审核后的派生内容和审核状态。
-3.5 The LLM 案例增强服务 shall 不把结构化建议反写为案例基础字段，除非后续明确的人工编辑流程在案例管理边界内完成。
+3.4 The LLM 案例增强服务 shall 不把结构化建议反写为案例基础字段，除非后续明确的人工编辑流程在案例管理边界内完成。
 
 ### Requirement 4: 结构化输出校验与派生结果状态
 
@@ -59,11 +54,12 @@
 
 4.1 When LLM 返回增强结果, the LLM 案例增强服务 shall 按预定义 schema 校验字段、类型、必填项、枚举值和长度限制。
 4.2 If LLM 输出无法解析或 schema 校验失败, then the LLM 案例增强服务 shall 不发布该结果，并记录失败原因、失败阶段和可重试状态。
-4.3 When 增强结果通过校验, the LLM 案例增强服务 shall 默认将其标记为 `pending_review`，不得自动发布为可供下游消费的 `published` 结果。
-4.4 When 人工审核者确认或覆盖增强结果, the LLM 案例增强服务 shall 将审核后的派生结果标记为 `published`，并仅允许该状态被向量索引、推荐展示和后台页面作为正式 AI 派生内容消费。
-4.5 The LLM 案例增强服务 shall 保留每次生成所依据的案例更新时间和输出版本，支持审计和重新生成判断。
-4.6 While 派生结果处于生成中、校验失败、待审核或已过期状态, the LLM 案例增强服务 shall 对下游返回明确状态，避免被误用为已发布内容。
-4.7 When 同一案例已存在 `pending_review` 派生结果且再次触发新的增强运行并通过校验准备写入新派生结果, the LLM 案例增强服务 shall 仅在写入新结果之前的同一持久化原子步骤内将既有 `pending_review` 记录标为 `stale`，而不得在受理运行或校验失败路径上作废旧待审核；并保证同一 `case_id` 至多一条 `pending_review`，须借助事务与并发控制避免落库时出现多条待审核并存。
+4.3 When 增强结果通过校验, the LLM 案例增强服务 shall 将其标记为 `valid`，可供下游向量索引、推荐展示和后台页面消费。
+4.4 The LLM 案例增强服务 shall 保留每次生成所依据的案例更新时间和输出版本，支持审计和重新生成判断。
+4.5 While 派生结果处于生成中或校验失败状态, the LLM 案例增强服务 shall 对下游返回明确状态，避免被误用为有效内容。
+4.6 When 同一案例再次触发新的增强运行并通过校验准备写入新派生结果, the LLM 案例增强服务 shall 在写入新结果之前的同一持久化事务内删除该 `case_id` 的旧派生结果，保证同一 `case_id` 只有一条有效记录。
+
+**下游消费约定（重要）**：下游消费方只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。本规格不实现自动过期检测或自动触发机制。
 
 ### Requirement 5: 推荐理由文案生成
 
@@ -75,7 +71,7 @@
 5.2 The LLM 案例增强服务 shall 在推荐文案中引用候选案例标识或可追溯来源，避免只返回黑盒结论。
 5.3 If 候选案例信息不足以支持推荐理由, then the LLM 案例增强服务 shall 返回无法生成的原因而不是改变候选排序。
 5.4 The LLM 案例增强服务 shall 不决定召回、过滤、相似度分值或最终排序。
-5.5 Where 推荐文案生成失败, the LLM 案例增强服务 shall 允许推荐流程使用结构化候选信息降级展示。
+5.5 Where 推荐文案生成失败, the LLM 案例增强服务 shall 返回失败状态（HTTP 503）。
 
 ### Requirement 6: 安全、隐私、失败处理与可观测性
 

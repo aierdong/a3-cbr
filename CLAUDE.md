@@ -39,8 +39,9 @@ Adhere to a documentation-centric workflow to ensure consistency across the mono
 - `kiro-verify-completion`: Fresh-evidence gate before success claims.
 
 ## Design Review Principles
-- **Issue Filter**: Each finding must answer: Does it block core business? Would it occur in production? Must it be resolved at design phase? Is it a logic confusion? Is it a critical non-detail issue? If all answers are no, it is not an issue.
+- **Issue Filter**: Each finding must answer at least ONE question with "yes" to qualify as an issue: Does it block core business? Would it occur in production with reasonable probability (ignore extremely low probability)? Must it be resolved at design phase? Is it a logic confusion? Is it a critical non-detail issue? **If ANY answer is "yes", it qualifies as an issue. In review summaries, explicitly answer these questions for each identified issue.**
 - **Document Coupling**: When suggesting changes, assess whether `requirements.md`, `design.md`, `tasks.md`, `research.md` also need updates — do not target `design.md` alone.
+- **Avoid Over-Defensive Programming**: Do not introduce unnecessary complexity to solve minor edge cases. Prefer simple, direct solutions over elaborate defensive mechanisms unless the risk is material and likely.
 
 ## Python Readability Execution Guard
 - For backend Python implementation, run readability checks before claiming completion:

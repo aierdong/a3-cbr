@@ -46,6 +46,24 @@
 - Alembic 或等价迁移工具用于数据库结构变更。
 - PostgreSQL 作为案例基础数据存储；本规格不依赖 pgvector 扩展能力。
 
+### Cross-Spec Coordination: "提交且摘要"
+
+用户在前端的"提交且摘要"操作是一个跨 `a3-case-management` 和 `llm-case-enrichment` 的业务事务，需要前端协调两个规格的 API 调用：
+
+1. **职责边界**：
+   - 本规格（`a3-case-management`）只负责案例 CRUD，不感知 LLM 增强。
+   - `llm-case-enrichment` 只负责生成派生结果，不修改案例基础字段。
+   - 两个规格通过 API 调用解耦，不共享数据库事务。
+
+2. **前端调用顺序**：
+   - 用户点击"提交且摘要"按钮后，前端先调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例。
+   - 案例保存成功后，前端立即调用 `POST /api/a3-cases/{case_id}/enrichment-runs`（`wait_for_completion=true`）触发 LLM 增强。
+   - 若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，前端向用户展示"案例已保存，但摘要生成失败"的提示，并提供重试入口。
+
+3. **降级策略**：
+   - 案例保存失败时，前端不触发 LLM 增强，直接向用户展示保存失败原因。
+   - LLM 增强失败时，案例已保存，用户可稍后通过后台管理页面重新触发增强或手动审核。
+
 ### Revalidation Triggers
 
 - `StoreInfo` 或 `A3Case` 字段名称、类型、必填规则、枚举值或状态语义发生变化。
@@ -329,6 +347,10 @@ class CaseRepository:
     def list(self, query: CaseListQuery) -> KeysetPage[A3CaseRecord]: ...
 ```
 
+- Preconditions: `CaseListQuery` 中的 `cursor_created_at` 和 `cursor_case_id` 必须成对提供或成对省略；单独提供其中一个视为非法请求。
+- Postconditions: 返回的 `KeysetPage` 保证稳定排序和一致的分页元数据。
+- Invariants: 相同查询条件和 cursor 多次调用返回相同结果集（在无并发写入时）。
+
 `KeysetPage` 为 keyset 分页返回结构，语义与 `PaginatedCaseListResponse` 一致：
 
 - `items`: list[T]
@@ -386,7 +408,7 @@ erDiagram
 
 
 
-`A3Case` 是聚合根。`StoreInfo` 承载可复用且基本稳定的门店检索维度，其业务含义与生命周期归属**外部门店系统**；本库 `store_infos` 仅为支撑关联查询与列表过滤的镜像数据，**本规格不提供门店维护 API**。解决步骤随案例一起创建和更新，本规格不把它们作为独立聚合暴露。
+`A3Case` 是聚合根。`StoreInfo` 承载可复用且基本稳定的门店检索维度，其业务含义与生命周期归属**外部系统**；本库 `store_infos` 仅为支撑关联查询与列表过滤的镜像数据，它由外部系统负责维护，本系统假定门店数据是一定存在的。
 
 ### Logical Data Model
 
@@ -549,6 +571,12 @@ erDiagram
 - Includes joined store profile fields from `StoreInfo`.
 - Excludes embedding, summary, recommendation reason, similarity score and feedback data.
 - **`case_contract_version`**（string，详情响应必填）：服务端根据应用配置或构建常量写入的**只读**契约版本标识，与 `docs/contract-a3-case-detail-for-enrichment.md` §6 的版本策略一致；**不在** `CreateCaseRequest` / `UpdateCaseRequest` 中接受客户端传入。破坏性变更详情形状时须同步递增该值并协调下游 `llm-case-enrichment` 期望配置。
+  - **初始版本号**: `"1.0.0"`
+  - **递增规则**: 
+    - 字段新增（向后兼容）：递增 minor 版本（如 `1.0.0` → `1.1.0`）
+    - 字段删除、类型变更、枚举值变更（破坏性变更）：递增 major 版本（如 `1.0.0` → `2.0.0`）
+    - 字段重命名视为删除+新增，递增 major 版本
+  - **代码维护方式**: 在 `backend/app/core/config.py` 中定义 `CASE_CONTRACT_VERSION` 常量，由 `CaseSchemas` 在序列化时注入
 - **下游字段级契约**：`llm-case-enrichment` 的 `CaseSnapshotProvider` 所依赖的详情 JSON 最小稳定字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
 
 **CaseListItem**
@@ -600,15 +628,31 @@ erDiagram
 | HTTP | code                  | 何时使用                                                    |
 | ---- | --------------------- | ------------------------------------------------------- |
 | 422  | `VALIDATION_ERROR`    | 请求字段缺失、枚举非法、步骤结构不合法（2.1/2.2/2.3/3.2/4.3）                |
-| 422  | `STORE_NOT_FOUND`     | `store_id` 在本库 `store_infos` 中不存在（外部尚未同步或无效引用）（3.2/4.3） |
+| 400  | `STORE_NOT_FOUND`     | `store_id` 在本库 `store_infos` 中不存在（外部尚未同步或无效引用）（3.2/4.3）；语义为客户端引用了不存在的资源，区别于 422 的业务规则校验失败 |
 | 404  | `CASE_NOT_FOUND`      | 指定 `case_id` 不存在（4.2/5.2）                               |
 | 409  | `CASE_STATE_CONFLICT` | 状态不可编辑或状态流转非法（4.4）                                      |
 | 500  | `INTERNAL_ERROR`      | 系统/数据库异常（6.2）                                           |
 
 
+**常见错误场景示例**
+
+Keyset 分页 cursor 约束违反（单独提供 `cursor_created_at` 或 `cursor_case_id` 之一）：
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "message": "cursor_created_at and cursor_case_id must be provided together or both omitted",
+  "fields": [
+    {"field": "cursor_created_at", "message": "must be provided with cursor_case_id"},
+    {"field": "cursor_case_id", "message": "must be provided with cursor_created_at"}
+  ]
+}
+```
+
+
 ### Error Categories and Responses
 
-- **User Errors (4xx)**: Invalid input, unsupported filter, missing required field, unknown `store_id`（`STORE_NOT_FOUND`）。
+- **User Errors (4xx)**: Invalid input, unsupported filter, missing required field, unknown `store_id`（`STORE_NOT_FOUND`，返回 400 表示客户端引用了不存在的资源）。
 - **Business Logic Errors (409/422)**: Editing archived case, invalid status transition, immutable field modification.
 - **Not Found (404)**: Case ID does not exist.
 - **System Errors (5xx)**: Database connection or transaction failure.
@@ -633,6 +677,8 @@ erDiagram
 - POST `/api/a3-cases` creates a valid case and persists base fields.
 - PUT `/api/a3-cases/{case_id}` updates allowed fields and preserves `case_id` and `created_at`.
 - GET `/api/a3-cases/{case_id}` returns full base fields and excludes AI, vector, recommendation and feedback fields.
+- GET `/api/a3-cases/{case_id}` response must include `case_contract_version` field with valid semver format (e.g., `1.0.0`).
+- Contract version increments correctly when breaking changes occur (field removal, type change, enum change).
 - GET `/api/a3-cases` filters by brand, store, business type, store scale, franchise type, city, city tier, problem type, status and created time range.
 - Empty list filters return empty `items` and valid pagination metadata.
 
@@ -656,20 +702,22 @@ erDiagram
 
 列表接口采用 keyset 分页，保证在高并发写入与持续翻页下的稳定性与性能。
 
-- 稳定排序：`created_at desc, case_id desc`
+- 稳定排序：`created_at desc, case_id desc`（`case_id` 的唯一性保证排序稳定）
 - Cursor 组成：`cursor_created_at` + `cursor_case_id`
-- 请求参数建议：
+- 请求参数：
   - `limit`（默认 20，最大值在实现阶段锁定）
   - `cursor_created_at`（可选，timestamptz）
   - `cursor_case_id`（可选，string）
   - `include_archived`（可选，bool，默认 false）
+- Cursor 约束：`cursor_created_at` 和 `cursor_case_id` **必须成对提供或成对省略**；单独提供其中一个视为非法请求，返回 422 校验错误
+- 首页请求：`cursor_created_at` 和 `cursor_case_id` 均省略或均为 null
 - 下一页规则：返回 `next_cursor_created_at/next_cursor_case_id`，由最后一条 item 的排序键生成
+- 末页判定：`has_more = false` 且 `next_cursor_created_at` 和 `next_cursor_case_id` 均为 null
+- 过滤条件变化：若过滤条件（品牌、门店、问题类型等）发生变化，应重新从首页开始查询；使用旧过滤条件的 cursor 可能导致结果不一致
 
 过滤条件与 keyset 条件同时生效（示例伪条件）：
 
 - `WHERE created_at < :cursor_created_at OR (created_at = :cursor_created_at AND case_id < :cursor_case_id)`
-
-当 cursor 缺失时，返回第一页。
 
 ## Migration Strategy
 
