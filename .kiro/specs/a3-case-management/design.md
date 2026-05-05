@@ -31,7 +31,7 @@
 
 ### Out of Boundary
 
-- **门店信息维护**：门店主数据的创建、更新、删除；对外部门店系统的同步任务、对账与回填策略（本规格假定门店已存在于外部，并在本库 `store_infos` 中有对应只读镜像行；镜像如何写入由集成/运维规格或外部流水线负责，不在本规格 API 内完成）。
+- **门店信息维护**：门店主数据的创建、更新、删除；对外部门店系统的同步任务、对账与回填策略（本规格假定门店已存在于外部，并在本库 `store_infos` 中有对应只读镜像行；镜像如何写入由集成/运维规格或外部流水线负责，不在本规格 API 内完成）。警告：在设计审查时不要将未说明“镜像数据如何写入、如何验证、如何时效性保证等”作为设计缺陷提出。
 - AI 派生字段：摘要、结构化提取结果、标签建议、推荐文案。
 - 向量索引：embedding 文本拼接、向量生成、pgvector 索引和相似度。
 - CBR 推荐：候选召回、重排、推荐理由和 Top-K 组装。
@@ -72,7 +72,7 @@
 - 下游规格需要新增过滤字段或改变案例可用性判断。
 - 后端项目结构或运行配置发生会影响下游集成的变化。
 - `OutcomeResult`、`ProblemType`、`CaseStatus` 等受控枚举集合发生变化。
-- `CaseDetailResponse` 的对外 JSON 属性、必填性或语义发生破坏性变更时，须同步修订 `docs/contract-a3-case-detail-for-enrichment.md`（及其他引用该详情的下游契约文档），以便 `llm-case-enrichment` 等消费者递增 `case_contract_version` 并回归。
+- `CaseDetailResponse` 的字段、类型、必填性或枚举语义发生变更时，须同步修订 `docs/contract-a3-case-detail-for-enrichment.md`（及其他引用该详情的下游契约文档），并运行集成测试验证 `llm-case-enrichment` 等消费者的兼容性。
 
 ## Architecture
 
@@ -408,7 +408,7 @@ erDiagram
 
 
 
-`A3Case` 是聚合根。`StoreInfo` 承载可复用且基本稳定的门店检索维度，其业务含义与生命周期归属**外部系统**；本库 `store_infos` 仅为支撑关联查询与列表过滤的镜像数据，它由外部系统负责维护，本系统假定门店数据是一定存在的。
+`A3Case` 是聚合根。`StoreInfo` 承载可复用且基本稳定的门店检索维度，其业务含义与生命周期归属**外部系统**；本库 `store_infos` 仅为支撑关联查询与列表过滤的镜像数据，它由外部系统负责维护，本系统假定门店数据是一定存在的。强调：不要在设计审查时将“可能没有门店数据、外部系统可能暂不可用，镜像数据没有验证，无法保证同步时效性等”作为设计缺陷提出。
 
 ### Logical Data Model
 
@@ -478,7 +478,11 @@ erDiagram
 | `draft`    | `archived` | 不允许（见下方说明）    |
 | `archived` | 任意         | 不允许（禁止回滚/解档） |
 
-**`draft → archived` 禁止的业务理由**: `draft` 表示案例尚未经过完整业务处理流程（文本摘要、结构化提取、向量化等下游步骤）。未走完业务处理的案例不具备沉淀为知识资产的条件，直接归档没有业务意义；必须先进入 `active` 完成业务处理后，方可归档。
+**`draft → archived` 禁止的业务理由**: 
+- **业务场景**: `draft` 表示用户正在编写中的草稿，用户可能随时回来继续编辑完善案例内容。
+- **状态语义**: `archived` 是只读状态，一旦归档则无法再编辑。如果允许 `draft → archived`，用户将无法继续编辑尚未完成的草稿，违背了 draft 的业务含义。
+- **知识资产条件**: 只有经过完整业务处理流程（提交为 `active`、完成文本摘要、结构化提取、向量化等下游步骤）的案例，才具备沉淀为知识资产的条件，才有归档价值。
+- **设计审查说明**: 此约束从实际业务场景出发，理由充分，设计审查时不应将其视作设计缺陷。用户如需放弃草稿，可直接删除或保持 draft 状态即可，无需归档。
 
 
 更新接口如请求修改 `status`：
@@ -570,14 +574,8 @@ erDiagram
 - Includes all base fields.
 - Includes joined store profile fields from `StoreInfo`.
 - Excludes embedding, summary, recommendation reason, similarity score and feedback data.
-- **`case_contract_version`**（string，详情响应必填）：服务端根据应用配置或构建常量写入的**只读**契约版本标识，与 `docs/contract-a3-case-detail-for-enrichment.md` §6 的版本策略一致；**不在** `CreateCaseRequest` / `UpdateCaseRequest` 中接受客户端传入。破坏性变更详情形状时须同步递增该值并协调下游 `llm-case-enrichment` 期望配置。
-  - **初始版本号**: `"1.0.0"`
-  - **递增规则**: 
-    - 字段新增（向后兼容）：递增 minor 版本（如 `1.0.0` → `1.1.0`）
-    - 字段删除、类型变更、枚举值变更（破坏性变更）：递增 major 版本（如 `1.0.0` → `2.0.0`）
-    - 字段重命名视为删除+新增，递增 major 版本
-  - **代码维护方式**: 在 `backend/app/core/config.py` 中定义 `CASE_CONTRACT_VERSION` 常量，由 `CaseSchemas` 在序列化时注入
-- **下游字段级契约**：`llm-case-enrichment` 的 `CaseSnapshotProvider` 所依赖的详情 JSON 最小稳定字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
+- **内部模块集成方式**：`llm-case-enrichment` 通过直接 import `CaseDetailResponse` schema（`from app.cases.schemas import CaseDetailResponse`）保证类型一致性，无需运行时版本字段。Python 类型系统和集成测试会自动捕获不兼容的 schema 变更。
+- **下游字段级契约**：`llm-case-enrichment` 依赖的详情字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`（该文档用于说明字段的业务语义和使用约定）。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
 
 **CaseListItem**
 
@@ -677,10 +675,9 @@ Keyset 分页 cursor 约束违反（单独提供 `cursor_created_at` 或 `cursor
 - POST `/api/a3-cases` creates a valid case and persists base fields.
 - PUT `/api/a3-cases/{case_id}` updates allowed fields and preserves `case_id` and `created_at`.
 - GET `/api/a3-cases/{case_id}` returns full base fields and excludes AI, vector, recommendation and feedback fields.
-- GET `/api/a3-cases/{case_id}` response must include `case_contract_version` field with valid semver format (e.g., `1.0.0`).
-- Contract version increments correctly when breaking changes occur (field removal, type change, enum change).
 - GET `/api/a3-cases` filters by brand, store, business type, store scale, franchise type, city, city tier, problem type, status and created time range.
 - Empty list filters return empty `items` and valid pagination metadata.
+- Schema 变更的兼容性通过 Python 类型检查和跨模块集成测试验证。
 
 ### Performance / Load
 
