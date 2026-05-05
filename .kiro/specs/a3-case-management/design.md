@@ -57,12 +57,45 @@
 
 2. **前端调用顺序**：
    - 用户点击"提交且摘要"按钮后，前端先调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例。
-   - 案例保存成功后，前端立即调用 `POST /api/a3-cases/{case_id}/enrichment-runs`（`wait_for_completion=true`）触发 LLM 增强。
-   - 若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，前端向用户展示"案例已保存，但摘要生成失败"的提示，并提供重试入口。
+   - 案例保存成功后，后台返回前端 HTTP 200，然后异步调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发 LLM 增强。
+   - 若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，前端向用户展示"摘要生成失败"的提示，并提供重试入口。
 
 3. **降级策略**：
    - 案例保存失败时，前端不触发 LLM 增强，直接向用户展示保存失败原因。
    - LLM 增强失败时，案例已保存，用户可稍后通过后台管理页面重新触发增强或手动审核。
+
+### Cross-Spec Coordination: "删除案例"
+
+用户在前端的"删除案例"操作是一个跨 `a3-case-management`、`llm-case-enrichment` 和 `case-vector-indexing` 的业务事务，需要协调三个规格的 API 调用：
+
+1. **职责边界**：
+   - 本规格（`a3-case-management`）只负责删除案例基础数据（`a3_cases` 表记录）。
+   - `llm-case-enrichment` 负责删除对应的 LLM 派生数据（摘要、结构化提取结果、运行记录）。
+   - `case-vector-indexing` 负责删除对应的向量索引数据（向量记录、索引任务记录）。
+   - 三个规格通过 API 调用解耦，不共享数据库事务。
+
+2. **调用顺序**（同步级联删除）：
+   - 用户确认删除案例后，后台按以下顺序同步执行：
+     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
+     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
+     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
+   - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
+
+3. **降级策略**：
+   - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
+   - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
+   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
+   - **下游服务不可用**：若 `llm-case-enrichment` 或 `case-vector-indexing` 服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+
+4. **幂等性保证**：
+   - `DELETE /api/a3-cases/{case_id}` 对已删除或不存在的案例返回 `404 CASE_NOT_FOUND`，前端应将 404 视为删除成功（目标状态已达成）。
+   - `DELETE /api/a3-cases/{case_id}/enrichment-data` 对不存在的派生数据返回 HTTP 200（幂等删除）。
+   - `POST /api/a3-cases/{case_id}/vector-index/remove` 对不存在的向量索引返回成功状态（幂等删除）。
+
+5. **后台异步清理**：
+   - 系统应提供后台定期扫描任务，检测孤立的派生数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_enrichment_results` 或 `case_vectors` 中存在）。
+   - 后台清理任务定期调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 和 `POST /api/a3-cases/{case_id}/vector-index/remove` 清理孤立数据。
+   - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
 
 ### Revalidation Triggers
 
@@ -181,53 +214,58 @@ sequenceDiagram
 ## Requirements Traceability
 
 
-| Requirement | Summary         | Components                                                            | Interfaces                                               | Flows                |
-| ----------- | --------------- | --------------------------------------------------------------------- | -------------------------------------------------------- | -------------------- |
-| 1.1         | 保存 A3 核心字段      | CaseSchemas, CaseService, CaseRepository, StoreInfoModel, A3CaseModel | CreateCaseRequest, UpdateCaseRequest, CaseDetailResponse | Create, Update       |
-| 1.2         | 稳定唯一案例标识        | A3CaseModel, CaseRepository                                           | CaseDetailResponse, CaseListItem                         | Create               |
-| 1.3         | 基础数据与 AI 派生数据分离 | A3CaseModel, CaseSchemas                                              | All case responses                                       | Create, Detail, List |
-| 1.4         | 基础状态            | CaseStatus, CaseService                                               | CaseDetailResponse, CaseListItem                         | Create, Update       |
-| 1.5         | 稳定过滤字段          | CaseRepository, CaseQuery                                             | ListCasesRequest                                         | List                 |
-| 1.6         | 门店信息独立实体        | StoreInfoModel, CaseRepository, CaseSchemas                           | CreateCaseRequest, UpdateCaseRequest, CaseDetailResponse | Create, Update, List |
-| 2.1         | 必填校验            | CaseValidator, CaseSchemas                                            | CreateCaseRequest, UpdateCaseRequest                     | Create, Update       |
-| 2.2         | 枚举校验            | CaseValidator, CaseStatus, ProblemType                                | ErrorResponse                                            | Create, Update       |
-| 2.3         | 解决步骤顺序和内容       | CaseValidator, CaseSchemas                                            | SolutionStepSchema                                       | Create, Update       |
-| 2.4         | 不存在标识处理         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Update, Detail       |
-| 3.1         | 合法创建            | CaseRouter, CaseService, CaseRepository                               | POST cases                                               | Create               |
-| 3.2         | 创建校验失败          | CaseValidator, ErrorMapper                                            | ValidationErrorResponse                                  | Create               |
-| 3.3         | 创建和更新时间         | A3CaseModel, CaseRepository                                           | CaseDetailResponse                                       | Create               |
-| 3.4         | 手动创建不依赖 AI      | CaseService                                                           | POST cases                                               | Create               |
-| 4.1         | 合法编辑            | CaseRouter, CaseService, CaseRepository                               | PUT cases id                                             | Update               |
-| 4.2         | 编辑不存在案例         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Update               |
-| 4.3         | 编辑失败保留原数据       | CaseService, Repository transaction                                   | ValidationErrorResponse                                  | Update               |
-| 4.4         | 不可编辑状态拒绝        | CaseService, CaseStatus                                               | ConflictResponse                                         | Update               |
-| 4.5         | 禁止修改标识和创建时间     | CaseSchemas, CaseService                                              | UpdateCaseRequest                                        | Update               |
-| 5.1         | 返回详情完整基础字段      | CaseRouter, CaseRepository                                            | GET cases id                                             | Detail               |
-| 5.2         | 详情不存在           | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Detail               |
-| 5.3         | 列表过滤            | CaseRepository, CaseQuery                                             | GET cases                                                | List                 |
-| 5.4         | 分页和稳定排序         | CaseRepository                                                        | PaginatedCaseListResponse                                | List                 |
-| 5.5         | 空列表分页           | CaseRepository                                                        | PaginatedCaseListResponse                                | List                 |
-| 5.6         | 列表摘要字段且排除派生信息   | CaseSchemas, CaseRepository                                           | CaseListItem                                             | List                 |
-| 6.1         | 稳定 CRUD 查询契约    | CaseRouter, CaseSchemas                                               | HTTP API                                                 | All                  |
-| 6.2         | 一致结果结构          | ErrorMapper, CaseSchemas                                              | ErrorResponse                                            | All                  |
-| 6.3         | 下游所需标识和字段       | CaseSchemas                                                           | CaseDetailResponse, CaseListItem                         | Detail, List         |
-| 6.4         | 不生成派生结果         | CaseService, A3CaseModel                                              | All case responses                                       | All                  |
-| 6.5         | 字段和状态稳定         | CaseSchemas, CaseStatus                                               | API contract                                             | All                  |
+| Requirement | Summary         | Components                                                            | Interfaces                                               | Flows                     |
+| ----------- | --------------- | --------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------- |
+| 1.1         | 保存 A3 核心字段      | CaseSchemas, CaseService, CaseRepository, StoreInfoModel, A3CaseModel | CreateCaseRequest, UpdateCaseRequest, CaseDetailResponse | Create, Update            |
+| 1.2         | 稳定唯一案例标识        | A3CaseModel, CaseRepository                                           | CaseDetailResponse, CaseListItem                         | Create                    |
+| 1.3         | 基础数据与 AI 派生数据分离 | A3CaseModel, CaseSchemas                                              | All case responses                                       | Create, Detail, List      |
+| 1.4         | 基础状态            | CaseStatus, CaseService                                               | CaseDetailResponse, CaseListItem                         | Create, Update            |
+| 1.5         | 稳定过滤字段          | CaseRepository, CaseQuery                                             | ListCasesRequest                                         | List                      |
+| 1.6         | 门店信息独立实体        | StoreInfoModel, CaseRepository, CaseSchemas                           | CreateCaseRequest, UpdateCaseRequest, CaseDetailResponse | Create, Update, List      |
+| 2.1         | 必填校验            | CaseValidator, CaseSchemas                                            | CreateCaseRequest, UpdateCaseRequest                     | Create, Update            |
+| 2.2         | 枚举校验            | CaseValidator, CaseStatus, ProblemType                                | ErrorResponse                                            | Create, Update            |
+| 2.3         | 解决步骤顺序和内容       | CaseValidator, CaseSchemas                                            | SolutionStepSchema                                       | Create, Update            |
+| 2.4         | 不存在标识处理         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Update, Detail, Delete    |
+| 3.1         | 合法创建            | CaseRouter, CaseService, CaseRepository                               | POST cases                                               | Create                    |
+| 3.2         | 创建校验失败          | CaseValidator, ErrorMapper                                            | ValidationErrorResponse                                  | Create                    |
+| 3.3         | 创建和更新时间         | A3CaseModel, CaseRepository                                           | CaseDetailResponse                                       | Create                    |
+| 3.4         | 手动创建不依赖 AI      | CaseService                                                           | POST cases                                               | Create                    |
+| 4.1         | 合法编辑            | CaseRouter, CaseService, CaseRepository                               | PUT cases id                                             | Update                    |
+| 4.2         | 编辑不存在案例         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Update                    |
+| 4.3         | 编辑失败保留原数据       | CaseService, Repository transaction                                   | ValidationErrorResponse                                  | Update                    |
+| 4.4         | 不可编辑状态拒绝        | CaseService, CaseStatus                                               | ConflictResponse                                         | Update                    |
+| 4.5         | 禁止修改标识和创建时间     | CaseSchemas, CaseService                                              | UpdateCaseRequest                                        | Update                    |
+| 5.1         | 返回详情完整基础字段      | CaseRouter, CaseRepository                                            | GET cases id                                             | Detail                    |
+| 5.2         | 详情不存在           | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Detail                    |
+| 5.3         | 列表过滤            | CaseRepository, CaseQuery                                             | GET cases                                                | List                      |
+| 5.4         | 分页和稳定排序         | CaseRepository                                                        | PaginatedCaseListResponse                                | List                      |
+| 5.5         | 空列表分页           | CaseRepository                                                        | PaginatedCaseListResponse                                | List                      |
+| 5.6         | 列表摘要字段且排除派生信息   | CaseSchemas, CaseRepository                                           | CaseListItem                                             | List                      |
+| 6.1         | 删除已有案例          | CaseRouter, CaseService, CaseRepository                               | DELETE cases id                                          | Delete                    |
+| 6.2         | 删除不存在案例         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Delete                    |
+| 6.3         | 物理删除            | CaseRepository                                                        | DELETE cases id                                          | Delete                    |
+| 6.4         | 删除任意状态案例        | CaseService                                                           | DELETE cases id                                          | Delete                    |
+| 6.5         | 删除后不可见          | CaseRepository                                                        | GET cases id, GET cases                                  | Delete, Detail, List      |
+| 7.1         | 稳定 CRUD 查询契约    | CaseRouter, CaseSchemas                                               | HTTP API                                                 | All                       |
+| 7.2         | 一致结果结构          | ErrorMapper, CaseSchemas                                              | ErrorResponse                                            | All                       |
+| 7.3         | 下游所需标识和字段       | CaseSchemas                                                           | CaseDetailResponse, CaseListItem                         | Detail, List              |
+| 7.4         | 不生成派生结果         | CaseService, A3CaseModel                                              | All case responses                                       | All                       |
+| 7.5         | 字段和状态稳定         | CaseSchemas, CaseStatus                                               | API contract                                             | All                       |
 
 
 ## Components and Interfaces
 
 
-| Component      | Domain/Layer      | Intent                           | Req Coverage                      | Key Dependencies                    | Contracts  |
-| -------------- | ----------------- | -------------------------------- | --------------------------------- | ----------------------------------- | ---------- |
-| CaseRouter     | API               | 暴露创建、编辑、详情、列表端点                  | 3.1, 4.1, 5.1, 5.3, 6.1           | CaseService P0                      | API        |
-| CaseSchemas    | API/Data Contract | 定义请求响应和错误结构                      | 1.1, 4.5, 5.6, 6.2, 6.3           | Pydantic P0                         | API, State |
-| CaseService    | Domain Service    | 编排业务校验、状态规则和事务                   | 2.4, 3.4, 4.3, 4.4, 6.4           | CaseRepository P0, CaseValidator P0 | Service    |
-| CaseValidator  | Domain Validation | 集中处理字段、步骤和枚举约束                   | 2.1, 2.2, 2.3                     | CaseSchemas P0                      | Service    |
-| CaseRepository | Data Access       | 负责 A3Case 持久化、`StoreInfo` 只读关联查询 | 1.2, 1.5, 1.6, 3.3, 5.3, 5.4, 5.5 | PostgreSQL P0                       | Service    |
-| StoreInfoModel | Persistence       | 表达门店信息只读镜像表与检索维度                 | 1.1, 1.5, 5.3, 6.3                | SQLAlchemy P0                       | State      |
-| A3CaseModel    | Persistence       | 表达案例表、状态枚举和数据库约束                 | 1.1, 1.4, 3.3, 6.5                | StoreInfoModel P0, SQLAlchemy P0    | State      |
-| ErrorMapper    | API Support       | 统一校验、未找到、冲突和系统错误结构               | 2.2, 3.2, 4.2, 6.2                | FastAPI P0                          | API        |
+| Component      | Domain/Layer      | Intent                           | Req Coverage                          | Key Dependencies                    | Contracts  |
+| -------------- | ----------------- | -------------------------------- | ------------------------------------- | ----------------------------------- | ---------- |
+| CaseRouter     | API               | 暴露创建、编辑、删除、详情、列表端点               | 3.1, 4.1, 5.1, 5.3, 6.1, 7.1          | CaseService P0                      | API        |
+| CaseSchemas    | API/Data Contract | 定义请求响应和错误结构                      | 1.1, 4.5, 5.6, 6.1, 7.2, 7.3          | Pydantic P0                         | API, State |
+| CaseService    | Domain Service    | 编排业务校验、状态规则和事务                   | 2.4, 3.4, 4.3, 4.4, 6.1, 6.4, 7.4     | CaseRepository P0, CaseValidator P0 | Service    |
+| CaseValidator  | Domain Validation | 集中处理字段、步骤和枚举约束                   | 2.1, 2.2, 2.3                         | CaseSchemas P0                      | Service    |
+| CaseRepository | Data Access       | 负责 A3Case 持久化、`StoreInfo` 只读关联查询 | 1.2, 1.5, 1.6, 3.3, 5.3, 5.4, 5.5, 6.3, 6.5 | PostgreSQL P0                       | Service    |
+| StoreInfoModel | Persistence       | 表达门店信息只读镜像表与检索维度                 | 1.1, 1.5, 5.3, 7.3                    | SQLAlchemy P0                       | State      |
+| A3CaseModel    | Persistence       | 表达案例表、状态枚举和数据库约束                 | 1.1, 1.4, 3.3, 7.5                    | StoreInfoModel P0, SQLAlchemy P0    | State      |
+| ErrorMapper    | API Support       | 统一校验、未找到、冲突和系统错误结构               | 2.2, 3.2, 4.2, 6.2, 7.2               | FastAPI P0                          | API        |
 
 
 ### API Layer
@@ -238,7 +276,7 @@ sequenceDiagram
 | Field        | Detail                                                |
 | ------------ | ----------------------------------------------------- |
 | Intent       | 提供案例管理 HTTP 入口                                        |
-| Requirements | 3.1, 3.2, 4.1, 4.2, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2 |
+| Requirements | 3.1, 3.2, 4.1, 4.2, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 7.1, 7.2 |
 
 
 **Responsibilities & Constraints**
@@ -246,6 +284,7 @@ sequenceDiagram
 - 接收请求并调用 `CaseService`，不直接访问数据库。
 - 使用 `CaseSchemas` 固定请求和响应结构。
 - 将领域错误映射为一致 HTTP 错误响应。
+- 删除操作支持任意状态的案例，无状态前置校验。
 
 **API Contract**
 
@@ -254,6 +293,7 @@ sequenceDiagram
 | ------ | ------------------------- | ------------------- | --------------------------- | ------------------ |
 | POST   | `/api/a3-cases`           | `CreateCaseRequest` | `CaseDetailResponse`        | 422, 500           |
 | PUT    | `/api/a3-cases/{case_id}` | `UpdateCaseRequest` | `CaseDetailResponse`        | 404, 409, 422, 500 |
+| DELETE | `/api/a3-cases/{case_id}` | path `case_id`      | `DeleteCaseResponse`        | 404, 500           |
 | GET    | `/api/a3-cases/{case_id}` | path `case_id`      | `CaseDetailResponse`        | 404, 500           |
 | GET    | `/api/a3-cases`           | `CaseListQuery`     | `PaginatedCaseListResponse` | 422, 500           |
 
@@ -263,22 +303,24 @@ sequenceDiagram
 - API 前缀保持独立，便于前端和下游规格引用。
 - 错误响应必须包含 `code`、`message`、可选 `fields`。
 - 不在端点中调用 LLM、embedding 或推荐服务。
+- 删除接口返回 `DeleteCaseResponse`，包含 `case_id` 和 `deleted: true`。
 
 ### Domain Layer
 
 #### CaseService
 
 
-| Field        | Detail                                      |
-| ------------ | ------------------------------------------- |
-| Intent       | 案例业务规则和事务编排                                 |
-| Requirements | 2.4, 3.1, 3.3, 3.4, 4.1, 4.3, 4.4, 4.5, 6.4 |
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| Intent       | 案例业务规则和事务编排                                     |
+| Requirements | 2.4, 3.1, 3.3, 3.4, 4.1, 4.3, 4.4, 4.5, 6.1, 6.4, 7.4 |
 
 
 **Responsibilities & Constraints**
 
 - 创建时生成稳定 `case_id`、状态和时间戳。
 - 编辑时先加载现有案例，校验状态，再应用允许变更的字段。
+- 删除时执行物理删除，支持任意状态的案例，删除不存在的案例返回 `CASE_NOT_FOUND`。
 - 创建或编辑案例时仅提交 `store_id`（映射为 `A3Case.store_info_id`）；**不得**通过案例 API 写入或更新 `store_infos` 行。
 - 创建或变更门店关联前，须校验 `store_id` 在本库 `store_infos` 中存在（该行由外部同步写入）；不存在则拒绝保存。
 - 保证编辑校验失败时不持久化部分修改。
@@ -290,6 +332,7 @@ sequenceDiagram
 class CaseService:
     def create_case(self, request: CreateCaseRequest) -> CaseDetailResponse: ...
     def update_case(self, case_id: str, request: UpdateCaseRequest) -> CaseDetailResponse: ...
+    def delete_case(self, case_id: str) -> DeleteCaseResponse: ...
     def get_case(self, case_id: str) -> CaseDetailResponse: ...
     def list_cases(self, query: CaseListQuery) -> PaginatedCaseListResponse: ...
 ```
@@ -323,16 +366,17 @@ class CaseService:
 #### CaseRepository
 
 
-| Field        | Detail                       |
-| ------------ | ---------------------------- |
-| Intent       | 封装案例持久化和过滤查询                 |
-| Requirements | 1.2, 1.5, 3.3, 5.3, 5.4, 5.5 |
+| Field        | Detail                           |
+| ------------ | -------------------------------- |
+| Intent       | 封装案例持久化和过滤查询                     |
+| Requirements | 1.2, 1.5, 3.3, 5.3, 5.4, 5.5, 6.3, 6.5 |
 
 
 **Responsibilities & Constraints**
 
-- 创建、更新、按 ID 查询和分页查询案例。
+- 创建、更新、删除、按 ID 查询和分页查询案例。
 - 对 `StoreInfo` **只读**：按 `store_id` 查询是否存在、列表/详情与 `store_infos` 做关联查询；**不在本 Repository 或案例写入路径中对 `store_infos` 执行 insert/update/delete**。
+- 删除操作执行物理删除（`DELETE FROM a3_cases WHERE case_id = ?`），返回是否成功删除（受影响行数 > 0）。
 - 支持按品牌、门店、业态、门店规模、加盟类型、城市、城市规模、问题类型、状态、创建时间范围过滤。
 - 使用稳定排序，默认按 `created_at desc, case_id desc`。
 - 数据库异常不向上暴露底层实现细节。
@@ -343,6 +387,7 @@ class CaseService:
 class CaseRepository:
     def create(self, case: A3CaseCreateData) -> A3CaseRecord: ...
     def update(self, case_id: str, changes: A3CaseUpdateData) -> A3CaseRecord | None: ...
+    def delete(self, case_id: str) -> bool: ...
     def get_by_id(self, case_id: str) -> A3CaseRecord | None: ...
     def list(self, query: CaseListQuery) -> KeysetPage[A3CaseRecord]: ...
 ```
@@ -577,7 +622,10 @@ erDiagram
 - **内部模块集成方式**：`llm-case-enrichment` 通过直接 import `CaseDetailResponse` schema（`from app.cases.schemas import CaseDetailResponse`）保证类型一致性，无需运行时版本字段。Python 类型系统和集成测试会自动捕获不兼容的 schema 变更。
 - **下游字段级契约**：`llm-case-enrichment` 依赖的详情字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`（该文档用于说明字段的业务语义和使用约定）。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
 
-**CaseListItem**
+**DeleteCaseResponse**
+
+- Includes `case_id` and `deleted: true` to confirm successful deletion.
+- Used by frontend to verify deletion completion before triggering downstream cleanup.
 
 - Includes `case_id`, problem description preview, store profile fields, problem type, status, created_at, updated_at.
 - Excludes full solution step body unless required by detail request.
@@ -668,12 +716,14 @@ Keyset 分页 cursor 约束违反（单独提供 `cursor_created_at` 或 `cursor
 - `CaseService` rejects unknown `store_id`（镜像不存在）且不写入案例。
 - `CaseService` creates `case_id`, timestamps and default status without requiring AI fields.
 - `CaseService` rejects immutable field modification and archived-case editing.
+- `CaseService` deletes cases of any status and returns `CASE_NOT_FOUND` for non-existent cases.
 - `ErrorMapper` returns stable validation, not found and conflict response bodies.
 
 ### Integration Tests
 
 - POST `/api/a3-cases` creates a valid case and persists base fields.
 - PUT `/api/a3-cases/{case_id}` updates allowed fields and preserves `case_id` and `created_at`.
+- DELETE `/api/a3-cases/{case_id}` deletes the case and returns success confirmation; subsequent GET returns 404.
 - GET `/api/a3-cases/{case_id}` returns full base fields and excludes AI, vector, recommendation and feedback fields.
 - GET `/api/a3-cases` filters by brand, store, business type, store scale, franchise type, city, city tier, problem type, status and created time range.
 - Empty list filters return empty `items` and valid pagination metadata.

@@ -4,14 +4,15 @@
 
 `case-vector-indexing` 在案例基础数据和 LLM 派生内容之上建立独立的问题侧语义向量索引。该模块负责：组合问题侧 embedding 输入文本、调用云端 `bge-large-zh` embedding 接口、保存 PostgreSQL + pgvector 向量记录、维护索引状态，以及向下游提供基础 Top-K 问题语义搜索原语。
 
-本设计延续 Python + FastAPI + PostgreSQL 的后端路线。它不修改 `a3-case-management` 的基础案例表，不接管 `llm-case-enrichment` 的派生内容生成，也不承担 `cbr-retrieval-recommendation` 的 CBRKit 编排、reranker、推荐理由和最终排序职责。
+本设计延续 Python + FastAPI + PostgreSQL 的后端路线。它不修改 `a3-case-management` 的基础案例表，不接管 `llm-case-enrichment` 的派生内容生成，也不承担 `cbr-retrieval-recommendation` 的 CBRKit 编排、reranker、推荐理由和最终排序职责。Router 层实现防抖机制，避免同一案例的并发刷新请求（详见 `research.md` §"并发假设与防抖策略"）。
 
 ### Goals
 
-- 建立可复现、可审计的问题侧 embedding 输入文本组合策略。
+- 建立可审计的问题侧 embedding 输入文本组合策略。
 - 通过云端 embedding API 默认接入 `bge-large-zh`，校验模型、维度、状态和错误响应。
 - 使用 PostgreSQL + pgvector `0.8.2+` 保存向量、过滤字段和 HNSW 索引。
-- 提供手动刷新、手动移除/不可检索标记、重试、状态查询和基础向量搜索能力。
+- 提供手动刷新、手动删除、重试、状态查询和基础向量搜索能力。
+- 通过案例和派生结果的时间戳判断是否需要刷新向量。
 - 保持向量索引与 CBR 推荐边界解耦，不硬绑定 CBRKit。
 
 ### Non-Goals
@@ -26,9 +27,9 @@
 
 ### This Spec Owns
 
-- `EmbeddingInputComposer`：问题侧输入文本组合规则、来源分段、输入指纹和输入版本。
+- `EmbeddingInputComposer`：问题侧输入文本组合规则和来源分段。
 - `EmbeddingClient`：云端 embedding 调用、默认模型 `bge-large-zh`、维度校验和错误归一化。
-- `CaseVectorRecord`、`VectorIndexJob` 及候选向量搜索运行所需的错误、重试和审计数据；`case_vectors` 仅保存成功生成的向量记录，任务状态由 `vector_index_jobs` 承担。
+- `CaseVectorRecord`、`VectorIndexJob` 及候选向量搜索运行所需的错误、重试和审计数据；`case_vectors` 仅保存成功生成的向量记录，每个案例最多一条记录，任务状态和历史操作由 `vector_index_jobs` 承担。
 - PostgreSQL + pgvector 向量列、HNSW 索引、过滤字段索引和版本运行检查。
 - 向下游提供的原语：查询文本向量化、过滤、Top-K 候选返回和索引状态查询。
 
@@ -50,13 +51,45 @@
 
 ### Manual Revalidation Triggers
 
-- 当调用方已知 `a3-case-management` 的案例字段、状态语义、过滤字段、详情响应或 `updated_at` 语义发生变化时，应手动调用刷新或移除接口。
+- 当调用方已知 `a3-case-management` 的案例字段、状态语义、过滤字段、详情响应或 `updated_at` 语义发生变化时，应手动调用刷新或删除接口。
 - 当调用方已知 `llm-case-enrichment` 的派生结果状态、字段名称、发布条件或输出版本发生变化时，应手动调用刷新接口。
 - embedding 的 `provider/model/base_url`、默认向量维度、供应商隐私配置或响应格式发生变化。
 - pgvector 最低版本、索引策略、距离度量或过滤字段索引策略发生变化。
 - 下游 `cbr-retrieval-recommendation` 需要改变向量搜索的请求或响应契约。
- 
+
 本规格不实现事件监听、自动刷新或自动过期扫描。MVP 中索引一致性由上游流程、运营动作或下游编排显式触发，刷新接口负责幂等判断输入版本是否已变化。
+
+### Cross-Spec Coordination: "删除案例"
+
+用户在前端的"删除案例"操作是一个跨 `a3-case-management`、`llm-case-enrichment` 和 `case-vector-indexing` 的业务事务，需要协调三个规格的 API 调用：
+
+1. **职责边界**：
+   - `a3-case-management` 负责删除案例基础数据（`a3_cases` 表记录）。
+   - `llm-case-enrichment` 负责删除对应的 LLM 派生数据（派生结果、运行记录）。
+   - 本规格（`case-vector-indexing`）负责删除对应的向量索引数据（向量记录、索引任务记录）。
+   - 三个规格通过 API 调用解耦，不共享数据库事务。
+
+2. **调用顺序**（同步级联删除）：
+   - 用户确认删除案例后，后台按以下顺序同步执行：
+     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
+     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
+     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
+   - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
+
+3. **降级策略**：
+   - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
+   - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
+   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
+   - **下游服务不可用**：若 `llm-case-enrichment` 或本规格服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+
+4. **幂等性保证**：
+   - `POST /api/a3-cases/{case_id}/vector-index/remove` 对不存在的向量索引返回成功状态（幂等删除）。
+   - 多次调用删除接口应返回相同结果，不产生副作用。
+
+5. **后台异步清理**：
+   - 系统应提供后台定期扫描任务，检测孤立的向量数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_vectors` 中存在）。
+   - 后台清理任务定期调用本规格的删除接口清理孤立数据。
+   - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
 
 ## Architecture
 
@@ -134,7 +167,7 @@ backend/
 │       ├── embedding_client.py               # bge-large-zh 云端 embedding 适配
 │       ├── service.py                        # 索引刷新、发布、删除、状态和一致性编排
 │       ├── search.py                         # 查询 embedding 和向量搜索原语
-│       ├── jobs.py                           # 同步任务、重试、未来异步 worker 边界
+│       ├── deduplicator.py                   # Router 层防抖机制（内存 set，未来可替换为 redis）
 │       ├── pgvector_checks.py                # pgvector 版本、扩展和索引运行检查
 │       └── router.py                         # 向量索引状态、刷新、重试、搜索 API
 ├── alembic/
@@ -144,8 +177,9 @@ backend/
     └── vector_indexing/
         ├── test_input_composer.py            # 输入文本、来源分段、降级和指纹测试
         ├── test_embedding_client.py          # 远程调用、维度校验和错误映射测试
-        ├── test_vector_index_service.py      # 刷新、发布、过期、删除和重试逻辑测试
+        ├── test_vector_index_service.py      # 刷新、发布、过期、删除逻辑测试
         ├── test_vector_repository.py         # pgvector 持久化、过滤和搜索测试
+        ├── test_deduplicator.py              # Router 层防抖机制、超时清理测试
         ├── test_vector_api.py                # 状态、刷新、重试和搜索 API 测试
         └── test_vector_privacy.py            # 日志、隐私配置和敏感内容边界测试
 ```
@@ -209,24 +243,18 @@ sequenceDiagram
 
 
 
-### 向量任务与可检索状态流
+### 向量任务与索引状态流
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued
-    queued --> running
-    queued --> cancelled
+    [*] --> running
     running --> succeeded
-    running --> retryable
     running --> failed
-    retryable --> queued
-    retryable --> failed
     succeeded --> [*]
     failed --> [*]
-    cancelled --> [*]
 ```
 
-`vector_index_jobs` 是排队、处理中、失败、可重试、成功、已取消、移除/不可检索标记等运行状态的审计来源。`cancelled` 仅允许从 `queued` 状态转换，由管理员手动取消尚未开始执行的排队任务；已进入 `running` 或 `retryable` 的任务不可取消。`case_vectors` 只保存 embedding 校验通过后的向量记录；是否参与搜索由 `is_current=true` 且 `searchable=true` 决定，失败、排队和处理中状态不在 `case_vectors` 中占位。
+`vector_index_jobs` 记录索引刷新、删除等运行状态的审计来源。MVP 阶段刷新任务在请求线程内同步执行，状态直接从 `running` 转换为 `succeeded` 或 `failed`。失败后的重试由用户手动触发，Router 层防抖保证不会并发刷新同一案例。`case_vectors` 只保存 embedding 校验通过后的向量记录，每个案例最多一条记录；向量存在即可参与搜索，失败和处理中状态不在 `case_vectors` 中占位。
 
 
 
@@ -240,22 +268,21 @@ stateDiagram-v2
 | 1.3         | 排除解法、效果和推荐文案          | EmbeddingInputComposer                                              | EmbeddingInputPolicy                      | 索引刷新流程 |
 | 1.4         | LLM 不可用时降级输入          | CaseIndexSourceProvider, EmbeddingInputComposer, VectorIndexService | DegradedIndexReason                       | 索引刷新流程 |
 | 1.5         | 内容不足拒绝生成              | EmbeddingInputComposer, ErrorMapper                                 | VECTOR_INPUT_INSUFFICIENT                 | 索引刷新流程 |
-| 1.6         | 保存指纹和来源版本             | EmbeddingInputComposer, VectorRepository                            | CaseVectorRecord                          | 索引刷新流程 |
 | 2.1         | 调用云端 embedding        | EmbeddingClient, VectorIndexService                                 | EmbeddingRequest                          | 索引刷新流程 |
 | 2.2         | 记录供应商模型维度状态           | EmbeddingClient, VectorRepository                                   | EmbeddingMetadata                         | 索引刷新流程 |
 | 2.3         | 超时限流失败可重试             | EmbeddingClient, VectorJobRunner                                    | VectorIndexJob                            | 索引刷新流程 |
 | 2.4         | 响应格式和维度校验             | EmbeddingClient, VectorIndexService                                 | EMBEDDING_INVALID_RESPONSE                | 索引刷新流程 |
 | 2.5         | 默认 bge-large-zh 可配置替换 | Config, EmbeddingClient                                             | EmbeddingProviderConfig                   | 索引刷新流程 |
 | 3.1         | 保存成功向量和过滤字段           | VectorRepository, CaseVectorModel                                   | CaseVectorRecord                          | 索引刷新流程 |
-| 3.2         | 当前有效向量唯一              | VectorRepository, VectorIndexService                                | publish_vector                            | 索引刷新流程 |
+| 3.2         | 每个案例最多一个向量            | VectorRepository, VectorIndexService                                | refresh_case_vector                       | 索引刷新流程 |
 | 3.3         | 返回明确状态                | VectorSchemas, VectorRouter, VectorJobRunner                        | VectorIndexStatusResponse                 | 状态流    |
-| 3.4         | 不可检索标记                | VectorIndexService, VectorRepository, VectorJobRunner               | mark_unsearchable                         | 状态流    |
+| 3.4         | 物理删除向量                | VectorIndexService, VectorRepository, VectorJobRunner               | remove_case_vector                        | 状态流    |
 | 3.5         | 不写回上游案例               | VectorIndexService, CaseIndexSourceProvider                         | module boundary                           | 索引刷新流程 |
-| 4.1         | 手动刷新时判断输入版本           | VectorIndexService, VectorJobRunner                                 | RefreshIndexRequest                       | 索引刷新流程 |
-| 4.2         | 发布新向量并停用旧版本           | VectorRepository                                                    | publish_vector                            | 索引刷新流程 |
+| 4.1         | 手动刷新时判断案例或派生结果是否更新    | VectorIndexService, VectorJobRunner                                 | RefreshIndexRequest                       | 索引刷新流程 |
+| 4.2         | 删除旧向量并插入新向量           | VectorRepository                                                    | refresh_case_vector                       | 索引刷新流程 |
 | 4.3         | 受控重试                  | VectorJobRunner, VectorRepository                                   | RetryPolicy                               | 状态流    |
 | 4.4         | 失败状态和最近有效向量说明         | VectorIndexService, VectorSchemas                                   | VectorIndexStatusResponse                 | 状态流    |
-| 4.5         | 手动移除后不可命中             | VectorIndexService, VectorRepository, VectorJobRunner               | searchable flag, VECTOR_CASE_NOT_INDEXABLE | 搜索流程、索引刷新流程 |
+| 4.5         | 手动删除后不可命中             | VectorIndexService, VectorRepository, VectorJobRunner               | remove_case_vector, VECTOR_CASE_NOT_INDEXABLE | 搜索流程、索引刷新流程 |
 | 5.1         | 查询文本 Top-K 候选         | VectorSearchService, EmbeddingClient, VectorRepository              | VectorSearchRequest, VectorSearchResponse | 搜索流程   |
 | 5.2         | 过滤可检索案例               | VectorRepository                                                    | VectorSearchFilters                       | 搜索流程   |
 | 5.3         | 查询参数校验                | VectorSchemas, ErrorMapper                                          | ValidationErrorResponse                   | 搜索流程   |
@@ -273,15 +300,15 @@ stateDiagram-v2
 
 | Component               | Domain/Layer      | Intent                       | Req Coverage                 | Key Dependencies                              | Contracts      |
 | ----------------------- | ----------------- | ---------------------------- | ---------------------------- | --------------------------------------------- | -------------- |
-| VectorRouter            | API               | 暴露手动刷新、重试、状态和搜索端点            | 3.3, 4.1, 5.1, 6.3           | VectorIndexService P0, VectorSearchService P0 | API            |
+| VectorRouter            | API               | 暴露手动刷新、重试、状态和搜索端点；实现防抖机制            | 3.3, 4.1, 5.1, 6.3           | VectorIndexService P0, VectorSearchService P0, RefreshDeduplicator P0 | API            |
+| RefreshDeduplicator     | API Support       | Router 层防抖机制，防止同一案例并发刷新 | -                            | -                                             | API            |
 | VectorSchemas           | API/Data Contract | 定义请求响应、状态、过滤和错误 schema       | 3.3, 5.3, 5.4                | Pydantic P0                                   | API, State     |
 | CaseIndexSourceProvider | Integration       | 读取案例和 LLM 派生输入快照             | 1.1, 1.3, 3.5                | CaseService P0, EnrichmentRepository P1       | Service        |
-| EmbeddingInputComposer  | Domain Service    | 组合输入文本、来源分段和指纹               | 1.1, 1.2, 1.4, 1.5, 6.1      | SourceProvider P0                             | Service        |
+| EmbeddingInputComposer  | Domain Service    | 组合输入文本和来源分段               | 1.1, 1.2, 1.4, 1.5, 6.1      | SourceProvider P0                             | Service        |
 | EmbeddingClient         | External Adapter  | 调用云端 embedding 并校验响应         | 2.1, 2.2, 2.4, 2.5, 6.4      | Remote provider/model/base_url P0             | Service        |
-| VectorIndexService      | Domain Service    | 编排手动刷新、发布、不可检索标记和状态         | 3.1, 3.2, 3.4, 4.1, 4.2, 4.4 | Repository P0, Client P0                      | Service        |
+| VectorIndexService      | Domain Service    | 编排手动刷新、发布、删除和状态         | 3.1, 3.2, 3.4, 4.1, 4.2, 4.4 | Repository P0, Client P0                      | Service        |
 | VectorSearchService     | Domain Service    | 生成用户问题查询向量并返回 Top-K 问题语义候选原语 | 5.1, 5.2, 5.4, 5.5           | EmbeddingClient P0, Repository P0             | API, Service   |
 | VectorRepository        | Data Access       | 保存成功向量、任务审计并执行 pgvector 搜索    | 3.1, 4.2, 4.5, 5.2           | PostgreSQL pgvector P0                        | Service, State |
-| VectorJobRunner         | Runtime           | 管理同步任务、重试和未来异步边界             | 2.3, 4.3, 6.2                | VectorIndexService P0                         | Batch          |
 | PgvectorChecks          | Infrastructure    | 校验扩展、版本、维度和索引前置条件            | 6.4                          | PostgreSQL P0                                 | Batch          |
 | ErrorMapper             | API Support       | 输出稳定错误码并执行日志脱敏               | 1.4, 2.3, 5.3, 6.5           | FastAPI P0                                    | API            |
 
@@ -304,16 +331,17 @@ stateDiagram-v2
 | ------ | ---------------------------------------------- | --------------------------- | --------------------------- | ------------------ |
 | POST   | `/api/a3-cases/{case_id}/vector-index/refresh` | `RefreshVectorIndexRequest` | `VectorIndexJobResponse`    | 404, 409, 422, 503 |
 | GET    | `/api/a3-cases/{case_id}/vector-index`         | path `case_id`              | `VectorIndexStatusResponse` | 404                |
-| POST   | `/api/a3-cases/{case_id}/vector-index/unsearchable` | `MarkVectorUnsearchableRequest` | `VectorIndexStatusResponse` | 404, 409, 422      |
+| POST   | `/api/a3-cases/{case_id}/vector-index/remove` | `RemoveVectorIndexRequest` | `VectorIndexJobResponse` | 404, 409, 422      |
 | POST   | `/api/vector-index/jobs/{job_id}/retry`        | path `job_id`               | `VectorIndexJobResponse`    | 404, 409, 503      |
 | POST   | `/api/vector-search`                           | `VectorSearchRequest`       | `VectorSearchResponse`      | 422, 503           |
 
 
 **Implementation Notes**
 
-- 刷新端点可同步完成或返回运行状态，但必须始终保存 `job_id`。
+- **Router 层防抖**：刷新端点在执行前检查是否有正在进行的刷新任务，若有则返回 409 错误（`VECTOR_REFRESH_IN_PROGRESS`）。刷新完成后释放防抖锁。防抖锁超时 120 秒后自动清理。
+- 刷新端点在请求线程内同步执行索引逻辑，完成后返回最终状态（`succeeded` 或 `failed`），必须始终保存 `job_id`。
 - 不提供自动刷新或 stale 扫描 API；案例或 LLM 派生内容变化后的刷新由调用方显式触发。
-- 不可检索标记端点用于案例删除、归档或上游明确要求移除检索来源的场景；它必须创建 `job_type=remove` 的审计任务，并将当前向量 `searchable=false`。若当前没有有效向量，端点仍返回不可检索状态和 remove 任务记录，不把无向量视为失败。
+- 删除端点用于案例删除、归档或上游明确要求移除检索来源的场景；它必须创建 `job_type=remove` 的审计任务，并物理删除当前向量记录。若当前没有向量，端点仍返回成功状态和 remove 任务记录（幂等操作）。
 - 搜索响应只返回候选案例、相似度、距离、输入索引版本和过滤元数据。
 - 不返回推荐理由、reranker 分数、CBRKit 内部结构或反馈字段。
 
@@ -359,31 +387,31 @@ class EmbeddingInputComposer:
 ```
 
 - Preconditions: 输入快照来自授权的上游读契约。
-- Postconditions: 输出 `text`、`sections`、`content_hash`、`source_version`、`degraded_reason`。
+- Postconditions: 输出 `text`、`sections`、`degraded_reason`。
 - Invariants: 段落顺序稳定；空值不编造；主召回输入只表达问题侧语义画像，不包含解决步骤、效果结果、方案摘要、推荐文案、推荐分值或反馈。
 
 ##### 问题侧 embedding 输入段落与上游字段映射（案例索引）
 
 以下字段路径引用上游规格中的**稳定契约名**：`A3Case` 与 `a3_cases` 表列见 `a3-case-management` 设计文档 **A3Case attributes**；`CaseEnrichmentResult`、`CaseEnrichmentOutput.structured_suggestions` 子键见 `llm-case-enrichment` 设计文档 **CaseEnrichmentResult** / **CaseEnrichmentOutput**。
 
-- **案例索引**（`compose_case_input`）：按下表七个语义段落顺序组合；同一语义段落内若有多列来源，顺序由 `input_template_version` 锁定（实现须在快照测试中固定）。
+- **案例索引**（`compose_case_input`）：按下表七个语义段落顺序组合。
 - **查询向量**（`compose_query_input`）：仅使用搜索契约中的 **`query_text`**（见 **VectorSearchRequest**），不拼接下表任何案例或派生字段。
 
 | 输入段落（与 Req 1.2 / 单测所述顺序一致） | 上游规格 | 契约字段路径 | 组合说明 |
 | --- | --- | --- | --- |
-| 问题摘要 | `llm-case-enrichment` | `CaseEnrichmentResult.problem_summary` | LLM 问题摘要；缺失、未发布或不可消费时走 Req 1.4 降级路径，`degraded_reason` 记录原因，段落可为空或按降级策略省略（实现与模板版本一致即可，须写入指纹）。 |
+| 问题摘要 | `llm-case-enrichment` | `CaseEnrichmentResult.problem_summary` | LLM 问题摘要；缺失、未发布或不可消费时走 Req 1.4 降级路径，`degraded_reason` 记录原因，段落可为空或按降级策略省略。 |
 | 问题描述 | `a3-case-management` | `A3Case.problem_description` | 案例问题正文。 |
-| 问题类型 | `a3-case-management` + `llm-case-enrichment` | `A3Case.problem_type`；`CaseEnrichmentResult.structured_suggestions.problem_type_suggestion` | **同一段落**内拼接：人工录入的受控问题类型枚举 + LLM 建议文本；子片段先后顺序由 `input_template_version` 固定。仅一侧有值时只输出有值侧。 |
-| 场景上下文 | `a3-case-management` | `A3Case.context` | JSON 对象；Composer 仅做稳定序列化（键顺序、空格、换行规则由模板版本锁定），不改写业务语义。 |
-| 根因分类 | `llm-case-enrichment` + `a3-case-management` | `CaseEnrichmentResult.structured_suggestions.root_cause_category`；`A3Case.root_cause`（可选） | **同一段落**：结构化「根因分类」建议为主；是否将人工根因叙述 `root_cause` 并入该段落、以及二者先后顺序由 `input_template_version` 固定（同属问题侧，非解法/效果）。 |
+| 问题类型 | `a3-case-management` + `llm-case-enrichment` | `A3Case.problem_type`；`CaseEnrichmentResult.structured_suggestions.problem_type_suggestion` | **同一段落**内拼接：人工录入的受控问题类型枚举 + LLM 建议文本。仅一侧有值时只输出有值侧。 |
+| 场景上下文 | `a3-case-management` | `A3Case.context` | JSON 对象；Composer 仅做稳定序列化（键顺序、空格、换行规则固定），不改写业务语义。 |
+| 根因分类 | `llm-case-enrichment` + `a3-case-management` | `CaseEnrichmentResult.structured_suggestions.root_cause_category`；`A3Case.root_cause`（可选） | **同一段落**：结构化「根因分类」建议为主；是否将人工根因叙述 `root_cause` 并入该段落由实现固定（同属问题侧，非解法/效果）。 |
 | 适用场景 | `llm-case-enrichment` | `CaseEnrichmentResult.structured_suggestions.applicable_scenarios` | LLM 适用场景建议。 |
-| 标签 | `llm-case-enrichment` | `CaseEnrichmentResult.tag_suggestions` | 规范化标签字符串数组；展开为稳定文本格式（分隔符、排序规则由模板版本锁定）。 |
+| 标签 | `llm-case-enrichment` | `CaseEnrichmentResult.tag_suggestions` | 规范化标签字符串数组；展开为稳定文本格式（分隔符、排序规则固定）。 |
 
 **明确排除（不得进入主召回组合文本）**：`A3Case.solution_steps`、`A3Case.outcome`、`CaseEnrichmentResult.solution_summary`、推荐文案类载荷（如 `RecommendationCopyRun` 相关）、推荐分值与反馈字段；与上文 Invariants 一致。
 
-**默认不纳入主召回段落的派生字段**：`CaseEnrichmentResult.structured_suggestions.confidence_notes` 仅作置信说明，不进入上述七段；若未来纳入须递增 `input_template_version` 并修订本表与 Req 1.2。
+**默认不纳入主召回段落的派生字段**：`CaseEnrichmentResult.structured_suggestions.confidence_notes` 仅作置信说明，不进入上述七段；若未来纳入须修订本表与 Req 1.2。
 
-**过滤与索引元数据（段落外）**：`case_id`、`StoreInfo` 镜像维度（如 `brand_id` / `store_id`）、`A3Case.status`、`problem_type`（列）、`tags`、`created_at`、`updated_at` 等用于 `case_vectors` 过滤列与手动刷新时的输入版本判断；默认**不**拼入 `EmbeddingInput.text`，除非经规格修订与新模板版本显式扩展。
+**过滤与索引元数据（段落外）**：`case_id`、`StoreInfo` 镜像维度（如 `brand_id` / `store_id`）、`A3Case.status`、`problem_type`（列）、`tags`、`created_at`、`updated_at` 等用于 `case_vectors` 过滤列与手动刷新时的来源版本判断；默认**不**拼入 `EmbeddingInput.text`，除非经规格修订显式扩展。
 
 #### VectorIndexService
 
@@ -401,13 +429,13 @@ class VectorIndexService:
     def refresh_case_index(self, case_id: str, request: RefreshVectorIndexRequest) -> VectorIndexJobResponse: ...
     def get_case_status(self, case_id: str) -> VectorIndexStatusResponse: ...
     def retry_job(self, job_id: str) -> VectorIndexJobResponse: ...
-    def mark_case_unsearchable(self, case_id: str, reason: str) -> VectorIndexStatusResponse: ...
+    def remove_case_vector(self, case_id: str, request: RemoveVectorIndexRequest) -> VectorIndexJobResponse: ...
 ```
 
 - Preconditions: pgvector 检查通过；生产 embedding 配置可用；上游案例存在。
-- Postconditions: 成功时发布当前向量（`searchable=true`）；失败时在任务记录中保存失败阶段、错误码、重试状态和最近有效向量说明。
-- Invariants: 同一 `case_id` 只有一个当前有效向量；不修改上游 `a3_cases` 或 LLM 派生结果表。
-- **searchable 生命周期规则**：`refresh_case_index` 在创建刷新任务前检查案例当前状态——若案例状态为 `archived` 或该案例已存在 `job_type=remove` 且状态为 `succeeded` 的任务记录，刷新应拒绝执行并返回明确的业务错误码（`VECTOR_CASE_NOT_INDEXABLE`），防止已标记不可检索的案例被意外刷新后重新出现在搜索结果中。若案例状态正常且不存在已完成的 remove 任务，刷新成功后新向量默认 `searchable=true`，覆盖旧向量的不可检索状态。
+- Postconditions: 成功时发布当前向量；失败时在任务记录中保存失败阶段、错误码和最近有效向量说明。
+- Invariants: 同一 `case_id` 最多一个向量记录；不修改上游 `a3_cases` 或 LLM 派生结果表。
+- **向量生命周期规则**：`refresh_case_index` 在创建刷新任务前检查案例当前状态——若案例状态为 `archived` 或该案例已存在 `job_type=remove` 且状态为 `succeeded` 的任务记录，刷新应拒绝执行并返回明确的业务错误码（`VECTOR_CASE_NOT_INDEXABLE`），防止已删除向量的案例被意外刷新后重新出现在搜索结果中。若案例状态正常且不存在已完成的 remove 任务，刷新成功后新向量正常可搜索。
 
 #### VectorSearchService
 
@@ -469,15 +497,15 @@ class EmbeddingClient:
 ```python
 class VectorRepository:
     def create_job(self, job: VectorIndexJobCreate) -> VectorIndexJobRecord: ...
-    def publish_vector(self, vector: CaseVectorCreate) -> CaseVectorRecord: ...
+    def refresh_case_vector(self, case_id: str, vector: CaseVectorCreate) -> tuple[CaseVectorRecord, str | None]: ...
     def get_current_vector(self, case_id: str) -> CaseVectorRecord | None: ...
-    def mark_unsearchable(self, case_id: str, reason: str | None = None) -> CaseVectorRecord | None: ...
+    def remove_case_vector(self, case_id: str) -> str | None: ...
     def search(self, query: VectorSearchQuery) -> list[VectorCandidateRecord]: ...
 ```
 
-- `publish_vector` 在单数据库事务内执行以下原子操作：(1) `UPDATE case_vectors SET is_current=false, updated_at=now() WHERE case_id=:id AND is_current=true`；(2) `INSERT` 新向量记录（`is_current=true, searchable=true`）。事务保证两步操作的原子性——若插入失败，旧向量的 `is_current` 不会被改变，避免出现案例无有效向量的中间态。新向量在发布时默认 `searchable=true`，由 `mark_unsearchable` 流程显式置为 `false`；`CaseVectorCreate` schema 不暴露 `searchable` 字段，由 Repository 层在 INSERT 时固定写入 `true`。
-- `publish_vector` 并发冲突处理：依赖 `case_id + is_current=true` 的部分唯一约束，若并发事务触发唯一约束冲突，当前事务回滚并返回稳定 409 错误码（`VECTOR_CONFLICT`），由 `VectorIndexService` 层决定是否重试（建议最多 1 次）。不在 `publish_vector` 内部实现重试循环。
-- 搜索只包含 `is_current=true` 且 `searchable=true` 的记录。
+- `refresh_case_vector` 在单数据库事务内执行以下原子操作：(1) 查询并删除旧向量记录（如果存在），记录 `old_vector_id` 和 `old_content_hash`；(2) `INSERT` 新向量记录。事务保证两步操作的原子性——若插入失败，旧向量不会被删除，避免出现案例无向量的中间态。返回新向量记录和旧向量 ID（用于审计）。
+- `remove_case_vector` 物理删除案例的向量记录，返回被删除的 `vector_id`（用于审计）。若向量不存在，返回 `None`（幂等操作）。
+- 搜索只包含存在于 `case_vectors` 表中的记录（向量存在即可搜索）。
 - 搜索策略使用 pgvector `0.8.2+` 的 iterative scan：在 HNSW 遍历过程中同时检查过滤条件（`brand_id`、`store_id`、`problem_type`、`tags`、`case_status`、时间范围），避免"先 ANN 后过滤"导致候选为空或"先过滤后 ANN"退化为全表扫描。迁移时通过 `SET hnsw.iterative_scan = strict_order` 启用。
 - 数据库异常映射为稳定错误，不暴露 SQL 或底层向量数据。
 
@@ -501,43 +529,39 @@ erDiagram
 **CaseVectorRecord**
 
 
-| Field                    | Type     | Required | Notes                                                                          |
-| ------------------------ | -------- | -------- | ------------------------------------------------------------------------------ |
-| `vector_id`              | string   | yes      | 向量记录标识                                                                         |
-| `case_id`                | string   | yes      | 上游案例标识                                                                         |
-| `case_updated_at`        | datetime | yes      | 输入所依据的案例更新时间                                                                   |
-| `enrichment_id`          | string   | no       | 使用的 LLM 派生结果标识                                                                 |
-| `enrichment_status`      | string   | no       | 使用时的派生结果状态                                                                     |
-| `input_template_version` | string   | yes      | 输入文本模板版本                                                                       |
-| `input_content_hash`     | string   | yes      | 输入文本哈希                                                                         |
-| `embedding_model_id`     | string   | yes      | 默认 `bge-large-zh`                                                              |
-| `embedding_dimension`    | integer  | yes      | 默认 1024                                                                        |
-| `embedding_vector`       | vector   | yes      | 问题侧语义画像的 pgvector 向量                                                           |
-| `is_current`             | boolean  | yes      | 是否为该案例当前有效向量；发布新向量时旧记录置为 false                                      |
-| `searchable`             | boolean  | yes      | 是否可被搜索返回；`publish_vector` 发布时默认 `true`，`mark_unsearchable` 显式置为 `false`；刷新发布的新向量重置为 `true` |
-| `degraded_reason`        | string   | no       | LLM 派生文本不可用等原因                                                                 |
-| `created_at`             | datetime | yes      | 创建时间                                                                           |
-| `updated_at`             | datetime | yes      | 更新时间                                                                           |
+| Field                    | Type     | Required | Notes                           |
+| ------------------------ | -------- | -------- | --------------------------------|
+| `vector_id`              | string   | yes      | 向量记录标识                      |
+| `case_id`                | string   | yes      | 上游案例标识                      |
+| `case_updated_at`        | datetime | yes      | 输入所依据的案例更新时间            |
+| `enrichment_id`          | string   | no       | 使用的 LLM 派生结果标识            |
+| `enrichment_status`      | string   | no       | 使用时的派生结果状态               |
+| `embedding_model_id`     | string   | yes      | 默认 `bge-large-zh`              |
+| `embedding_dimension`    | integer  | yes      | 默认 1024                        |
+| `embedding_vector`       | vector   | yes      | 问题侧语义画像的 pgvector 向量      |
+| `degraded_reason`        | string   | no       | LLM 派生文本不可用等原因            |
 
-`CaseVectorRecord` 仅表示成功生成并通过维度校验的向量记录，不保存 `pending`、`processing`、`failed` 或 `removed` 占位状态。失败、重试、移除/不可检索标记等生命周期审计由 `VectorIndexJob` 保存；状态查询响应聚合最近任务记录与当前有效向量记录。
+`CaseVectorRecord` 仅表示成功生成并通过维度校验的向量记录，每个案例最多一条记录。失败、重试、删除等生命周期审计由 `VectorIndexJob` 保存；状态查询响应聚合最近任务记录与当前向量记录。
 
 
 **VectorIndexJob**
 
 
-| Field            | Type     | Required | Notes                                                                             |
-| ---------------- | -------- | -------- | --------------------------------------------------------------------------------- |
-| `job_id`         | string   | yes      | 任务标识                                                                              |
-| `case_id`        | string   | yes      | 上游案例标识                                                                            |
-| `job_type`       | enum     | yes      | `refresh`, `retry`, `remove`                                                      |
-| `status`         | enum     | yes      | `queued`, `running`, `succeeded`, `failed`, `retryable`, `cancelled`（仅从 `queued` 转换，由管理员手动取消） |
+| Field            | Type     | Required | Notes                                 |
+| ---------------- | -------- | -------- | ------------------------------------- |
+| `job_id`         | string   | yes      | 任务标识                               |
+| `case_id`        | string   | yes      | 上游案例标识                            |
+| `job_type`       | enum     | yes      | `refresh`, `remove`                   |
+| `status`         | enum     | yes      | `running`, `succeeded`, `failed`      |
 | `source_version` | jsonb    | yes      | `{"case_updated_at": datetime, "enrichment_id": str | null, "enrichment_status": str | null}`；用于刷新时判断输入版本是否变化（Req 4.1） |
-| `error_code`     | string   | no       | 失败错误码                                                                             |
+| `old_vector_id`  | string   | no       | 刷新或删除时记录被替换/删除的向量 ID，用于审计追溯  |
+| `old_content_hash` | string | no       | 记录旧向量的内容哈希，用于审计追溯          |
+| `new_vector_id`  | string   | no       | 刷新成功时记录新向量 ID                  |
+| `error_code`     | string   | no       | 失败错误码                             |
 | `error_stage`    | string   | no       | `load_source`, `compose_input`, `embedding_call`, `validate_embedding`, `persist` |
-| `retry_count`    | integer  | yes      | 当前重试次数                                                                            |
-| `next_retry_at`  | datetime | no       | 下一次允许重试时间                                                                         |
-| `started_at`     | datetime | no       | 开始时间                                                                              |
-| `finished_at`    | datetime | no       | 结束时间                                                                              |
+| `retry_count`    | integer  | yes      | 当前重试次数（用户手动重试时递增）        |
+| `started_at`     | datetime | no       | 开始时间                              |
+| `finished_at`    | datetime | no       | 结束时间                               |
 
 
 ### Physical Data Model
@@ -553,56 +577,47 @@ erDiagram
 | Column                   | Type         | Constraint             |
 | ------------------------ | ------------ | ---------------------- |
 | `vector_id`              | varchar(64)  | primary key            |
-| `case_id`                | varchar(64)  | not null               |
+| `case_id`                | varchar(64)  | not null, unique       |
 | `case_updated_at`        | timestamptz  | not null               |
 | `enrichment_id`          | varchar(64)  | nullable               |
 | `enrichment_status`      | varchar(32)  | nullable               |
-| `input_template_version` | varchar(32)  | not null               |
-| `input_content_hash`     | varchar(128) | not null               |
 | `embedding_model_id`     | varchar(128) | not null               |
 | `embedding_dimension`    | integer      | not null               |
 | `embedding_vector`       | vector(1024) | not null               |
-| `is_current`             | boolean      | not null default true  |
-| `searchable`             | boolean      | not null default false |
 | `brand_id`               | varchar(64)  | not null               |
 | `store_id`               | varchar(64)  | not null               |
 | `problem_type`           | varchar(64)  | not null               |
 | `tags`                   | jsonb        | not null               |
 | `case_status`            | varchar(32)  | not null               |
-| `created_at`             | timestamptz  | not null               |
-| `updated_at`             | timestamptz  | not null               |
 
 
 **Indexes**
 
 - HNSW: `embedding_vector vector_cosine_ops WITH (m = 16, ef_construction = 200)` for semantic search；`m` 和 `ef_construction` 在迁移时固定，`ef_search` 通过配置 `PGVECTOR_HNSW_EF_SEARCH`（默认 40）在连接初始化时 `SET hnsw.ef_search` 动态调整。
-- B-tree: `case_id`, `brand_id`, `store_id`, `problem_type`, `case_status`, `is_current`, `searchable`, `created_at`, `updated_at`.
-- Partial unique: `(case_id) WHERE is_current = true`，确保同一案例最多一个当前有效向量。
-- Composite: `(case_id, is_current, input_content_hash)` for current vector lookup and duplicate prevention.
+- B-tree: `case_id` (unique), `brand_id`, `store_id`, `problem_type`, `case_status`, `case_updated_at`.
 - GIN: `tags` when JSONB tag filtering is used.
-
-`case_vectors.created_at` 表示向量记录创建时间。MVP 中案例创建或人工更新后通常会立即手动触发刷新，向量创建时间与案例创建时间预期只存在秒级差异；搜索接口的时间范围过滤按“天”粒度使用，因此该误差可接受。若未来需要小时级或分钟级过滤，应新增并镜像上游 `case_created_at`，不得继续复用向量记录创建时间。
 
 **Table: `vector_index_jobs`**
 
 - Primary key: `job_id`
 - Indexes: `case_id`, `status`, `(case_id, started_at desc)`, `next_retry_at`
+- Columns: 增加 `old_vector_id`、`old_content_hash`、`new_vector_id` 用于审计追溯
 - Stores lifecycle, source version, error stage and retry metadata; does not store full input text or vector array.
 
 ### Data Contracts & Integration
 
-**MarkVectorUnsearchableRequest**
+**RemoveVectorIndexRequest**
 
-- `reason`: required string or enum，表示移除或标记不可检索原因，例如 `case_deleted`、`case_archived`、`source_not_allowed`、`manual_admin_action`。
+- `reason`: required string or enum，表示删除原因，例如 `case_deleted`、`case_archived`、`source_not_allowed`、`manual_admin_action`。
 - `requested_by`: optional string，记录触发该操作的系统、管理员或上游流程标识。
-- 请求体不携带 vector id 或 embedding 数据；目标始终是该 `case_id` 的当前有效向量状态。
-- 响应使用 `VectorIndexStatusResponse`，并在可用时包含最近一次 remove 任务元数据。
+- 请求体不携带 vector id 或 embedding 数据；目标始终是该 `case_id` 的向量记录。
+- 响应使用 `VectorIndexJobResponse`，包含 remove 任务元数据。
 
 **VectorSearchRequest**
 
 - `query_text`: required non-empty text，表示用户当前问题的摘要或标准化表达。
 - `top_k`: bounded positive integer.
-- `filters`: optional `brand_id`, `store_id`, `problem_type`, `tags`, `case_status`, `created_at_from`, `created_at_to`；时间范围按天粒度解释，使用 `case_vectors.created_at` 近似案例创建时间。
+- `filters`: optional `brand_id`, `store_id`, `problem_type`, `tags`, `case_status`, `case_updated_at_from`, `case_updated_at_to`；时间范围过滤直接使用 `case_vectors.case_updated_at`。
 - `include_metadata`: optional boolean for returning index metadata.
 
 **VectorSearchResponse**
@@ -618,7 +633,6 @@ erDiagram
 - `similarity_score`
 - `distance`
 - `case_updated_at`
-- `input_content_hash`
 - `filter_metadata`: brand/store/problem type/tags/status needed by downstream.
 
 ## Error Handling
@@ -628,12 +642,12 @@ erDiagram
 - 输入文本不足、查询参数无效和过滤字段错误返回字段级 4xx。
 - embedding 超时、限流、供应商失败和配置缺失返回稳定错误码，并写入任务状态。
 - 维度不匹配或响应不可解析时拒绝发布向量。
-- 删除、归档或不可检索状态通过手动移除/不可检索请求将当前向量 `searchable=false` 处理，不物理删除审计数据；状态审计写入 `vector_index_jobs`。
+- 删除、归档或不可检索案例通过手动删除请求物理删除向量记录，状态审计写入 `vector_index_jobs`。
 
 ### Error Categories and Responses
 
 - **User Errors (4xx)**: 空查询文本、Top-K 越界、无效过滤字段、案例不可索引。
-- **Business Logic Errors (409/422)**: 正在处理中的重复刷新、输入内容不足、不可重试任务、状态冲突、并发向量发布冲突（`VECTOR_CONFLICT`）、案例不可索引（`VECTOR_CASE_NOT_INDEXABLE`）。
+- **Business Logic Errors (409/422)**: 正在处理中的重复刷新（`VECTOR_REFRESH_IN_PROGRESS`）、输入内容不足、案例不可索引（`VECTOR_CASE_NOT_INDEXABLE`）。
 - **External Dependency Errors (503)**: embedding 超时、限流、供应商失败、生产配置缺失。
 - **System Errors (5xx)**: 数据库连接、pgvector 扩展不可用、索引查询异常。
 
@@ -642,30 +656,30 @@ erDiagram
 - Log: job requested、source loaded、input composed、embedding requested、embedding validated、vector published、retry scheduled、search executed。
 - Metrics: embedding latency、success rate、dimension mismatch count、retry count、manual refresh count、search latency、empty result count。
 - Logs and errors must include `case_id`、`job_id`、model id、status and error code only; never include full input text or vector array.
-- **`created_at` 偏差监控**：`case_vectors.created_at` 用于搜索过滤时近似案例创建时间。当 `created_at` 与 `case_updated_at` 的偏差超过 24 小时的记录占比超过 10% 时，应触发评估是否新增 `case_created_at` 列以替代近似逻辑。
-- **编码注意 — 偏差直方图指标**：实现 Metrics 时应为 `created_at` 与 `case_updated_at` 的偏差建立直方图指标（如 `vector_created_at_offset_hours`），便于后续判断是否需要新增 `case_created_at` 列。批量历史数据导入场景下两者偏差可能远大于秒级，直方图可及早暴露问题。
 
 ## Testing Strategy
 
 ### Unit Tests
 
-- `EmbeddingInputComposer` 按固定段落顺序组合问题摘要、问题描述、问题类型、场景上下文、根因分类、适用场景和标签，生成稳定 hash。
+- `EmbeddingInputComposer` 按固定段落顺序组合问题摘要、问题描述、问题类型、场景上下文、根因分类、适用场景和标签。
 - `EmbeddingInputComposer` 不把解决步骤、效果结果、方案摘要或推荐文案纳入主召回 embedding 输入。
 - `EmbeddingInputComposer` 在 LLM 派生结果缺失、未发布或过期时返回降级原因。
 - `EmbeddingClient` 将超时、限流、供应商错误、维度不匹配和不可解析响应映射为稳定错误。
-- `VectorIndexService` 对相同输入版本避免重复发布当前有效向量。
+- `VectorIndexService` 通过比较 `case_updated_at` 和 `enrichment_id` 判断是否需要刷新向量。
 - `VectorIndexService` 在案例状态为 `archived` 或存在已完成 remove 任务时拒绝刷新，返回 `VECTOR_CASE_NOT_INDEXABLE`。
-- `VectorRepository.publish_vector` 发布的新向量默认 `searchable=true`；刷新后新向量覆盖旧向量的不可检索状态。
+- `VectorRepository.refresh_case_vector` 在事务内先删除旧向量再插入新向量，返回新向量记录和旧向量 ID。
 - `VectorSearchService` 校验空查询、Top-K 越界和无效过滤条件。
 
 ### Integration Tests
 
-- POST `/api/a3-cases/{case_id}/vector-index/refresh` 读取案例和派生结果，生成 fake embedding，并保存可检索向量。
-- GET `/api/a3-cases/{case_id}/vector-index` 基于最近任务和当前有效向量返回 queued、running、succeeded、retryable、failed、published/degraded 等状态和最近失败原因。
-- POST `/api/a3-cases/{case_id}/vector-index/unsearchable` 创建 remove 任务，将当前有效向量标记为不可检索；当前无有效向量时仍返回明确不可检索状态。
-- Retry endpoint 只允许可重试失败任务，并递增重试次数。
-- 案例归档或删除并显式调用不可检索标记后，`/api/vector-search` 不再返回该案例。
-- 案例标记不可检索后再次触发刷新，若案例状态为 `archived` 则刷新被拒绝（`VECTOR_CASE_NOT_INDEXABLE`）；若案例状态正常则刷新成功且新向量 `searchable=true`。
+- **Router 层防抖测试**：同一 `case_id` 的并发刷新请求，第二个请求返回 409 错误（`VECTOR_REFRESH_IN_PROGRESS`）；第一个请求完成后（无论成功或失败），防抖锁释放，后续请求可正常执行。
+- **防抖锁超时测试**：模拟刷新任务执行超过 120 秒的场景，验证防抖锁自动清理，后续请求可正常执行。
+- POST `/api/a3-cases/{case_id}/vector-index/refresh` 读取案例和派生结果，生成 fake embedding，并保存向量记录。
+- GET `/api/a3-cases/{case_id}/vector-index` 基于最近任务和当前向量返回 running、succeeded、failed、published/degraded 等状态和最近失败原因。
+- POST `/api/a3-cases/{case_id}/vector-index/remove` 创建 remove 任务，物理删除向量记录；当前无向量时仍返回成功状态（幂等操作）。
+- POST `/api/vector-index/jobs/{job_id}/retry` 允许失败任务重试，并递增重试次数。
+- 案例归档或删除并显式调用删除接口后，`/api/vector-search` 不再返回该案例。
+- 案例删除后再次触发刷新，若案例状态为 `archived` 则刷新被拒绝（`VECTOR_CASE_NOT_INDEXABLE`）；若案例状态正常则刷新成功且新向量正常可搜索。
 - `EmbeddingClient.embed_for_query` 超时直接返回 503 不重试；`embed_for_index` 超时触发重试逻辑。
 - `/api/vector-search` 同时应用问题语义排序和品牌、门店、问题类型、标签、状态过滤。
 
@@ -674,7 +688,8 @@ erDiagram
 - 迁移启用 pgvector 并拒绝低于 `0.8.2` 的扩展版本。
 - `case_vectors.embedding_vector` 使用配置维度，默认 `vector(1024)`。
 - HNSW cosine 索引和过滤字段索引存在。
-- 搜索只返回 `is_current=true` 且 `searchable=true` 的向量记录。
+- `case_id` 列有唯一约束，确保每个案例最多一条向量记录。
+- 搜索返回所有存在于 `case_vectors` 表中的向量记录（向量存在即可搜索）。
 
 ### Security and Privacy Tests
 
@@ -699,8 +714,6 @@ erDiagram
 
 - MVP 使用 PostgreSQL + pgvector 单库部署，优先 HNSW cosine 索引满足低延迟 Top-K 候选搜索。
 - HNSW 索引参数：`m=16`、`ef_construction=200` 在迁移时固定；`ef_search` 通过 `PGVECTOR_HNSW_EF_SEARCH` 配置项（默认 40）在连接初始化时 `SET hnsw.ef_search` 动态调整，无需重建索引。未来可按查询特征在会话级别临时调高。
-- **`ef_search` 实现路径**：通过 SQLAlchemy `pool_events.connect` 事件监听器，在每个新连接创建时执行 `SET hnsw.ef_search = :value`，值来自 `Config.PGVECTOR_HNSW_EF_SEARCH`。连接池回收后新连接会自动重新执行该事件，确保 `ef_search` 始终一致。不在会话级别或请求级别动态修改该参数。
-- **编码注意 — `ef_search` 防御性验证**：`pgvector_checks.py` 启动检查中应增加 `SHOW hnsw.ef_search` 验证，确认运行时值与配置一致。SQLAlchemy 的 `pool_events.connect` 在同步引擎下可靠，但若未来迁移到 async engine 或切换连接池实现，该事件可能不触发；启动时的显式验证可及早发现静默失效。
 - 过滤字段建立 B-tree/GIN 索引。搜索使用 pgvector `0.8.2+` 的 iterative scan（`strict_order` 模式），在 HNSW 遍历过程中同时检查过滤条件，避免候选为空或退化为全表扫描。
 - **搜索路径延迟策略**：`VectorSearchService.search()` 通过 `EmbeddingClient.embed_for_query` 同步调用远程 embedding 服务生成查询向量，搜索路径超时 ≤2 秒、不重试——embedding 调用失败直接返回 503，避免下游推荐服务等待。索引刷新路径通过 `EmbeddingClient.embed_for_index` 使用独立的超时（默认 30 秒）和重试（默认 2 次）配置。两条路径的超时和重试策略在 `EmbeddingConfig` 中分别配置，互不影响。
 - 若数据规模超过单库可接受范围，未来可在不改变下游搜索原语的前提下迁移到独立向量服务；本规格不实现该迁移。

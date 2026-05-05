@@ -56,13 +56,45 @@
 
 1. **事务语义**：用户点击"提交且摘要"按钮后，系统应完成案例保存（创建或更新）并异步触发 LLM 增强。案例保存失败时不触发增强；案例保存成功后立即返回客户端，增强在后台异步执行。
 2. **实现策略**：
-   - **案例保存优先**：前端调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}`，成功后（HTTP 200）立即异步调用 `POST /api/a3-cases/{case_id}/enrichment-runs`（后台触发，不等待结果）。
+   - **案例保存优先**：前端调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}`，后台成功后返回前端 HTTP 200，同时异步调用 `POST /api/a3-cases/{case_id}/enrichment-runs`。
    - **客户端无需等待**：案例保存成功后前端即可返回成功状态，用户无需等待增强完成，也无需轮询增强结果。增强结果在后台生成后自动关联到案例，用户下次查看案例详情时可看到派生内容。
    - **增强失败处理**：若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，增强运行记录标记为 `failed` 或 `validation_failed`。用户可通过管理后台或重试接口手动触发重新增强。
 3. **后端职责边界**：
    - `a3-case-management` 不感知 LLM 增强，只负责案例 CRUD。
    - `llm-case-enrichment` 不修改案例基础字段，只负责生成派生结果。
    - 两个规格通过 API 调用解耦，不共享数据库事务。
+
+### Cross-Spec Coordination: "删除案例"
+
+用户在前端的"删除案例"操作是一个跨 `a3-case-management`、`llm-case-enrichment` 和 `case-vector-indexing` 的业务事务，需要协调三个规格的 API 调用：
+
+1. **职责边界**：
+   - `a3-case-management` 负责删除案例基础数据（`a3_cases` 表记录）。
+   - 本规格（`llm-case-enrichment`）负责删除对应的 LLM 派生数据（派生结果、运行记录）。
+   - `case-vector-indexing` 负责删除对应的向量索引数据（向量记录、索引任务记录）。
+   - 三个规格通过 API 调用解耦，不共享数据库事务。
+
+2. **调用顺序**（同步级联删除）：
+   - 用户确认删除案例后，后台按以下顺序同步执行：
+     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
+     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
+     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
+   - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
+
+3. **降级策略**：
+   - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
+   - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
+   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
+   - **下游服务不可用**：若本规格或 `case-vector-indexing` 服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+
+4. **幂等性保证**：
+   - `DELETE /api/a3-cases/{case_id}/enrichment-data` 对不存在的派生数据返回 HTTP 200（目标状态已达成），不返回 404。
+   - 多次调用删除接口应返回相同结果，不产生副作用。
+
+5. **后台异步清理**：
+   - 系统应提供后台定期扫描任务，检测孤立的派生数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_enrichment_results` 或 `case_vectors` 中存在）。
+   - 后台清理任务定期调用本规格的删除接口和 `case-vector-indexing` 的删除接口清理孤立数据。
+   - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
 
 ### Implementation Sequencing
 
@@ -277,15 +309,15 @@ sequenceDiagram
 
 | Component                 | Domain/Layer      | Intent                                   | Req Coverage                      | Key Dependencies                                   | Contracts      |
 | ------------------------- | ----------------- | ---------------------------------------- | --------------------------------- | -------------------------------------------------- | -------------- |
-| EnrichmentRouter          | API               | 暴露案例增强、状态与推荐文案端点                         | 1.1, 4.5, 4.6, 5.1                | EnrichmentService P0, RecommendationCopyService P0 | API            |
+| EnrichmentRouter          | API               | 暴露案例增强、删除、状态与推荐文案端点                         | 1.1, 4.5, 4.6, 5.1                | EnrichmentService P0, RecommendationCopyService P0 | API            |
 | EnrichmentSchemas         | API/Data Contract | 请求响应、输出 schema、状态枚举与错误结构                 | 2.1, 3.1, 4.1, 5.2                | Pydantic P0                                        | API, State     |
 | CaseSnapshotProvider      | Integration       | 读上游案例快照并映射为 LLM 输入                        | 1.1, 1.2, 6.1                     | CaseService P0                                     | Service        |
-| EnrichmentService         | Domain Service    | 编排案例摘要、结构化建议与标签建议                        | 1.3, 2.5, 3.4, 4.3, 4.6           | LLMClient (shared) P0                              | Service        |
+| EnrichmentService         | Domain Service    | 编排案例摘要、结构化建议、标签建议与删除                        | 1.3, 2.5, 3.4, 4.3, 4.6           | LLMClient (shared) P0                              | Service        |
 | RecommendationCopyService | Domain Service    | 对已排序候选生成推荐文案，不改排序                        | 5.1, 5.4, 5.5                     | LLMClient (shared) P0, OutputValidator P0          | Service        |
 | PromptCatalog             | AI Boundary       | 任务 Prompt、输出格式与注入防护约束                    | 2.1, 3.1, 6.2                     | Config P0                                          | Service        |
 | LLMClient                 | External Adapter  | 调用 `deepseek-v4-pro` 或兼容模型并统一错误形态；共享基础设施 | 6.3, 6.4, 6.5                     | External LLM P0                                    | Service        |
 | OutputValidator           | Validation        | 解析并校验 LLM 结构化输出                          | 3.3, 4.1, 4.2, 5.2                | EnrichmentSchemas P0                               | Service        |
-| EnrichmentRepository      | Data Access       | 持久化派生结果、运行记录、状态与错误                       | 2.4, 4.3, 4.4, 4.5, 4.6, 6.3      | PostgreSQL P0                                      | Service, State |
+| EnrichmentRepository      | Data Access       | 持久化派生结果、运行记录、状态、错误与删除                       | 2.4, 4.3, 4.4, 4.5, 4.6, 6.3      | PostgreSQL P0                                      | Service, State |
 | EnrichmentJobRunner       | Runtime           | 运行生命周期管理：创建运行记录、加载快照、委托 Service 执行、重试入口与状态流转 | 1.4, 6.4                          | CaseSnapshotProvider P0, EnrichmentService P0, EnrichmentRepository P0 | Batch          |
 | ErrorMapper               | API Support       | 统一 LLM 增强错误响应                            | 1.2, 4.2, 5.5                     | FastAPI P0                                         | API            |
 
@@ -304,18 +336,20 @@ sequenceDiagram
 **API Contract**
 
 
-| Method | Endpoint                                  | Request                      | Response                       | Errors             |
-| ------ | ----------------------------------------- | ---------------------------- | ------------------------------ | ------------------ |
-| POST   | `/api/a3-cases/{case_id}/enrichment-runs` | `CreateEnrichmentRunRequest` | `EnrichmentRunResponse`        | 200, 404, 409, 422, 503 |
-| GET    | `/api/a3-cases/{case_id}/enrichment`      | path `case_id`               | `CaseEnrichmentStatusResponse` | 404                |
-| POST   | `/api/recommendations/copy`               | `RecommendationCopyRequest`  | `RecommendationCopyResponse`   | 503                |
-| POST   | `/api/enrichment-runs/{run_id}/retry`     | path `run_id`                | `EnrichmentRunResponse`        | 200, 404, 409, 503 |
+| Method | Endpoint                                       | Request                      | Response                       | Errors             |
+| ------ | ---------------------------------------------- | ---------------------------- | ------------------------------ | ------------------ |
+| POST   | `/api/a3-cases/{case_id}/enrichment-runs`      | `CreateEnrichmentRunRequest` | `EnrichmentRunResponse`        | 200, 404, 409, 422, 503 |
+| GET    | `/api/a3-cases/{case_id}/enrichment`           | path `case_id`               | `CaseEnrichmentStatusResponse` | 404                |
+| DELETE | `/api/a3-cases/{case_id}/enrichment-data`      | path `case_id`               | `DeleteEnrichmentDataResponse` | 200, 500           |
+| POST   | `/api/recommendations/copy`                    | `RecommendationCopyRequest`  | `RecommendationCopyResponse`   | 503                |
+| POST   | `/api/enrichment-runs/{run_id}/retry`          | path `run_id`                | `EnrichmentRunResponse`        | 200, 404, 409, 503 |
 
 
 **Implementation Notes**
 
 - 创建增强运行和重试端点委托 `EnrichmentJobRunner` 执行；响应须始终带 `run_id` 与状态。
 - **异步执行语义**：`POST /api/a3-cases/{case_id}/enrichment-runs` 和 `POST /api/enrichment-runs/{run_id}/retry` 端点立即返回 HTTP 200 + `EnrichmentRunResponse`（`status: running`），LLM 增强在后台同步执行（MVP 阶段在请求线程内完成，未来可替换为异步 worker）。客户端无需等待或轮询增强结果，增强完成后派生内容自动关联到案例。
+- **删除端点幂等性**：`DELETE /api/a3-cases/{case_id}/enrichment-data` 删除指定案例的所有派生数据（`case_enrichment_results` 和 `case_enrichment_runs`）。对不存在的派生数据返回 HTTP 200（目标状态已达成），不返回 404。删除失败时返回 HTTP 500。
 - **推荐文案端点失败策略**：推荐文案端点委托 `RecommendationCopyService` 执行，LLM 调用失败（含超时、供应商错误、校验失败）时返回 HTTP 503。不得返回新排序字段、相似度分值或过滤决策。
 - 错误响应沿用上游统一结构，并新增稳定错误码。
 
@@ -335,6 +369,7 @@ sequenceDiagram
 ```python
 class EnrichmentService:
     def execute_enrichment(self, input_snapshot: CaseInputSnapshot) -> CaseEnrichmentResult: ...
+    def delete_enrichment_data(self, case_id: str) -> bool: ...
 ```
 
 - **调用约束**：`execute_enrichment` 为内部编排方法，仅由 `EnrichmentJobRunner` 调用，Router 层**不得**直接调用。
@@ -342,6 +377,14 @@ class EnrichmentService:
 - 前置条件：上游案例存在且状态可作增强输入（仅 `active` 或 `archived`，`draft` 不可增强）；生产 LLM 配置已通过隐私门控。
 - 后置条件：生成成功且校验通过后，委托 `EnrichmentRepository.complete_run` 写入新的 `valid` 结果（Repository 层保证事务内原子性地删除旧记录，见 §5.2）；失败或校验未通过则仅记录失败阶段、错误类型与是否可重试。
 - 不变量：不修改 `A3Case` 基础字段；仅 `valid` 结果可供下游消费。
+
+**删除操作**：
+
+- `delete_enrichment_data(case_id)` 删除指定案例的所有派生数据（`case_enrichment_results` 和 `case_enrichment_runs`）。
+- 前置条件：无（不依赖上游案例是否存在）。
+- 后置条件：该 `case_id` 的所有派生数据已从数据库中物理删除。
+- 返回值：`True` 表示删除成功（无论是否实际删除了数据），`False` 表示删除失败（数据库错误）。
+- 幂等性：多次调用返回相同结果，不产生副作用。
 
 #### EnrichmentJobRunner
 
@@ -579,6 +622,7 @@ class EnrichmentRepository:
     def complete_run(self, run_id: str, result: CaseEnrichmentResultCreate) -> EnrichmentRunRecord: ...
     def fail_run(self, run_id: str, error: EnrichmentErrorData) -> EnrichmentRunRecord: ...
     def get_current_result(self, case_id: str) -> CaseEnrichmentResultRecord | None: ...
+    def delete_enrichment_data(self, case_id: str) -> bool: ...
 ```
 
 **事务语义**：
@@ -599,6 +643,21 @@ class EnrichmentRepository:
           # 3. 更新运行记录状态为 succeeded
           update(case_enrichment_runs).where(run_id == run_id).set(status='succeeded')
           return run_record
+  ```
+
+- `delete_enrichment_data` 须在**同一数据库事务**内完成以下原子操作：
+  1. 删除该 `case_id` 的所有派生结果（`DELETE FROM case_enrichment_results WHERE case_id = ?`）
+  2. 删除该 `case_id` 的所有运行记录（`DELETE FROM case_enrichment_runs WHERE case_id = ?`）
+  
+  伪代码示例：
+  ```python
+  def delete_enrichment_data(self, case_id: str) -> bool:
+      with transaction:
+          # 1. 删除派生结果
+          delete(case_enrichment_results).where(case_id == case_id)
+          # 2. 删除运行记录
+          delete(case_enrichment_runs).where(case_id == case_id)
+          return True
   ```
 
 **并发说明**：本设计不实现应用层并发控制机制（见 §2 "Overview" 并发假设）。业务流程应确保单一案例的增强操作顺序执行。数据库层面的 `UNIQUE(case_id)` 约束用于保证数据完整性，防止代码逻辑错误（如重复调用增强接口）导致同一案例产生多条派生结果，**该约束是数据完整性保障，不是并发控制手段**。
@@ -695,6 +754,7 @@ erDiagram
 - **Unique constraint**: `UNIQUE(case_id)` — 确保同一案例只有一条派生结果记录（无论 `status` 为何值）
 - Indexes: `case_id`, `(case_id, status)`, `(case_id, case_updated_at)`
 - JSONB fields: `structured_suggestions`, `tag_suggestions`, `source_references`
+- **删除策略**：应用层显式删除（通过 `DELETE /api/a3-cases/{case_id}/enrichment-data` 端点），不依赖数据库外键级联。
 
 **唯一性说明**：`UNIQUE(case_id)` 约束在数据库层面保证同一案例只有一条派生结果，用于保证数据完整性，防止代码逻辑错误（如重复调用增强接口）导致同一案例产生多条派生结果。应用层设计不实现并发控制机制（见 §2 "Overview" 并发假设），假设业务流程确保单一案例的增强操作顺序执行。**该约束是数据完整性保障，不是并发控制手段**。
 
@@ -703,6 +763,7 @@ erDiagram
 - Primary key: `run_id`
 - Indexes: `case_id`, `status`, `(case_id, started_at desc)`
 - Stores model_id/status/error metadata, not full prompt body.
+- **删除策略**：应用层显式删除（通过 `DELETE /api/a3-cases/{case_id}/enrichment-data` 端点），不依赖数据库外键级联。
 
 **Table: `recommendation_copy_runs`**
 
@@ -743,7 +804,7 @@ erDiagram
 - **User Errors (4xx)**：缺 `case_id`、候选列表无效。
 - **Business Logic Errors (409/422)**：案例不符合增强条件、输出校验失败、不允许重试。
 - **External Dependency Errors (503)**：LLM 限流、供应商故障、隐私配置缺失、LLM 超时、校验失败。推荐文案端点的 LLM 调用失败返回 HTTP 503。
-- **System Errors (5xx)**：数据库持久化失败或未预期运行时错误。
+- **System Errors (5xx)**：数据库持久化失败或未预期运行时错误。删除操作失败返回 HTTP 500。
 
 ### Monitoring
 
@@ -764,8 +825,13 @@ erDiagram
 
 - POST `/api/a3-cases/{case_id}/enrichment-runs`：立即返回 HTTP 200 + `running` 状态，加载上游快照、创建运行、校验 mock LLM 输出并写入 `valid`。若请求前已存在旧派生结果，须在**本轮校验通过后的落库事务内**先删除旧记录再写入新结果。
 - GET `/api/a3-cases/{case_id}/enrichment`：返回当前状态。
+- DELETE `/api/a3-cases/{case_id}/enrichment-data`：删除指定案例的所有派生数据（派生结果和运行记录），返回 HTTP 200。对不存在的派生数据返回 HTTP 200（幂等性）。删除失败返回 HTTP 500。
 - POST `/api/recommendations/copy`：单次 LLM 调用生成全部候选文案，顺序不变；整体失败时返回 HTTP 503。
 - 重试接口：仅对可重试的失败运行重试，并递增重试计数。
+- **删除幂等性测试**：
+  - 对从未生成过派生数据的案例调用删除接口，返回 HTTP 200。
+  - 对已删除派生数据的案例再次调用删除接口，返回 HTTP 200。
+  - 删除后查询派生结果和运行记录，确认已不存在。
 - **多模型配置隔离测试**：
   - 验证四个配置类（`EnrichmentLLMConfig`、`NormalizerLLMConfig`、`EmbeddingConfig`、`RerankerConfig`）在应用启动后是独立实例：`id(app_config.enrichment_llm) != id(app_config.normalizer_llm)`。
   - 验证配置值互不干扰：修改一个配置对象的 `timeout_ms` 不影响另一个配置对象的值。

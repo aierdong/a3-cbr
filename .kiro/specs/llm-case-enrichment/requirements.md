@@ -84,3 +84,15 @@
 6.3 The LLM 案例增强服务 shall 记录 `model_id`、请求目的、结果状态和错误类型，供运维排查和审计；provider/base_url 仅作为运行时配置，不作为持久化字段。
 6.4 If LLM 调用超时、限流或供应商失败, then the LLM 案例增强服务 shall 记录失败并支持受控重试，不阻塞案例基础查看和检索候选展示。
 6.5 The LLM 案例增强服务 shall 明确供应商数据保留与隐私配置要求，缺少必要配置时不得启用生产增强流程。
+
+### Requirement 7: 派生数据删除与清理
+
+**Objective:** As a 平台管理员, I want 案例删除时同步清理对应的 LLM 派生数据, so that 系统不会保留孤立的派生数据，避免数据冗余和一致性问题。
+
+#### Acceptance Criteria
+
+7.1 When 上游案例管理系统删除案例, the LLM 案例增强服务 shall 提供删除接口，物理删除该案例的所有派生数据（派生结果和运行记录）。
+7.2 The LLM 案例增强服务 shall 在同一数据库事务内删除派生结果（`case_enrichment_results`）和运行记录（`case_enrichment_runs`），保证删除操作的原子性。
+7.3 If 删除接口被调用但该案例从未生成过派生数据, then the LLM 案例增强服务 shall 返回成功状态（HTTP 200），支持幂等删除。
+7.4 The LLM 案例增强服务 shall 支持后台异步清理任务，定期扫描并删除孤立的派生数据（`case_id` 在上游案例表中不存在）。
+7.5 Where 删除操作失败（数据库错误、事务失败）, the LLM 案例增强服务 shall 返回失败状态（HTTP 500）并记录错误日志，供运维排查和重试。
