@@ -68,7 +68,7 @@
 
 #### Acceptance Criteria
 
-5.1 When 用户查看推荐运行结果, the MVP 后台前端 shall 提供运行级反馈入口，支持有用性、1-5 评分、采纳状态和备注。
+5.1 When 用户查看推荐运行结果, the MVP 后台前端 shall 提供运行级反馈入口，支持有用性（useful/not_useful/unknown）和备注。
 5.2 When 用户查看单条推荐项, the MVP 后台前端 shall 提供推荐项级反馈入口，并携带对应推荐运行标识和推荐项标识提交。
 5.3 When 反馈提交成功, the MVP 后台前端 shall 展示保存后的反馈状态或更新时间，避免用户误以为反馈未记录。
 5.4 If 反馈提交失败, then the MVP 后台前端 shall 展示稳定错误提示，并保持推荐结果仍然可见。

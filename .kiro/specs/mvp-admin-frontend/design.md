@@ -268,8 +268,13 @@ sequenceDiagram
 #### 环境与认证（MVP）
 
 - **全匿名**：不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header（若后续产品规格要求认证，须单独立项并修订本设计）。
-- **仅 dev 代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求，不把「浏览器直连跨域后端」作为 MVP 默认路径。
-- **配置**：代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源；生产与预发的网关、TLS、CORS 不在本 MVP 交付范围内，若脱离 dev 代理再单独约定。
+- **API 契约来源**：前端 API 类型定义严格对齐 `docs/contracts/` 目录下的 OpenAPI 规格文件（`a3-case-management.openapi.yaml`、`cbr-retrieval-recommendation.openapi.yaml`、`recommendation-feedback.openapi.yaml`），字段命名、枚举值、错误码和状态语义以契约文件为准。
+- **开发环境代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求。代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源。
+- **MVP 部署策略（单节点同源部署）**：MVP 阶段前后端部署在同一节点上，前端静态资源由后端 FastAPI 应用托管（通过 `StaticFiles` 中间件或 Nginx 反向代理），前端请求后端 API 为同源请求，无需配置 CORS。具体部署方式：
+  - **方式 1（FastAPI 托管）**：FastAPI 应用挂载 `StaticFiles` 中间件，将前端构建产物（`frontend/dist`）托管在根路径或 `/admin` 路径下，API 路由保持 `/api` 前缀，前端通过相对路径访问 API。
+  - **方式 2（Nginx 反向代理）**：Nginx 同时托管前端静态资源和反向代理后端 API，前端和 API 共享同一域名和端口，前端通过相对路径访问 API。
+  - **环境变量注入**：前端构建时通过 `VITE_API_BASE_URL` 环境变量注入 API base URL（开发环境为空或 `/api`，生产环境为 `/api` 或绝对路径），`ApiClient` 根据环境变量动态拼接请求路径。
+  - **后续扩展**：验证无误后，若需要前后端分离部署或多节点部署，需单独评估 CORS 配置、CDN 托管、负载均衡和会话管理策略，并修订本设计。
 
 #### ApiClient
 
@@ -399,46 +404,156 @@ interface ApiClient {
 
 ### Data Contracts & Integration
 
-**CaseListItem**
-- `case_id`
-- problem description preview
-- `brand_id`, `brand_name`, `store_id`, `store_name`
-- `problem_type`, `status`, `tags`
-- `created_at`, `updated_at`
+本节定义前端数据模型与后端 API 契约的映射关系。所有字段命名、类型和枚举值严格对齐 `docs/contracts/` 目录下的 OpenAPI 规格文件。
 
-**CaseDetailResponse**
-- 包含 `CaseListItem` 字段。
-- 额外包含完整 `problem_description`、`context`、`root_cause`、`solution_steps`、`outcome`。
-- 排除 embedding、推荐分值、反馈字段和供应商诊断信息。
+#### 案例管理数据模型
 
-**RecommendationRequest**
-- `query_text`: required non-empty text.
-- `top_k`: positive integer within backend config.
-- `filters`: optional `brand_id`, `store_id`, `problem_type`, `tags`, `case_status` or upstream `status`, `created_at_from`, `created_at_to`.
+**CaseListItem**（对应 `a3-case-management.openapi.yaml` § CaseListItem）
 
-**RecommendationResponse**
-- `recommendation_run_id`
-- `status`: `succeeded`, `empty`, `degraded`, `failed`
-- `applied_filters`
-- `query_metadata`
-- ordered `items`
-- optional `degraded_reason`
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `case_id` | `case_id` | string | 案例唯一标识 | 直接映射 |
+| `problem_description_preview` | `problem_description_preview` | string | 问题描述预览（后端截断） | 直接映射，后端返回截断后的预览文本 |
+| `store_profile` | `store_profile` | StoreProfile | 门店档案 | 直接映射对象 |
+| `store_profile.store_id` | `store_profile.store_id` | string | 门店标识 | 从嵌套对象提取 |
+| `store_profile.store_name` | `store_profile.store_name` | string | 门店名称 | 从嵌套对象提取 |
+| `store_profile.brand_id` | `store_profile.brand_id` | string | 品牌标识 | 从嵌套对象提取 |
+| `store_profile.brand_name` | `store_profile.brand_name` | string | 品牌名称 | 从嵌套对象提取 |
+| `store_profile.business_type` | `store_profile.business_type` | string | 业态类型 | 从嵌套对象提取 |
+| `store_profile.store_scale` | `store_profile.store_scale` | string | 门店规模 | 从嵌套对象提取 |
+| `store_profile.franchise_type` | `store_profile.franchise_type` | string | 加盟类型 | 从嵌套对象提取 |
+| `store_profile.city` | `store_profile.city` | string | 城市 | 从嵌套对象提取 |
+| `store_profile.city_tier` | `store_profile.city_tier` | string | 城市规模 | 从嵌套对象提取 |
+| `problem_type` | `problem_type` | ProblemType | 问题类型枚举 | 直接映射，枚举值：`service`, `quality`, `operation`, `hygiene`, `staffing`, `other` |
+| `status` | `status` | CaseStatus | 案例状态枚举 | 直接映射，枚举值：`draft`, `active`, `archived` |
+| `created_at` | `created_at` | string (date-time) | 创建时间 | 直接映射 ISO 8601 格式 |
+| `updated_at` | `updated_at` | string (date-time) | 更新时间 | 直接映射 ISO 8601 格式 |
 
-**RecommendationItem**
-- `recommendation_item_id`, `case_id`, `rank`
-- `case_reference`, `core_solution_steps`, `outcome_summary`, `missing_fields`
-- `vector_similarity_score`, optional `semantic_similarity_score`, optional `structured_similarity_score`, optional `business_score`, `final_score`, `score_metadata`
-- `recommendation_reason`, `reference_points`, `cautions`, `source_references`, `explanation_status`
+**CaseDetailResponse**（对应 `a3-case-management.openapi.yaml` § CaseDetailResponse）
 
-**FeedbackCreateRequest**
-- `recommendation_run_id`
-- optional `recommendation_item_id`
-- `usefulness`: `useful`, `not_useful`, `unknown`
-- optional `rating`: 1-5
-- `adoption_status`: `adopted`, `not_adopted`, `pending`
-- optional `comment`
-- `source_channel`: `admin_web`
-- optional `idempotency_key`
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| 继承 `CaseListItem` 所有字段 | - | - | - | - |
+| `problem_description` | `problem_description` | string | 完整问题描述 | 直接映射，替换列表中的 `problem_description_preview` |
+| `context` | `context` | Context | 场景上下文对象 | 直接映射对象，包含 `scene` 必填字段和可选扩展字段 |
+| `context.scene` | `context.scene` | string | 场景描述 | 从嵌套对象提取 |
+| `root_cause` | `root_cause` | string | 根因分析 | 直接映射 |
+| `solution_steps` | `solution_steps` | SolutionStep[] | 解决步骤数组 | 直接映射对象数组 |
+| `solution_steps[].order` | `solution_steps[].order` | integer | 步骤顺序 | 从数组元素提取 |
+| `solution_steps[].content` | `solution_steps[].content` | string | 步骤内容 | 从数组元素提取 |
+| `solution_steps[].extra` | `solution_steps[].extra` | object | 可选扩展字段 | 从数组元素提取（可选） |
+| `outcome` | `outcome` | Outcome | 效果结果对象 | 直接映射对象 |
+| `outcome.result` | `outcome.result` | OutcomeResult | 效果枚举 | 从嵌套对象提取，枚举值：`improved`, `no_change`, `unknown` |
+| `outcome.notes` | `outcome.notes` | string | 效果备注 | 从嵌套对象提取 |
+
+**CreateCaseRequest / UpdateCaseRequest**（对应 `a3-case-management.openapi.yaml` § CreateCaseRequest / UpdateCaseRequest）
+
+前端表单字段直接映射到后端请求 schema，不做额外转换。编辑模式禁止发送 `case_id` 和 `created_at`。
+
+#### 推荐检索数据模型
+
+**RecommendationRequest**（对应 `cbr-retrieval-recommendation.openapi.yaml` § RecommendationRequest）
+
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `query_text` | `query_text` | string | 查询文本 | 直接映射，必填，非空 |
+| `top_k` | `top_k` | integer | 返回数量 | 直接映射，范围 1-100，默认 20 |
+| `filters` | `filters` | RecommendationFilters | 过滤条件对象 | 直接映射对象（可选） |
+| `filters.brand_id` | `filters.brand_id` | string | 品牌过滤 | 从嵌套对象提取（可选） |
+| `filters.store_id` | `filters.store_id` | string | 门店过滤 | 从嵌套对象提取（可选） |
+| `filters.business_type` | `filters.business_type` | string | 业态过滤 | 从嵌套对象提取（可选） |
+| `filters.store_scale` | `filters.store_scale` | string | 门店规模过滤 | 从嵌套对象提取（可选） |
+| `filters.franchise_type` | `filters.franchise_type` | string | 加盟类型过滤 | 从嵌套对象提取（可选） |
+| `filters.city` | `filters.city` | string | 城市过滤 | 从嵌套对象提取（可选） |
+| `filters.city_tier` | `filters.city_tier` | string | 城市规模过滤 | 从嵌套对象提取（可选） |
+| `filters.problem_type` | `filters.problem_type` | string | 问题类型过滤 | 从嵌套对象提取（可选） |
+| `filters.tags` | `filters.tags` | string[] | 标签过滤 | 从嵌套对象提取（可选） |
+| `filters.case_status` | `filters.case_status` | string | 案例状态过滤 | 从嵌套对象提取（可选） |
+| `filters.created_at_from` | `filters.created_at_from` | string (date-time) | 创建时间起始 | 从嵌套对象提取（可选） |
+| `filters.created_at_to` | `filters.created_at_to` | string (date-time) | 创建时间截止 | 从嵌套对象提取（可选） |
+| `business_weights` | `business_weights` | BusinessWeights | 业务权重对象 | 直接映射对象（可选），MVP 阶段前端不提供权重调整 UI |
+
+**RecommendationResponse**（对应 `cbr-retrieval-recommendation.openapi.yaml` § RecommendationResponse）
+
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `recommendation_run_id` | `recommendation_run_id` | string | 推荐运行标识 | 直接映射 |
+| `contract_version` | `contract_version` | string | 契约版本 | 直接映射 |
+| `status` | `status` | RecommendationStatus | 推荐状态枚举 | 直接映射，枚举值：`succeeded`, `empty`, `degraded`, `failed` |
+| `message` | `message` | string \| null | 状态消息 | 直接映射（可选） |
+| `error_code` | `error_code` | string \| null | 错误码 | 直接映射（可选） |
+| `degraded_reason` | `degraded_reason` | DegradedReason \| null | 降级原因枚举 | 直接映射（可选），枚举值见契约文件 |
+| `applied_filters` | `applied_filters` | object | 实际应用的过滤条件 | 直接映射对象 |
+| `score_weights` | `score_weights` | object | 分值权重 | 直接映射对象 |
+| `query_metadata` | `query_metadata` | QueryMetadata | 查询元数据 | 直接映射对象 |
+| `query_metadata.query_hash` | `query_metadata.query_hash` | string | 查询哈希 | 从嵌套对象提取 |
+| `query_metadata.requested_top_k` | `query_metadata.requested_top_k` | integer | 请求数量 | 从嵌套对象提取 |
+| `query_metadata.vector_candidate_count` | `query_metadata.vector_candidate_count` | integer | 向量候选数 | 从嵌套对象提取 |
+| `query_metadata.returned_count` | `query_metadata.returned_count` | integer | 实际返回数 | 从嵌套对象提取 |
+| `query_metadata.latency_ms` | `query_metadata.latency_ms` | integer | 延迟毫秒数 | 从嵌套对象提取 |
+| `items` | `items` | RecommendationItem[] | 推荐项数组 | 直接映射对象数组，按后端顺序渲染 |
+
+**RecommendationItem**（对应 `cbr-retrieval-recommendation.openapi.yaml` § RecommendationItem）
+
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `recommendation_item_id` | `recommendation_item_id` | string \| null | 推荐项标识 | 直接映射，null 表示运行级推荐 |
+| `case_id` | `case_id` | string | 案例标识 | 直接映射 |
+| `rank` | `rank` | integer | 排序位置 | 直接映射，从 1 开始 |
+| `case_reference` | `case_reference` | CaseReference | 案例引用对象 | 直接映射对象，后端返回预处理的引用信息 |
+| `case_reference.title_preview` | `case_reference.title_preview` | string | 标题预览 | 从嵌套对象提取 |
+| `case_reference.description_preview` | `case_reference.description_preview` | string | 描述预览 | 从嵌套对象提取 |
+| `case_reference.brand_summary` | `case_reference.brand_summary` | string \| null | 品牌摘要 | 从嵌套对象提取（可选） |
+| `case_reference.store_summary` | `case_reference.store_summary` | string \| null | 门店摘要 | 从嵌套对象提取（可选） |
+| `case_reference.filter_summary` | `case_reference.filter_summary` | string \| null | 过滤摘要 | 从嵌套对象提取（可选） |
+| `case_reference.case_updated_at` | `case_reference.case_updated_at` | string (date-time) | 案例更新时间 | 从嵌套对象提取 |
+| `core_solution_steps` | `core_solution_steps` | string[] | 核心解决步骤 | 直接映射字符串数组 |
+| `outcome_summary` | `outcome_summary` | string \| null | 效果摘要 | 直接映射（可选） |
+| `structured_suggestions_summary` | `structured_suggestions_summary` | string \| null | 结构化建议摘要 | 直接映射（可选） |
+| `vector_similarity_score` | `vector_similarity_score` | number | 向量相似度 | 直接映射浮点数 |
+| `semantic_similarity_score` | `semantic_similarity_score` | number \| null | 语义相似度 | 直接映射（可选），降级时为 null |
+| `structured_similarity_score` | `structured_similarity_score` | number \| null | 结构化相似度 | 直接映射（可选），降级时为 null |
+| `business_score` | `business_score` | number \| null | 业务参数分 | 直接映射（可选） |
+| `final_score` | `final_score` | number | 最终聚合分 | 直接映射浮点数，降级时可为 0.0 |
+| `score_breakdown` | `score_breakdown` | ScoreBreakdown | 分值明细 | 直接映射对象 |
+| `score_breakdown.final_score_source` | `score_breakdown.final_score_source` | ScoreFinalSource | 分值来源枚举 | 从嵌套对象提取，枚举值：`aggregated`, `default_zero_not_aggregated` |
+| `score_breakdown.weights` | `score_breakdown.weights` | object | 权重明细 | 从嵌套对象提取（可选） |
+| `score_breakdown.factors` | `score_breakdown.factors` | object | 因子明细 | 从嵌套对象提取（可选） |
+| `recommendation_reason` | `recommendation_reason` | string \| null | 推荐理由 | 直接映射（可选） |
+| `reference_points` | `reference_points` | string[] | 可参考解决点 | 直接映射字符串数组 |
+| `cautions` | `cautions` | string[] | 注意事项 | 直接映射字符串数组 |
+| `source_references` | `source_references` | string[] | 来源引用 | 直接映射字符串数组 |
+| `explanation_status` | `explanation_status` | ExplanationStatus | 解释状态枚举 | 直接映射，枚举值：`generated`, `fallback`, `unavailable` |
+| `missing_fields` | `missing_fields` | string[] | 缺失字段列表 | 直接映射字符串数组 |
+
+#### 推荐反馈数据模型
+
+**FeedbackCreateRequest**（对应 `recommendation-feedback.openapi.yaml` § FeedbackCreateRequest）
+
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `recommendation_run_id` | `recommendation_run_id` | string | 推荐运行标识 | 直接映射，必填 |
+| `recommendation_item_id` | `recommendation_item_id` | string \| null | 推荐项标识 | 直接映射（可选），null 表示运行级反馈 |
+| `usefulness` | `usefulness` | Usefulness | 有用性枚举 | 直接映射，枚举值：`useful`, `not_useful`, `unknown` |
+| `comment` | `comment` | string \| null | 反馈备注 | 直接映射（可选），最大长度 2000 |
+| `actor_id` | `actor_id` | string | 反馈提交者标识 | 直接映射，必填，MVP 阶段使用匿名占位符（如 `anonymous_user`） |
+| `source_channel` | `source_channel` | SourceChannel | 来源渠道枚举 | 直接映射，固定值 `admin_web` |
+
+**注意**：前端设计文档中提到的 `rating`（1-5 评分）和 `adoption_status`（采纳状态）字段在后端契约中不存在，需从前端设计中移除或标记为未来扩展字段。
+
+**FeedbackResponse**（对应 `recommendation-feedback.openapi.yaml` § FeedbackResponse）
+
+| 前端字段 | 后端字段 | 类型 | 说明 | 映射规则 |
+|---------|---------|------|------|---------|
+| `feedback_id` | `feedback_id` | string | 反馈标识 | 直接映射 |
+| `recommendation_run_id` | `recommendation_run_id` | string | 推荐运行标识 | 直接映射 |
+| `recommendation_item_id` | `recommendation_item_id` | string \| null | 推荐项标识 | 直接映射（可选） |
+| `case_id` | `case_id` | string \| null | 案例标识 | 直接映射（可选） |
+| `usefulness` | `usefulness` | Usefulness | 有用性枚举 | 直接映射 |
+| `comment` | `comment` | string \| null | 反馈备注 | 直接映射（可选） |
+| `target_scope` | `target_scope` | TargetScope | 反馈目标范围枚举 | 直接映射，枚举值：`run`, `item` |
+| `created_at` | `created_at` | string (date-time) | 创建时间 | 直接映射 ISO 8601 格式 |
+| `updated_at` | `updated_at` | string (date-time) | 更新时间 | 直接映射 ISO 8601 格式 |
 
 ## Error Handling
 
