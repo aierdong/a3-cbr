@@ -42,7 +42,7 @@
 - `A3Case` 基础实体、案例创建、编辑、详情和列表查询。
 - `CaseEnrichmentResult` 的生成、审核、持久化和过期判断。
 - `CaseVectorRecord`、embedding 生成、pgvector 索引、向量刷新、查询向量生成和搜索底层实现。
-- 推荐反馈保存、采纳状态、评分、有用/无用和学习排序。
+- 推荐反馈保存、采纳状态、评分、有用/无用和学习排序（但删除推荐记录时**必须**同步调用反馈删除接口清理关联反馈）。
 - 前端 UI、自动消息推送、行业库高权重候选搜索和复杂多轮问答。
 
 ### Allowed Dependencies
@@ -50,6 +50,7 @@
 - `a3-case-management` 的案例读取契约：`case_id`、基础 A3 字段、状态、过滤字段、解决步骤、效果结果、`updated_at`。
 - `llm-case-enrichment` 的 `RecommendationCopyService` 或等价 API，**仅**用于解释已排序候选，且不得改变排序；**不得**与本规格的查询 LLM normalizer 复用同一 LLM 客户端实现或工厂（保持 spec 边界独立；见下方 `NormalizerLLMClient` 快照）。
 - `case-vector-indexing` 的 `VectorSearchService` 或 `/api/vector-search`：标准化用户问题、过滤条件、Top-K 问题语义候选、向量分值和索引元数据。
+- `recommendation-feedback` 的删除接口（DELETE `/api/recommendation-feedback`）：删除推荐运行或推荐项快照时，**必须**同步调用该接口清理关联反馈记录，确保不产生悬空引用。
 - Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、pytest。
 - 自实现 `ScoreAggregator` 执行候选集内的归一化、重加权和加权聚合；远程 reranker 默认 model `qwen3-reranker-8b`，并使用独立 `provider/model/base_url`。
 
@@ -115,6 +116,7 @@
 - 查询 LLM normalizer（`NormalizerLLMClient`）的请求/响应 schema、`provider/model_id/base_url`、超时、重试或供应商响应格式变化。
 - 聚合算法、reranker `provider/model/base_url`、分值范围或供应商响应格式变化。
 - 下游反馈规格需要改变 `recommendation_run_id` 或 `recommendation_item_id` 引用契约。
+- 下游反馈规格删除接口（DELETE `/api/recommendation-feedback`）的请求/响应契约或错误语义变化。
 
 ## Architecture
 
@@ -1485,6 +1487,86 @@ GET `/api/recommendations/runs/{run_id}`：**404** 表示运行不存在；其�
 - **MVP 召回规模表述**：请求中的 `top_k` 即向量侧召回上限与最终返回条数上限（见上文 **RecommendationRequest**）；全局配置仍可设硬上限以防滥用。若后续产品需要「召回池大于返回 K」，再在契约或配置层引入独立的 `candidate_top_k` 等字段，与本 MVP 表述区分。
 - 运行记录保存轻量快照，避免把完整案例正文复制到推荐表。
 - 若后续需要异步推荐或批量推送，可在保持 API 响应契约的前提下扩展任务队列；本规格不实现。
+
+## Recommendation Record Lifecycle & Cascade Deletion
+
+### Deletion Trigger Scenarios
+
+推荐运行和推荐项快照的删除可能由以下场景触发：
+
+1. **数据保留策略**：定期清理过期推荐记录（如保留 90 天）。
+2. **案例删除级联**：当案例被删除时，相关推荐记录应同步清理。
+3. **手动清理**：运维或管理员主动删除特定推荐运行。
+
+### Cascade Deletion Contract
+
+当本规格删除推荐运行或推荐项快照时，**必须**同步调用 `recommendation-feedback` 规格的删除接口，确保不产生悬空引用。
+
+**删除接口调用契约**：
+
+```python
+# backend/app/retrieval/service.py 或 repository.py
+
+async def delete_recommendation_run(run_id: str):
+    """
+    删除推荐运行及其关联的推荐项快照和反馈记录
+    
+    职责：
+    1. 删除推荐项快照
+    2. 调用反馈规格删除接口清理关联反馈
+    3. 删除推荐运行记录
+    """
+    # 1. 删除推荐项快照
+    await recommendation_repository.delete_items_by_run(run_id)
+    
+    # 2. 调用反馈规格删除接口（同步清理反馈记录）
+    try:
+        await feedback_client.delete_feedback(recommendation_run_id=run_id)
+    except FeedbackServiceError as e:
+        # 反馈删除失败不阻塞推荐记录删除，但需记录告警
+        logger.warning(
+            f"Failed to delete feedback for run {run_id}: {e}",
+            extra={'run_id': run_id, 'error': str(e)}
+        )
+    
+    # 3. 删除推荐运行记录
+    await recommendation_repository.delete_run(run_id)
+
+
+async def delete_recommendation_items(item_ids: list[str]):
+    """
+    删除推荐项快照及其关联反馈记录
+    
+    职责：
+    1. 调用反馈规格删除接口清理关联反馈
+    2. 删除推荐项快照
+    """
+    # 1. 调用反馈规格删除接口（按推荐项批量删除反馈）
+    for item_id in item_ids:
+        try:
+            await feedback_client.delete_feedback(recommendation_item_id=item_id)
+        except FeedbackServiceError as e:
+            logger.warning(
+                f"Failed to delete feedback for item {item_id}: {e}",
+                extra={'item_id': item_id, 'error': str(e)}
+            )
+    
+    # 2. 删除推荐项快照
+    await recommendation_repository.delete_items(item_ids)
+```
+
+**集成要点**：
+
+- 删除推荐运行时，先删除推荐项快照，再调用反馈删除接口，最后删除推荐运行记录。
+- 反馈删除失败不阻塞推荐记录删除，但需记录告警日志，便于运维排查。
+- 定时清理任务应在删除推荐记录前调用反馈删除接口。
+- 案例删除触发的级联删除应遵循相同流程。
+
+**测试覆盖**：
+
+- 验证删除推荐运行时调用反馈删除接口。
+- 验证反馈删除失败不阻塞推荐记录删除。
+- 验证删除后反馈表中无悬空引用。
 
 ## Migration Strategy
 

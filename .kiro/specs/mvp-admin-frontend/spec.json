@@ -1,9 +1,9 @@
 {
   "feature_name": "mvp-admin-frontend",
   "created_at": "2026-04-28T14:35:00+08:00",
-  "updated_at": "2026-04-28T14:35:00+08:00",
+  "updated_at": "2026-05-06T22:30:00+08:00",
   "language": "zh",
-  "phase": "tasks-generated",
+  "phase": "design-approved",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -11,12 +11,14 @@
     },
     "design": {
       "generated": true,
-      "approved": true
+      "approved": true,
+      "revision_reason": "二次审查通过：明确 Keyset 分页 UI 交互模式为'加载更多'按钮"
     },
     "tasks": {
-      "generated": true,
-      "approved": true
+      "generated": false,
+      "approved": false,
+      "revision_reason": null
     }
   },
-  "ready_for_implementation": true
+  "ready_for_implementation": false
 }

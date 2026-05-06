@@ -72,12 +72,15 @@
 ### Data Lifecycle Constraints
 
 - **反馈记录生命周期与上游推荐记录绑定**：反馈记录的存续依赖于上游 `recommendation_runs` 和 `recommendation_item_snapshots` 的保留。
-- **级联删除机制**：当 `cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，将同步调用本规格的删除接口（DELETE `/api/recommendation-feedback`），确保不产生悬空引用。
+- **级联删除机制**：
+  - **主路径**：`cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，同步调用本规格的删除接口（DELETE `/api/recommendation-feedback`），确保不产生悬空引用。
+  - **兜底机制**：定时清理任务（`FeedbackCleanupService`）定期扫描并删除悬空引用的反馈记录，作为数据一致性的兜底保障。
 - **质量分析时间窗口**：需求 3.1、3.2 的"后续分析召回质量和解释质量"能力受限于上游推荐记录的保留周期。如需长期质量分析（如跨季度趋势、模型迭代对比），应由独立的分析规格在上游删除前归档反馈数据快照。
 - **删除触发场景**：
-  - 上游推荐记录因存储策略、隐私合规或数据保留政策被清理时触发。
-  - 案例被删除时，上游可能级联删除相关推荐记录，进而触发反馈删除。
+  - 上游推荐记录因存储策略、隐私合规或数据保留政策被清理时触发（主路径：上游主动调用本规格删除接口）。
+  - 案例被删除时，上游可能级联删除相关推荐记录，进而触发反馈删除（主路径：上游主动调用本规格删除接口）。
   - 用户主动删除反馈（通过本规格 API）。
+  - 定时清理任务识别并删除悬空引用（兜底机制）。
 
 ### Architecture Pattern & Boundary Map
 
@@ -122,7 +125,7 @@ flowchart TB
 backend/
 ├── app/
 │   ├── core/
-│   │   ├── config.py                         # 增加反馈备注长度、统计默认配置、定时清理配置和 PostgreSQL 约束支持配置
+│   │   ├── config.py                         # 增加反馈备注长度、统计默认配置和定时清理配置
 │   │   └── errors.py                         # 增加 FEEDBACK_* 错误码
 │   ├── db/
 │   │   └── base.py                           # 纳入 feedback ORM metadata
@@ -154,7 +157,7 @@ backend/
 ### Modified Files
 
 - `backend/app/main.py` — 仅追加注册 `FeedbackRouter` 和启动定时清理任务，不改写应用入口基础实现。
-- `backend/app/core/config.py` — 仅追加反馈备注最大长度、统计默认窗口、定时清理间隔配置和 PostgreSQL 约束支持配置（`supports_unique_nulls_not_distinct`），不拥有共享配置基础设施。
+- `backend/app/core/config.py` — 仅追加反馈备注最大长度、统计默认窗口和定时清理间隔配置，不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加反馈校验、上游引用缺失和查询错误码映射，不拥有 `ErrorMapper` 基础实现。
 - `backend/app/db/base.py` — 仅追加导入 `feedback` ORM metadata，不拥有数据库基础设施。
 - `backend/app/retrieval/repository.py` — 不改变上游写入契约，仅提供只读推荐标识和关联数据访问（如 `case_id`）。
@@ -394,9 +397,11 @@ class FeedbackCleanupService:
 - 定时扫描反馈表，识别引用不存在的推荐运行或推荐项的反馈记录（悬空引用）。
 - 删除悬空引用的反馈记录，保证数据一致性。
 - 清理间隔通过配置项 `feedback_cleanup_interval_seconds` 指定（默认 3600 秒，即 1 小时）。
-- 清理任务在应用启动时自动启动，作为后台任务运行。
+- 清理任务在应用启动时自动启动，作为后台任务运行。启动初始化失败时记录错误日志但**不阻塞应用启动**。
+- 清理任务运行失败时记录错误日志，下一个清理周期自动重试（无需额外重试逻辑）。
+- 不提供手动触发清理的 API 端点。
 - 记录清理日志：清理时间、扫描记录数、删除记录数和清理耗时。
-- 清理失败不影响主业务流程，只记录错误日志。
+- 清理失败不影响主业务流程（反馈提交、查询、统计），只记录错误日志。
 
 **清理逻辑**
 
@@ -424,6 +429,29 @@ def cleanup_orphaned_feedback():
     
     # 4. 记录清理结果
     log_cleanup_result(deleted_count, scan_count, duration)
+```
+
+**失败处理策略**
+
+```python
+# 应用启动时初始化清理任务（不阻塞启动）
+def start_cleanup_task():
+    try:
+        cleanup_service = FeedbackCleanupService(repository, config)
+        asyncio.create_task(cleanup_service.run_periodic())
+    except Exception as e:
+        # 启动初始化失败：记录错误日志，不阻塞应用启动
+        logger.error(f"Failed to start cleanup task: {e}")
+
+# 清理任务周期运行（失败不影响下一个周期）
+async def run_periodic(self):
+    while True:
+        try:
+            self.cleanup_orphaned_feedback()
+        except Exception as e:
+            # 单次清理失败：记录错误日志，下一个周期自动重试
+            logger.error(f"Cleanup task failed: {e}")
+        await asyncio.sleep(self.cleanup_interval)
 ```
 
 **配置项**
@@ -516,40 +544,17 @@ erDiagram
 
 **Indexes and Constraints**
 
-- Unique: `(actor_id, recommendation_run_id, recommendation_item_id)` UNIQUE NULLS NOT DISTINCT（PostgreSQL 15+）或两个部分唯一索引（PostgreSQL 15 以下）。
+- Unique: `(actor_id, recommendation_run_id, recommendation_item_id)` UNIQUE NULLS NOT DISTINCT。
 - Indexes: `recommendation_run_id`, `recommendation_item_id`, `case_id`, `actor_id`, `created_at`, `usefulness`。
 
-**PostgreSQL 唯一约束配置**
+**唯一约束（PostgreSQL 15+）**
 
-配置项 `supports_unique_nulls_not_distinct`（布尔值）用于指示 PostgreSQL 是否支持 `UNIQUE NULLS NOT DISTINCT` 语法：
-
-- `true`（默认）：使用 PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT` 约束。
-- `false`：使用两个部分唯一索引的替代方案（适用于 PostgreSQL 15 以下版本）。
-
-Alembic 迁移脚本在创建唯一约束时检测此配置项，并选择对应的约束方案。
-
-**PostgreSQL 15+ 唯一约束语法**
+项目锁定 PostgreSQL 15+，直接使用 `UNIQUE NULLS NOT DISTINCT` 约束：
 
 ```sql
 ALTER TABLE recommendation_feedback 
 ADD CONSTRAINT unique_feedback_target 
 UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_id);
-```
-
-**PostgreSQL 15 以下版本替代方案**（见 research.md）
-
-使用两个部分唯一索引：
-
-```sql
--- 1. 处理 recommendation_item_id 不为 NULL 的情况
-CREATE UNIQUE INDEX idx_feedback_item_not_null 
-ON recommendation_feedback (actor_id, recommendation_run_id, recommendation_item_id)
-WHERE recommendation_item_id IS NOT NULL;
-
--- 2. 处理 recommendation_item_id 为 NULL 的情况（确保每个 run 只有一个 NULL）
-CREATE UNIQUE INDEX idx_feedback_run_only 
-ON recommendation_feedback (actor_id, recommendation_run_id)
-WHERE recommendation_item_id IS NULL;
 ```
 
 ### Data Contracts & Integration
@@ -634,6 +639,7 @@ WHERE recommendation_item_id IS NULL;
 - GET `/api/recommendation-feedback/stats` 返回基础聚合指标。
 - `FeedbackCleanupService` 定时清理任务在应用启动后自动运行，并按配置间隔执行清理。
 - `FeedbackCleanupService` 清理悬空引用后，查询反馈表验证悬空记录已被删除。
+- `FeedbackCleanupService` 启动初始化失败时记录错误日志但不阻塞应用启动。
 
 ### Contract and Boundary Tests
 
@@ -689,4 +695,4 @@ flowchart TD
 
 
 
-迁移新增 `recommendation_feedback` 表、唯一约束（根据配置项 `supports_unique_nulls_not_distinct` 选择 PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT` 或 15 以下的两个部分唯一索引）和查询索引，不修改 `recommendation_runs`、`recommendation_item_snapshots`、案例表或向量表。应用启动时自动启动定时清理任务。回滚删除反馈表和停止清理任务；若已有分析流程消费反馈数据，回滚前需暂停消费并备份数据。
+迁移新增 `recommendation_feedback` 表、唯一约束（PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT`）和查询索引，不修改 `recommendation_runs`、`recommendation_item_snapshots`、案例表或向量表。应用启动时自动启动定时清理任务。回滚删除反馈表和停止清理任务；若已有分析流程消费反馈数据，回滚前需暂停消费并备份数据。
