@@ -92,7 +92,10 @@ flowchart TB
     Stats --> Repository
 ```
 
+
+
 **Architecture Integration**:
+
 - Selected pattern: 轻量分层 FastAPI 模块。API、服务、上游引用解析、持久化和统计分层明确。
 - Domain/feature boundaries: `FeedbackService` 只拥有反馈生命周期；`RecommendationReferenceResolver` 解析上游推荐标识，校验存在性与一致性，并返回关联数据（如 `case_id`）；`FeedbackStatsService` 只读反馈数据生成基础聚合。
 - Existing patterns preserved: 复用前置规格规划的 FastAPI、Pydantic、SQLAlchemy/Alembic、统一错误码和隐私日志。
@@ -101,13 +104,15 @@ flowchart TB
 
 ### Technology Stack
 
-| Layer | Choice / Version | Role in Feature | Notes |
-|-------|------------------|-----------------|-------|
-| Backend / Services | Python 3.11+ + FastAPI | 暴露反馈提交、删除和查询 API | 延续前置规格 |
-| Validation | Pydantic | 请求、响应、枚举和错误 schema | 强类型边界 |
-| Data / Storage | PostgreSQL 15+ | 保存反馈记录和审计字段 | 使用 `UNIQUE NULLS NOT DISTINCT` 约束 |
-| ORM / Migration | SQLAlchemy + Alembic | 新增反馈表、约束和索引 | 不修改上游表 |
-| Testing | pytest + FastAPI TestClient | 单元、API、并发、隐私测试 | 上游引用使用 fake validator |
+
+| Layer              | Choice / Version            | Role in Feature    | Notes                             |
+| ------------------ | --------------------------- | ------------------ | --------------------------------- |
+| Backend / Services | Python 3.11+ + FastAPI      | 暴露反馈提交、删除和查询 API   | 延续前置规格                            |
+| Validation         | Pydantic                    | 请求、响应、枚举和错误 schema | 强类型边界                             |
+| Data / Storage     | PostgreSQL 15+              | 保存反馈记录和审计字段        | 使用 `UNIQUE NULLS NOT DISTINCT` 约束 |
+| ORM / Migration    | SQLAlchemy + Alembic        | 新增反馈表、约束和索引        | 不修改上游表                            |
+| Testing            | pytest + FastAPI TestClient | 单元、API、并发、隐私测试     | 上游引用使用 fake validator             |
+
 
 ## File Structure Plan
 
@@ -180,6 +185,8 @@ sequenceDiagram
     Router-->>Client: saved feedback
 ```
 
+
+
 ### 反馈删除流程
 
 ```mermaid
@@ -196,12 +203,16 @@ sequenceDiagram
     Router-->>Client: deletion result
 ```
 
+
+
 **删除触发场景**：
+
 1. **用户主动删除**：通过 API 直接删除特定反馈记录。
 2. **上游级联删除**：`cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，调用本规格删除接口清理关联反馈。
 3. **案例删除触发**：案例被删除时，上游可能级联删除相关推荐记录，进而触发反馈删除。
 
 **级联删除示例**（由上游 `cbr-retrieval-recommendation` 触发）：
+
 ```python
 # 上游删除推荐运行时的伪代码
 def delete_recommendation_run(run_id: str):
@@ -226,75 +237,87 @@ flowchart TD
     Stats --> Response
 ```
 
+
+
 ## Requirements Traceability
 
-| Requirement | Summary | Components | Interfaces | Flows |
-|-------------|---------|------------|------------|-------|
-| 1.1 | 接收反馈提交字段 | FeedbackRouter, FeedbackSchemas, FeedbackService | FeedbackCreateRequest | 反馈提交流程 |
-| 1.2 | 推荐项属于推荐运行 | RecommendationReferenceResolver, FeedbackService | RecommendationReference | 反馈提交流程 |
-| 1.3 | 支持整体推荐级（运行级）反馈 | FeedbackSchemas, FeedbackRepository | FeedbackTarget | 反馈提交流程 |
-| 1.4 | 标识错误拒绝 | RecommendationReferenceResolver, ErrorMapper | FEEDBACK_TARGET_NOT_FOUND | 反馈提交流程 |
-| 1.5 | 不触发推荐逻辑 | FeedbackService | module boundary | 反馈提交流程 |
-| 2.1 | 有用性枚举 | FeedbackSchemas, FeedbackRepository | usefulness enum | 反馈提交流程 |
-| 2.2 | 可选反馈备注 | FeedbackSchemas | optional comment | 反馈提交流程 |
-| 2.3 | 字段级校验 | FeedbackRouter, FeedbackSchemas | ValidationErrorResponse | 反馈提交流程 |
-| 2.4 | 重复提交幂等 | FeedbackRepository | unique constraint | 反馈提交流程 |
-| 3.1 | 保存推荐引用，查询上下文通过关联查询获取；反馈记录生命周期与上游记录绑定 | FeedbackRepository | recommendation_run_id, recommendation_item_id | 反馈提交流程、反馈删除流程 |
-| 3.2 | 保存推荐项关联，详细信息通过关联查询获取；反馈记录生命周期与上游记录绑定 | FeedbackRepository | case_id field | 反馈提交流程、反馈删除流程 |
-| 3.3 | 保存审计字段 | FeedbackRepository | audit fields | 反馈提交流程 |
-| 3.4 | 不回写上游 | FeedbackService, FeedbackRepository | module boundary | 反馈提交流程 |
-| 3.5 | 上游引用不存在拒绝 | RecommendationReferenceResolver, ErrorMapper | FEEDBACK_TARGET_NOT_FOUND | 反馈提交流程 |
-| 4.1 | 明细过滤 | FeedbackRepository, FeedbackRouter | FeedbackQueryRequest | 查询与统计流程 |
-| 4.2 | 运行反馈查询 | FeedbackService, FeedbackRepository | RunFeedbackResponse | 查询与统计流程 |
-| 4.3 | 基础统计 | FeedbackStatsService | FeedbackStatsResponse | 查询与统计流程 |
-| 4.4 | 空结果 | FeedbackRepository, FeedbackStatsService | empty response | 查询与统计流程 |
-| 4.5 | 返回推荐引用字段 | FeedbackSchemas, FeedbackRepository | FeedbackListItem | 查询与统计流程 |
-| 5.1 | 失败不影响推荐结果 | FeedbackService, ErrorMapper | stable error | 反馈提交流程 |
-| 5.2 | 隐私保护 | FeedbackRepository, ErrorMapper | SafeLogContext | 全部流程 |
-| 5.3 | 备注校验 | FeedbackSchemas | comment validation | 反馈提交流程 |
-| 5.4 | 并发幂等 | FeedbackRepository | unique constraint | 反馈提交流程 |
-| 5.5 | 数据出口不学习排序 | FeedbackStatsService, FeedbackRepository | read-only exports | 查询与统计流程 |
+
+| Requirement | Summary                              | Components                                       | Interfaces                                    | Flows         |
+| ----------- | ------------------------------------ | ------------------------------------------------ | --------------------------------------------- | ------------- |
+| 1.1         | 接收反馈提交字段                             | FeedbackRouter, FeedbackSchemas, FeedbackService | FeedbackCreateRequest                         | 反馈提交流程        |
+| 1.2         | 推荐项属于推荐运行                            | RecommendationReferenceResolver, FeedbackService | RecommendationReference                       | 反馈提交流程        |
+| 1.3         | 支持整体推荐级（运行级）反馈                       | FeedbackSchemas, FeedbackRepository              | FeedbackTarget                                | 反馈提交流程        |
+| 1.4         | 标识错误拒绝                               | RecommendationReferenceResolver, ErrorMapper     | FEEDBACK_TARGET_NOT_FOUND                     | 反馈提交流程        |
+| 1.5         | 不触发推荐逻辑                              | FeedbackService                                  | module boundary                               | 反馈提交流程        |
+| 2.1         | 有用性枚举                                | FeedbackSchemas, FeedbackRepository              | usefulness enum                               | 反馈提交流程        |
+| 2.2         | 可选反馈备注                               | FeedbackSchemas                                  | optional comment                              | 反馈提交流程        |
+| 2.3         | 字段级校验                                | FeedbackRouter, FeedbackSchemas                  | ValidationErrorResponse                       | 反馈提交流程        |
+| 2.4         | 重复提交幂等                               | FeedbackRepository                               | unique constraint                             | 反馈提交流程        |
+| 3.1         | 保存推荐引用，查询上下文通过关联查询获取；反馈记录生命周期与上游记录绑定 | FeedbackRepository                               | recommendation_run_id, recommendation_item_id | 反馈提交流程、反馈删除流程 |
+| 3.2         | 保存推荐项关联，详细信息通过关联查询获取；反馈记录生命周期与上游记录绑定 | FeedbackRepository                               | case_id field                                 | 反馈提交流程、反馈删除流程 |
+| 3.3         | 保存审计字段                               | FeedbackRepository                               | audit fields                                  | 反馈提交流程        |
+| 3.4         | 不回写上游                                | FeedbackService, FeedbackRepository              | module boundary                               | 反馈提交流程        |
+| 3.5         | 上游引用不存在拒绝                            | RecommendationReferenceResolver, ErrorMapper     | FEEDBACK_TARGET_NOT_FOUND                     | 反馈提交流程        |
+| 4.1         | 明细过滤                                 | FeedbackRepository, FeedbackRouter               | FeedbackQueryRequest                          | 查询与统计流程       |
+| 4.2         | 运行反馈查询                               | FeedbackService, FeedbackRepository              | RunFeedbackResponse                           | 查询与统计流程       |
+| 4.3         | 基础统计                                 | FeedbackStatsService                             | FeedbackStatsResponse                         | 查询与统计流程       |
+| 4.4         | 空结果                                  | FeedbackRepository, FeedbackStatsService         | empty response                                | 查询与统计流程       |
+| 4.5         | 返回推荐引用字段                             | FeedbackSchemas, FeedbackRepository              | FeedbackListItem                              | 查询与统计流程       |
+| 5.1         | 失败不影响推荐结果                            | FeedbackService, ErrorMapper                     | stable error                                  | 反馈提交流程        |
+| 5.2         | 隐私保护                                 | FeedbackRepository, ErrorMapper                  | SafeLogContext                                | 全部流程          |
+| 5.3         | 备注校验                                 | FeedbackSchemas                                  | comment validation                            | 反馈提交流程        |
+| 5.4         | 并发幂等                                 | FeedbackRepository                               | unique constraint                             | 反馈提交流程        |
+| 5.5         | 数据出口不学习排序                            | FeedbackStatsService, FeedbackRepository         | read-only exports                             | 查询与统计流程       |
+
 
 ## Components and Interfaces
 
-| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
-|-----------|--------------|--------|--------------|------------------|-----------|
-| FeedbackRouter | API | 暴露反馈提交、删除、查询和统计入口 | 1.1, 4.1, 4.2, 4.3 | FeedbackService P0 | API |
-| FeedbackSchemas | API/Data Contract | 定义反馈请求、枚举、查询和响应 | 1.1, 1.3, 2.1, 2.2, 2.3, 5.3 | Pydantic P0 | API, State |
-| RecommendationReferenceResolver | Integration | 解析上游推荐运行和推荐项引用，校验存在性与一致性，返回关联数据（如 case_id） | 1.2, 1.4, 3.5 | retrieval repository P0 | Service |
-| FeedbackRepository | Data Access | 保存反馈、删除反馈、过滤查询和聚合读取 | 2.4, 3.1, 3.2, 3.3, 5.4 | PostgreSQL P0 | Service, State |
-| FeedbackStatsService | Domain Service | 生成有用率与有用性分布 | 4.3, 4.4, 5.5 | FeedbackRepository P0 | Service |
-| FeedbackCleanupService | Background Task | 定时清理悬空引用和过期反馈记录 | 数据一致性维护 | FeedbackRepository P0 | Background |
-| FeedbackService | Application Service | 编排引用解析、upsert、删除和响应 | 1.5, 2.4, 3.4, 5.1 | all core components P0 | Service |
-| ErrorMapper | API Support | 输出稳定错误码并脱敏日志 | 1.4, 3.5, 5.1, 5.2 | FastAPI P0 | API |
+
+| Component                       | Domain/Layer        | Intent                                     | Req Coverage                 | Key Dependencies        | Contracts      |
+| ------------------------------- | ------------------- | ------------------------------------------ | ---------------------------- | ----------------------- | -------------- |
+| FeedbackRouter                  | API                 | 暴露反馈提交、删除、查询和统计入口                          | 1.1, 4.1, 4.2, 4.3           | FeedbackService P0      | API            |
+| FeedbackSchemas                 | API/Data Contract   | 定义反馈请求、枚举、查询和响应                            | 1.1, 1.3, 2.1, 2.2, 2.3, 5.3 | Pydantic P0             | API, State     |
+| RecommendationReferenceResolver | Integration         | 解析上游推荐运行和推荐项引用，校验存在性与一致性，返回关联数据（如 case_id） | 1.2, 1.4, 3.5                | retrieval repository P0 | Service        |
+| FeedbackRepository              | Data Access         | 保存反馈、删除反馈、过滤查询和聚合读取                        | 2.4, 3.1, 3.2, 3.3, 5.4      | PostgreSQL P0           | Service, State |
+| FeedbackStatsService            | Domain Service      | 生成有用率与有用性分布                                | 4.3, 4.4, 5.5                | FeedbackRepository P0   | Service        |
+| FeedbackCleanupService          | Background Task     | 定时清理悬空引用和过期反馈记录                            | 数据一致性维护                      | FeedbackRepository P0   | Background     |
+| FeedbackService                 | Application Service | 编排引用解析、upsert、删除和响应                        | 1.5, 2.4, 3.4, 5.1           | all core components P0  | Service        |
+| ErrorMapper                     | API Support         | 输出稳定错误码并脱敏日志                               | 1.4, 3.5, 5.1, 5.2           | FastAPI P0              | API            |
+
 
 ### API Layer
 
 #### FeedbackRouter
 
-| Field | Detail |
-|-------|--------|
-| Intent | 提供推荐反馈提交、删除、查询和统计 HTTP 入口 |
-| Requirements | 1.1, 2.4, 4.1, 4.2, 4.3 |
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| Intent       | 提供推荐反馈提交、删除、查询和统计 HTTP 入口 |
+| Requirements | 1.1, 2.4, 4.1, 4.2, 4.3   |
+
 
 **API Contract**
 
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| POST | `/api/recommendation-feedback` | `FeedbackCreateRequest` | `FeedbackResponse` | 400, 404, 422 |
-| DELETE | `/api/recommendation-feedback` | query filters (case_id/run_id/item_id) | `FeedbackDeleteResponse` | 422 |
-| GET | `/api/recommendation-feedback` | query filters | `FeedbackListResponse` | 422 |
-| GET | `/api/recommendation-feedback/runs/{run_id}` | path `run_id` | `RunFeedbackResponse` | 404 |
-| GET | `/api/recommendation-feedback/stats` | query filters | `FeedbackStatsResponse` | 422 |
+
+| Method | Endpoint                                     | Request                                | Response                 | Errors        |
+| ------ | -------------------------------------------- | -------------------------------------- | ------------------------ | ------------- |
+| POST   | `/api/recommendation-feedback`               | `FeedbackCreateRequest`                | `FeedbackResponse`       | 400, 404, 422 |
+| DELETE | `/api/recommendation-feedback`               | query filters (case_id/run_id/item_id) | `FeedbackDeleteResponse` | 422           |
+| GET    | `/api/recommendation-feedback`               | query filters                          | `FeedbackListResponse`   | 422           |
+| GET    | `/api/recommendation-feedback/runs/{run_id}` | path `run_id`                          | `RunFeedbackResponse`    | 404           |
+| GET    | `/api/recommendation-feedback/stats`         | query filters                          | `FeedbackStatsResponse`  | 422           |
+
 
 ### Domain Layer
 
 #### FeedbackService
 
-| Field | Detail |
-|-------|--------|
-| Intent | 编排反馈提交、删除、引用解析和查询响应 |
+
+| Field        | Detail                       |
+| ------------ | ---------------------------- |
+| Intent       | 编排反馈提交、删除、引用解析和查询响应          |
 | Requirements | 1.2, 1.3, 1.5, 2.4, 3.4, 5.1 |
+
 
 **Service Interface**
 
@@ -313,10 +336,12 @@ class FeedbackService:
 
 #### RecommendationReferenceResolver
 
-| Field | Detail |
-|-------|--------|
-| Intent | 解析推荐运行和推荐项引用，校验存在性与一致性，返回关联数据 |
-| Requirements | 1.2, 1.4, 3.5 |
+
+| Field        | Detail                        |
+| ------------ | ----------------------------- |
+| Intent       | 解析推荐运行和推荐项引用，校验存在性与一致性，返回关联数据 |
+| Requirements | 1.2, 1.4, 3.5                 |
+
 
 **Service Interface**
 
@@ -332,10 +357,12 @@ class RecommendationReferenceResolver:
 
 #### FeedbackStatsService
 
-| Field | Detail |
-|-------|--------|
-| Intent | 基于反馈记录计算基础质量指标 |
-| Requirements | 4.3, 4.4, 5.5 |
+
+| Field        | Detail         |
+| ------------ | -------------- |
+| Intent       | 基于反馈记录计算基础质量指标 |
+| Requirements | 4.3, 4.4, 5.5  |
+
 
 **Service Interface**
 
@@ -350,10 +377,12 @@ class FeedbackStatsService:
 
 #### FeedbackCleanupService
 
-| Field | Detail |
-|-------|--------|
-| Intent | 定时清理悬空引用和过期反馈记录 |
-| Requirements | 数据一致性维护 |
+
+| Field        | Detail          |
+| ------------ | --------------- |
+| Intent       | 定时清理悬空引用和过期反馈记录 |
+| Requirements | 数据一致性维护         |
+
 
 **Service Interface**
 
@@ -406,10 +435,12 @@ def cleanup_orphaned_feedback():
 
 #### FeedbackRepository
 
-| Field | Detail |
-|-------|--------|
-| Intent | 保存反馈聚合根、删除反馈和查询统计 |
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| Intent       | 保存反馈聚合根、删除反馈和查询统计                           |
 | Requirements | 2.4, 3.1, 3.2, 3.3, 4.1, 4.2, 4.4, 4.5, 5.4 |
+
 
 **Service Interface**
 
@@ -441,41 +472,47 @@ erDiagram
     A3Case ||--o{ RecommendationFeedback : referenced_by
 ```
 
+
+
 `RecommendationFeedback` 是本规格聚合根。持久化列 `recommendation_item_id = NULL` 表示整体推荐级（运行级）反馈（仅关联推荐运行）；取值不为 NULL 时表示绑定上游推荐项，语义上关联 `RecommendationRun`、对应 `RecommendationItemSnapshot` 与命中 `A3Case`。
 
 ### Logical Data Model
 
 **RecommendationFeedback**
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `feedback_id` | string | yes | 反馈标识 |
-| `recommendation_run_id` | string | yes | 上游推荐运行 |
-| `recommendation_item_id` | string | no | NULL 表示整体推荐级（运行级）；非 NULL 为上游推荐项标识 |
-| `case_id` | string | no | 整体推荐级（运行级）为 NULL；推荐项级必填（从上游推荐项获取） |
-| `actor_id` | string | yes | 提交者 |
-| `source_channel` | enum | yes | `admin_web`, `api`, `system` |
-| `usefulness` | enum | yes | `useful`, `not_useful`, `unknown` |
-| `comment` | text | no | 长度受配置限制 |
-| `created_at` | datetime | yes | 创建时间 |
-| `updated_at` | datetime | yes | 更新时间 |
+
+| Field                    | Type     | Required | Notes                             |
+| ------------------------ | -------- | -------- | --------------------------------- |
+| `feedback_id`            | string   | yes      | 反馈标识                              |
+| `recommendation_run_id`  | string   | yes      | 上游推荐运行                            |
+| `recommendation_item_id` | string   | no       | NULL 表示整体推荐级（运行级）；非 NULL 为上游推荐项标识 |
+| `case_id`                | string   | no       | 整体推荐级（运行级）为 NULL；推荐项级必填（从上游推荐项获取） |
+| `actor_id`               | string   | yes      | 提交者                               |
+| `source_channel`         | enum     | yes      | `admin_web`, `api`, `system`      |
+| `usefulness`             | enum     | yes      | `useful`, `not_useful`, `unknown` |
+| `comment`                | text     | no       | 长度受配置限制                           |
+| `created_at`             | datetime | yes      | 创建时间                              |
+| `updated_at`             | datetime | yes      | 更新时间                              |
+
 
 ### Physical Data Model
 
 **Table: `recommendation_feedback`**
 
-| Column | Type | Constraint |
-|--------|------|------------|
-| `feedback_id` | varchar(64) | primary key |
-| `recommendation_run_id` | varchar(64) | not null |
+
+| Column                   | Type        | Constraint             |
+| ------------------------ | ----------- | ---------------------- |
+| `feedback_id`            | varchar(64) | primary key            |
+| `recommendation_run_id`  | varchar(64) | not null               |
 | `recommendation_item_id` | varchar(64) | nullable（NULL 表示运行级反馈） |
-| `case_id` | varchar(64) | nullable |
-| `actor_id` | varchar(64) | not null |
-| `source_channel` | varchar(32) | not null |
-| `usefulness` | varchar(32) | not null |
-| `comment` | text | nullable |
-| `created_at` | timestamptz | not null |
-| `updated_at` | timestamptz | not null |
+| `case_id`                | varchar(64) | nullable               |
+| `actor_id`               | varchar(64) | not null               |
+| `source_channel`         | varchar(32) | not null               |
+| `usefulness`             | varchar(32) | not null               |
+| `comment`                | text        | nullable               |
+| `created_at`             | timestamptz | not null               |
+| `updated_at`             | timestamptz | not null               |
+
 
 **Indexes and Constraints**
 
@@ -485,6 +522,7 @@ erDiagram
 **PostgreSQL 唯一约束配置**
 
 配置项 `supports_unique_nulls_not_distinct`（布尔值）用于指示 PostgreSQL 是否支持 `UNIQUE NULLS NOT DISTINCT` 语法：
+
 - `true`（默认）：使用 PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT` 约束。
 - `false`：使用两个部分唯一索引的替代方案（适用于 PostgreSQL 15 以下版本）。
 
@@ -517,6 +555,7 @@ WHERE recommendation_item_id IS NULL;
 ### Data Contracts & Integration
 
 **FeedbackCreateRequest**
+
 - `recommendation_run_id`: required.
 - `recommendation_item_id`: optional；省略或为 `None` 表示运行级反馈，持久化为 NULL；提供非空值表示推荐项级反馈。
 - `usefulness`: `useful`、`not_useful`、`unknown`.
@@ -524,12 +563,14 @@ WHERE recommendation_item_id IS NULL;
 - `source_channel`: optional, defaults to `admin_web`.
 
 **FeedbackDeleteFilters**
+
 - `case_id`: optional，按案例删除反馈。
 - `recommendation_run_id`: optional，按推荐运行删除反馈。
 - `recommendation_item_id`: optional，按推荐项删除反馈。
 - 至少提供一个过滤条件。
 
 **FeedbackResponse**
+
 - `feedback_id`
 - `recommendation_run_id`
 - `recommendation_item_id`（运行级为 `None`）
@@ -541,9 +582,11 @@ WHERE recommendation_item_id IS NULL;
 - `updated_at`
 
 **FeedbackDeleteResponse**
+
 - `deleted_count`: 删除的反馈数量
 
 **FeedbackListItem**
+
 - feedback response fields
 - `actor_id`
 - `source_channel`
@@ -643,5 +686,7 @@ flowchart TD
     Cleanup --> Tests[RunTests]
     Tests --> Ready[Ready]
 ```
+
+
 
 迁移新增 `recommendation_feedback` 表、唯一约束（根据配置项 `supports_unique_nulls_not_distinct` 选择 PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT` 或 15 以下的两个部分唯一索引）和查询索引，不修改 `recommendation_runs`、`recommendation_item_snapshots`、案例表或向量表。应用启动时自动启动定时清理任务。回滚删除反馈表和停止清理任务；若已有分析流程消费反馈数据，回滚前需暂停消费并备份数据。

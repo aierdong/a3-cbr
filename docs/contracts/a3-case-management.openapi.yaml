@@ -1,0 +1,525 @@
+openapi: 3.0.3
+info:
+  title: A3 Case Management API
+  version: 1.0.0
+  description: >
+    A3 案例管理基础契约，覆盖案例创建、编辑、详情、列表查询，不包含 AI 派生字段、
+    向量检索、推荐与反馈能力。
+servers:
+  - url: /api
+tags:
+  - name: A3Cases
+    description: A3 案例管理接口
+paths:
+  /a3-cases:
+    post:
+      tags: [A3Cases]
+      summary: 创建案例
+      operationId: createA3Case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseRequest'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetailResponse'
+        '400':
+          $ref: '#/components/responses/StoreNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [A3Cases]
+      summary: 列表查询案例（Keyset 分页）
+      operationId: listA3Cases
+      parameters:
+        - $ref: '#/components/parameters/BrandId'
+        - $ref: '#/components/parameters/StoreId'
+        - $ref: '#/components/parameters/BusinessType'
+        - $ref: '#/components/parameters/StoreScale'
+        - $ref: '#/components/parameters/FranchiseType'
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/CityTier'
+        - $ref: '#/components/parameters/ProblemType'
+        - $ref: '#/components/parameters/Status'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedTo'
+        - $ref: '#/components/parameters/IncludeArchived'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/CursorCreatedAt'
+        - $ref: '#/components/parameters/CursorCaseId'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCaseListResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /a3-cases/{case_id}:
+    get:
+      tags: [A3Cases]
+      summary: 查询案例详情
+      operationId: getA3CaseById
+      parameters:
+        - $ref: '#/components/parameters/CaseIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetailResponse'
+        '404':
+          $ref: '#/components/responses/CaseNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [A3Cases]
+      summary: 编辑案例
+      operationId: updateA3Case
+      parameters:
+        - $ref: '#/components/parameters/CaseIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCaseRequest'
+      responses:
+        '200':
+          description: 编辑成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetailResponse'
+        '400':
+          $ref: '#/components/responses/StoreNotFound'
+        '404':
+          $ref: '#/components/responses/CaseNotFound'
+        '409':
+          $ref: '#/components/responses/CaseStateConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    CaseIdPath:
+      name: case_id
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+    BrandId:
+      name: brand_id
+      in: query
+      schema:
+        type: string
+    StoreId:
+      name: store_id
+      in: query
+      schema:
+        type: string
+    BusinessType:
+      name: business_type
+      in: query
+      schema:
+        type: string
+    StoreScale:
+      name: store_scale
+      in: query
+      schema:
+        type: string
+    FranchiseType:
+      name: franchise_type
+      in: query
+      schema:
+        type: string
+    City:
+      name: city
+      in: query
+      schema:
+        type: string
+    CityTier:
+      name: city_tier
+      in: query
+      schema:
+        type: string
+    ProblemType:
+      name: problem_type
+      in: query
+      schema:
+        $ref: '#/components/schemas/ProblemType'
+    Status:
+      name: status
+      in: query
+      schema:
+        $ref: '#/components/schemas/CaseStatus'
+    CreatedFrom:
+      name: created_from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    CreatedTo:
+      name: created_to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    IncludeArchived:
+      name: include_archived
+      in: query
+      schema:
+        type: boolean
+        default: false
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CursorCreatedAt:
+      name: cursor_created_at
+      in: query
+      description: 必须与 cursor_case_id 成对提供
+      schema:
+        type: string
+        format: date-time
+    CursorCaseId:
+      name: cursor_case_id
+      in: query
+      description: 必须与 cursor_created_at 成对提供
+      schema:
+        type: string
+  responses:
+    ValidationError:
+      description: 请求参数或字段校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalid_cursor:
+              value:
+                code: VALIDATION_ERROR
+                message: cursor_created_at and cursor_case_id must be provided together or both omitted
+                fields:
+                  - field: cursor_created_at
+                    message: must be provided with cursor_case_id
+                  - field: cursor_case_id
+                    message: must be provided with cursor_created_at
+    StoreNotFound:
+      description: store_id 在 store_infos 中不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: STORE_NOT_FOUND
+            message: referenced store_id does not exist in store_infos
+    CaseNotFound:
+      description: 案例不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: CASE_NOT_FOUND
+            message: case not found
+    CaseStateConflict:
+      description: 状态不可编辑或状态流转冲突
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: CASE_STATE_CONFLICT
+            message: case state transition is not allowed
+            meta:
+              current_status: archived
+    InternalError:
+      description: 系统内部异常
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
+  schemas:
+    ProblemType:
+      type: string
+      description: 受控问题类型，具体枚举值在实现阶段可扩展
+      enum: [service, quality, operation, hygiene, staffing, other]
+    CaseStatus:
+      type: string
+      description: >
+        案例状态枚举。状态转换规则：
+        draft → active（允许）；
+        active → archived（允许）；
+        draft → archived（禁止，草稿必须先提交为 active）；
+        archived → 任意状态（禁止，归档后不可回滚）。
+      enum: [draft, active, archived]
+    OutcomeResult:
+      type: string
+      enum: [improved, no_change, unknown]
+    SolutionStep:
+      type: object
+      required: [order, content]
+      properties:
+        order:
+          type: integer
+          minimum: 1
+        content:
+          type: string
+          minLength: 1
+        extra:
+          type: object
+          additionalProperties: true
+          description: 可选扩展字段占位
+      additionalProperties: true
+    Context:
+      type: object
+      required: [scene]
+      properties:
+        scene:
+          type: string
+          minLength: 1
+      additionalProperties: true
+    Outcome:
+      type: object
+      required: [result, notes]
+      properties:
+        result:
+          $ref: '#/components/schemas/OutcomeResult'
+        notes:
+          type: string
+      additionalProperties: true
+    StoreProfile:
+      type: object
+      required:
+        - store_id
+        - store_name
+        - brand_id
+        - brand_name
+        - business_type
+        - store_scale
+        - franchise_type
+        - city
+        - city_tier
+      properties:
+        store_id:
+          type: string
+        store_name:
+          type: string
+        brand_id:
+          type: string
+        brand_name:
+          type: string
+        business_type:
+          type: string
+        store_scale:
+          type: string
+        franchise_type:
+          type: string
+        city:
+          type: string
+        city_tier:
+          type: string
+    CreateCaseRequest:
+      type: object
+      required:
+        - problem_description
+        - store_id
+        - problem_type
+        - context
+        - root_cause
+        - solution_steps
+        - outcome
+      properties:
+        problem_description:
+          type: string
+          minLength: 1
+        store_id:
+          type: string
+        problem_type:
+          $ref: '#/components/schemas/ProblemType'
+        context:
+          $ref: '#/components/schemas/Context'
+        root_cause:
+          type: string
+          minLength: 1
+        solution_steps:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/SolutionStep'
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+    UpdateCaseRequest:
+      type: object
+      minProperties: 1
+      properties:
+        problem_description:
+          type: string
+          minLength: 1
+        store_id:
+          type: string
+        problem_type:
+          $ref: '#/components/schemas/ProblemType'
+        context:
+          $ref: '#/components/schemas/Context'
+        root_cause:
+          type: string
+          minLength: 1
+        solution_steps:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/SolutionStep'
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+      description: >
+        可编辑字段集合；不允许出现 case_id、created_at。
+    CaseDetailResponse:
+      type: object
+      required:
+        - case_id
+        - problem_description
+        - store_profile
+        - problem_type
+        - context
+        - root_cause
+        - solution_steps
+        - outcome
+        - status
+        - created_at
+        - updated_at
+      properties:
+        case_id:
+          type: string
+        problem_description:
+          type: string
+        store_profile:
+          $ref: '#/components/schemas/StoreProfile'
+        problem_type:
+          $ref: '#/components/schemas/ProblemType'
+        context:
+          $ref: '#/components/schemas/Context'
+        root_cause:
+          type: string
+        solution_steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SolutionStep'
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CaseListItem:
+      type: object
+      required:
+        - case_id
+        - problem_description_preview
+        - store_profile
+        - problem_type
+        - status
+        - created_at
+        - updated_at
+      properties:
+        case_id:
+          type: string
+        problem_description_preview:
+          type: string
+        store_profile:
+          $ref: '#/components/schemas/StoreProfile'
+        problem_type:
+          $ref: '#/components/schemas/ProblemType'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PaginatedCaseListResponse:
+      type: object
+      required:
+        - items
+        - limit
+        - next_cursor_created_at
+        - next_cursor_case_id
+        - has_more
+        - sort
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseListItem'
+        limit:
+          type: integer
+        next_cursor_created_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_cursor_case_id:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+        sort:
+          type: string
+          enum: ["created_at desc, case_id desc"]
+    ErrorField:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - STORE_NOT_FOUND
+            - CASE_NOT_FOUND
+            - CASE_STATE_CONFLICT
+            - INTERNAL_ERROR
+        message:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorField'
+        meta:
+          type: object
+          additionalProperties: true

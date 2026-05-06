@@ -1,0 +1,606 @@
+openapi: 3.0.3
+info:
+  title: Case Vector Indexing API
+  version: 1.0.0
+  description: >
+    案例问题侧向量索引与搜索契约，覆盖手动刷新、状态查询、不可检索标记、
+    失败任务重试和 Top-K 语义候选检索。
+    本契约依据 `.kiro/specs/case-vector-indexing/design.md` 整理。
+servers:
+  - url: /api
+tags:
+  - name: VectorIndex
+    description: 案例向量索引管理接口
+  - name: VectorSearch
+    description: 问题语义向量搜索接口
+paths:
+  /a3-cases/{case_id}/vector-index/refresh:
+    post:
+      tags: [VectorIndex]
+      summary: 手动刷新案例向量索引
+      operationId: refreshCaseVectorIndex
+      parameters:
+        - $ref: '#/components/parameters/CaseIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshVectorIndexRequest'
+      responses:
+        '200':
+          description: 已接受刷新请求并返回任务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorIndexJobResponse'
+        '404':
+          $ref: '#/components/responses/CaseNotFound'
+        '409':
+          $ref: '#/components/responses/VectorConflict'
+        '422':
+          $ref: '#/components/responses/VectorInputInvalid'
+        '503':
+          $ref: '#/components/responses/EmbeddingUnavailable'
+  /a3-cases/{case_id}/vector-index:
+    get:
+      tags: [VectorIndex]
+      summary: 查询案例向量索引状态
+      operationId: getCaseVectorIndexStatus
+      parameters:
+        - $ref: '#/components/parameters/CaseIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorIndexStatusResponse'
+        '404':
+          $ref: '#/components/responses/CaseNotFound'
+  /a3-cases/{case_id}/vector-index/unsearchable:
+    post:
+      tags: [VectorIndex]
+      summary: 标记案例向量为不可检索
+      operationId: markCaseVectorUnsearchable
+      parameters:
+        - $ref: '#/components/parameters/CaseIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkVectorUnsearchableRequest'
+      responses:
+        '200':
+          description: 标记成功并返回当前索引状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorIndexStatusResponse'
+        '404':
+          $ref: '#/components/responses/CaseNotFound'
+        '409':
+          $ref: '#/components/responses/VectorConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /vector-index/jobs/{job_id}/retry:
+    post:
+      tags: [VectorIndex]
+      summary: 重试向量索引失败任务
+      operationId: retryVectorIndexJob
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        '200':
+          description: 已接受重试请求并返回任务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorIndexJobResponse'
+        '404':
+          $ref: '#/components/responses/JobNotFound'
+        '409':
+          $ref: '#/components/responses/RetryNotAllowed'
+        '503':
+          $ref: '#/components/responses/EmbeddingUnavailable'
+  /vector-search:
+    post:
+      tags: [VectorSearch]
+      summary: 按问题语义检索 Top-K 候选
+      operationId: searchCaseVectors
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VectorSearchRequest'
+      responses:
+        '200':
+          description: 搜索成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorSearchResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/EmbeddingUnavailable'
+components:
+  parameters:
+    CaseIdPath:
+      name: case_id
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+    JobIdPath:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+  responses:
+    ValidationError:
+      description: 请求参数或字段校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VALIDATION_ERROR
+            message: request validation failed
+            fields:
+              - field: query_text
+                message: query_text is required
+    CaseNotFound:
+      description: 案例不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: CASE_NOT_FOUND
+            message: case not found
+    JobNotFound:
+      description: 向量索引任务不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VECTOR_JOB_NOT_FOUND
+            message: vector index job not found
+    VectorConflict:
+      description: 任务状态冲突或并发发布冲突
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            state_conflict:
+              value:
+                code: VECTOR_STATE_CONFLICT
+                message: vector index state conflict
+            vector_conflict:
+              value:
+                code: VECTOR_CONFLICT
+                message: concurrent vector publish conflict
+    RetryNotAllowed:
+      description: 当前任务不允许重试
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VECTOR_RETRY_NOT_ALLOWED
+            message: only retryable jobs can be retried
+    VectorInputInvalid:
+      description: 输入不足或案例不可索引
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            insufficient:
+              value:
+                code: VECTOR_INPUT_INSUFFICIENT
+                message: insufficient content for vector embedding input
+            not_indexable:
+              value:
+                code: VECTOR_CASE_NOT_INDEXABLE
+                message: case is not indexable
+    EmbeddingUnavailable:
+      description: embedding 服务依赖不可用
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            timeout:
+              value:
+                code: EMBEDDING_TIMEOUT
+                message: embedding request timeout
+            rate_limited:
+              value:
+                code: EMBEDDING_RATE_LIMITED
+                message: embedding provider rate limited
+            provider_error:
+              value:
+                code: EMBEDDING_PROVIDER_ERROR
+                message: embedding provider error
+            invalid_response:
+              value:
+                code: EMBEDDING_INVALID_RESPONSE
+                message: embedding response invalid
+            dim_mismatch:
+              value:
+                code: EMBEDDING_DIMENSION_MISMATCH
+                message: embedding dimension mismatch
+            config_missing:
+              value:
+                code: EMBEDDING_CONFIG_MISSING
+                message: embedding config missing
+  schemas:
+    RefreshVectorIndexRequest:
+      type: object
+      description: >
+        手动触发刷新请求。MVP 阶段仅提供触发行为，保留扩展字段。
+      properties:
+        force_rebuild:
+          type: boolean
+          default: false
+          description: 为 true 时跳过输入版本短路判断并强制刷新
+        requested_by:
+          type: string
+          description: 触发来源标识（系统、管理员或流程）
+      additionalProperties: true
+    MarkVectorUnsearchableReason:
+      type: string
+      enum:
+        - case_deleted
+        - case_archived
+        - source_not_allowed
+        - manual_admin_action
+    MarkVectorUnsearchableRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          oneOf:
+            - $ref: '#/components/schemas/MarkVectorUnsearchableReason'
+            - type: string
+          description: 不可检索原因
+        requested_by:
+          type: string
+          nullable: true
+          description: 操作发起方标识
+      additionalProperties: false
+    VectorJobType:
+      type: string
+      enum: [refresh, retry, remove]
+    VectorJobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, retryable, cancelled]
+    VectorErrorStage:
+      type: string
+      enum: [load_source, compose_input, embedding_call, validate_embedding, persist]
+    SourceVersion:
+      type: object
+      required: [case_updated_at, enrichment_id, enrichment_status]
+      properties:
+        case_updated_at:
+          type: string
+          format: date-time
+        enrichment_id:
+          type: string
+          nullable: true
+        enrichment_status:
+          type: string
+          nullable: true
+      additionalProperties: false
+    VectorIndexJobResponse:
+      type: object
+      required:
+        - job_id
+        - case_id
+        - job_type
+        - status
+        - retry_count
+      properties:
+        job_id:
+          type: string
+        case_id:
+          type: string
+        job_type:
+          $ref: '#/components/schemas/VectorJobType'
+        status:
+          $ref: '#/components/schemas/VectorJobStatus'
+        source_version:
+          $ref: '#/components/schemas/SourceVersion'
+        error_code:
+          type: string
+          nullable: true
+        error_stage:
+          allOf:
+            - $ref: '#/components/schemas/VectorErrorStage'
+          nullable: true
+        retry_count:
+          type: integer
+          minimum: 0
+        next_retry_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+      additionalProperties: false
+    VectorIndexStatus:
+      type: string
+      enum:
+        - queued
+        - running
+        - succeeded
+        - retryable
+        - failed
+        - published
+        - degraded
+        - unsearchable
+    CaseVectorRecord:
+      type: object
+      required:
+        - vector_id
+        - case_id
+        - case_updated_at
+        - input_template_version
+        - input_content_hash
+        - embedding_model_id
+        - embedding_dimension
+        - is_current
+        - searchable
+        - created_at
+        - updated_at
+      properties:
+        vector_id:
+          type: string
+        case_id:
+          type: string
+        case_updated_at:
+          type: string
+          format: date-time
+        enrichment_id:
+          type: string
+          nullable: true
+        enrichment_status:
+          type: string
+          nullable: true
+        input_template_version:
+          type: string
+        input_content_hash:
+          type: string
+        embedding_model_id:
+          type: string
+          example: bge-large-zh
+        embedding_dimension:
+          type: integer
+          example: 1024
+        is_current:
+          type: boolean
+        searchable:
+          type: boolean
+        degraded_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    VectorIndexStatusResponse:
+      type: object
+      required: [case_id, status, latest_job, current_vector]
+      properties:
+        case_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/VectorIndexStatus'
+        latest_job:
+          allOf:
+            - $ref: '#/components/schemas/VectorIndexJobResponse'
+          nullable: true
+        current_vector:
+          allOf:
+            - $ref: '#/components/schemas/CaseVectorRecord'
+          nullable: true
+        last_error_code:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+      additionalProperties: false
+    VectorSearchFilters:
+      type: object
+      properties:
+        brand_id:
+          type: string
+        store_id:
+          type: string
+        business_type:
+          type: string
+        store_scale:
+          type: string
+        franchise_type:
+          type: string
+        city:
+          type: string
+        city_tier:
+          type: string
+        problem_type:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        case_status:
+          type: string
+        created_at_from:
+          type: string
+          format: date-time
+        created_at_to:
+          type: string
+          format: date-time
+      additionalProperties: false
+    VectorSearchRequest:
+      type: object
+      required: [query_text, top_k]
+      properties:
+        query_text:
+          type: string
+          minLength: 1
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        filters:
+          $ref: '#/components/schemas/VectorSearchFilters'
+        include_metadata:
+          type: boolean
+          default: false
+      additionalProperties: false
+    VectorCandidateFilterMetadata:
+      type: object
+      required: [brand_id, store_id, business_type, store_scale, franchise_type, city, city_tier, problem_type, tags, case_status]
+      properties:
+        brand_id:
+          type: string
+        store_id:
+          type: string
+        business_type:
+          type: string
+        store_scale:
+          type: string
+        franchise_type:
+          type: string
+        city:
+          type: string
+        city_tier:
+          type: string
+        problem_type:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        case_status:
+          type: string
+      additionalProperties: false
+    VectorSearchCandidate:
+      type: object
+      required:
+        - case_id
+        - vector_id
+        - similarity_score
+        - distance
+        - case_updated_at
+        - input_content_hash
+        - filter_metadata
+      properties:
+        case_id:
+          type: string
+        vector_id:
+          type: string
+        similarity_score:
+          type: number
+          format: float
+        distance:
+          type: number
+          format: float
+        case_updated_at:
+          type: string
+          format: date-time
+        input_content_hash:
+          type: string
+        filter_metadata:
+          $ref: '#/components/schemas/VectorCandidateFilterMetadata'
+      additionalProperties: false
+    VectorSearchQueryMetadata:
+      type: object
+      required: [query_hash, model_id, dimension, filters_applied]
+      properties:
+        query_hash:
+          type: string
+        model_id:
+          type: string
+        dimension:
+          type: integer
+        filters_applied:
+          type: object
+          additionalProperties: true
+        total_candidates_considered:
+          type: integer
+          nullable: true
+      additionalProperties: false
+    VectorSearchResponse:
+      type: object
+      required: [items, query_metadata]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VectorSearchCandidate'
+        query_metadata:
+          $ref: '#/components/schemas/VectorSearchQueryMetadata'
+      additionalProperties: false
+    ErrorField:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - CASE_NOT_FOUND
+            - VECTOR_JOB_NOT_FOUND
+            - VECTOR_STATE_CONFLICT
+            - VECTOR_CONFLICT
+            - VECTOR_RETRY_NOT_ALLOWED
+            - VECTOR_INPUT_INSUFFICIENT
+            - VECTOR_CASE_NOT_INDEXABLE
+            - EMBEDDING_TIMEOUT
+            - EMBEDDING_RATE_LIMITED
+            - EMBEDDING_PROVIDER_ERROR
+            - EMBEDDING_INVALID_RESPONSE
+            - EMBEDDING_DIMENSION_MISMATCH
+            - EMBEDDING_CONFIG_MISSING
+            - INTERNAL_ERROR
+        message:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorField'
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false

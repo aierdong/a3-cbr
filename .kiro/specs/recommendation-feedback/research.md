@@ -97,7 +97,7 @@
 
 - **Context**: 运行级反馈的 `recommendation_item_id` 为 NULL，需要唯一约束支持 NULL 值。
 - **Alternatives Considered**:
-  1. 使用哨兵值 `'RUN'` 表示运行级反馈。
+  1. 使用 `recommendation_item_id = NULL` 表示运行级反馈。
   2. 使用 PostgreSQL 15+ 的 `UNIQUE NULLS NOT DISTINCT` 约束。
   3. 使用两个部分唯一索引（15 以下版本）。
 - **Selected Approach**: PostgreSQL 15+ 使用 `UNIQUE NULLS NOT DISTINCT`；15 以下使用两个部分唯一索引。
