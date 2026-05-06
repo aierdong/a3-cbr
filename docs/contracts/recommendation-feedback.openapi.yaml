@@ -1,0 +1,431 @@
+openapi: 3.0.3
+info:
+  title: Recommendation Feedback API
+  version: 1.0.0
+  description: >
+    推荐反馈闭环契约，覆盖反馈提交、删除、明细查询、按推荐运行查询和基础统计。
+    本契约依据 `.kiro/specs/recommendation-feedback/design.md` 整理。
+servers:
+  - url: /api
+tags:
+  - name: RecommendationFeedback
+    description: 推荐反馈接口
+paths:
+  /recommendation-feedback:
+    post:
+      tags: [RecommendationFeedback]
+      summary: 提交或更新推荐反馈
+      operationId: submitRecommendationFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackCreateRequest'
+      responses:
+        '200':
+          description: 提交成功（重复目标会以幂等 upsert 更新）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackResponse'
+        '404':
+          $ref: '#/components/responses/FeedbackTargetNotFound'
+        '409':
+          $ref: '#/components/responses/FeedbackTargetMismatch'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [RecommendationFeedback]
+      summary: 按过滤条件删除反馈
+      operationId: deleteRecommendationFeedback
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+        - $ref: '#/components/parameters/RecommendationRunId'
+        - $ref: '#/components/parameters/RecommendationItemId'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackDeleteResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [RecommendationFeedback]
+      summary: 查询反馈明细
+      operationId: listRecommendationFeedback
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+        - $ref: '#/components/parameters/RecommendationRunId'
+        - $ref: '#/components/parameters/RecommendationItemId'
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/Usefulness'
+        - $ref: '#/components/parameters/SourceChannel'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedTo'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackListResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /recommendation-feedback/runs/{run_id}:
+    get:
+      tags: [RecommendationFeedback]
+      summary: 查询单次推荐运行的反馈
+      operationId: getRunFeedback
+      parameters:
+        - $ref: '#/components/parameters/RunIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunFeedbackResponse'
+        '404':
+          $ref: '#/components/responses/RunNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /recommendation-feedback/stats:
+    get:
+      tags: [RecommendationFeedback]
+      summary: 查询反馈基础统计
+      operationId: getRecommendationFeedbackStats
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+        - $ref: '#/components/parameters/RecommendationRunId'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedTo'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackStatsResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    RunIdPath:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+    CaseId:
+      name: case_id
+      in: query
+      schema:
+        type: string
+        maxLength: 64
+    RecommendationRunId:
+      name: recommendation_run_id
+      in: query
+      schema:
+        type: string
+        maxLength: 64
+    RecommendationItemId:
+      name: recommendation_item_id
+      in: query
+      schema:
+        type: string
+        maxLength: 64
+    ActorId:
+      name: actor_id
+      in: query
+      schema:
+        type: string
+        maxLength: 64
+    Usefulness:
+      name: usefulness
+      in: query
+      schema:
+        $ref: '#/components/schemas/Usefulness'
+    SourceChannel:
+      name: source_channel
+      in: query
+      schema:
+        $ref: '#/components/schemas/SourceChannel'
+    CreatedFrom:
+      name: created_from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    CreatedTo:
+      name: created_to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    ValidationError:
+      description: 请求参数或字段校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VALIDATION_ERROR
+            message: request validation failed
+            fields:
+              - field: comment
+                message: comment exceeds max length
+    FeedbackTargetNotFound:
+      description: 推荐运行或推荐项不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FEEDBACK_TARGET_NOT_FOUND
+            message: recommendation target not found
+    FeedbackTargetMismatch:
+      description: 推荐项不属于指定推荐运行
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FEEDBACK_TARGET_MISMATCH
+            message: recommendation item does not belong to run
+    RunNotFound:
+      description: 推荐运行不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FEEDBACK_TARGET_NOT_FOUND
+            message: recommendation run not found
+    InternalError:
+      description: 系统内部异常
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
+  schemas:
+    Usefulness:
+      type: string
+      enum: [useful, not_useful, unknown]
+    SourceChannel:
+      type: string
+      enum: [admin_web, api, system]
+    TargetScope:
+      type: string
+      description: >
+        反馈目标范围。通过 FeedbackCreateRequest 中 recommendation_item_id 是否为空自动推断：
+        为空时为 run（运行级反馈），非空时为 item（推荐项级反馈）。
+      enum: [run, item]
+    FeedbackCreateRequest:
+      type: object
+      required:
+        - recommendation_run_id
+        - usefulness
+        - actor_id
+      properties:
+        recommendation_run_id:
+          type: string
+          maxLength: 64
+        recommendation_item_id:
+          type: string
+          maxLength: 64
+          nullable: true
+          description: 为空时表示运行级反馈；非空表示推荐项级反馈
+        usefulness:
+          $ref: '#/components/schemas/Usefulness'
+        comment:
+          type: string
+          nullable: true
+          maxLength: 2000
+        actor_id:
+          type: string
+          maxLength: 64
+          description: 反馈提交者标识
+        source_channel:
+          $ref: '#/components/schemas/SourceChannel'
+      additionalProperties: false
+    FeedbackResponse:
+      type: object
+      required:
+        - feedback_id
+        - recommendation_run_id
+        - recommendation_item_id
+        - case_id
+        - usefulness
+        - comment
+        - target_scope
+        - created_at
+        - updated_at
+      properties:
+        feedback_id:
+          type: string
+          maxLength: 64
+        recommendation_run_id:
+          type: string
+          maxLength: 64
+        recommendation_item_id:
+          type: string
+          maxLength: 64
+          nullable: true
+        case_id:
+          type: string
+          maxLength: 64
+          nullable: true
+        usefulness:
+          $ref: '#/components/schemas/Usefulness'
+        comment:
+          type: string
+          nullable: true
+        target_scope:
+          $ref: '#/components/schemas/TargetScope'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    FeedbackDeleteResponse:
+      type: object
+      required: [deleted_count]
+      properties:
+        deleted_count:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    FeedbackListItem:
+      allOf:
+        - $ref: '#/components/schemas/FeedbackResponse'
+        - type: object
+          required:
+            - actor_id
+            - source_channel
+          properties:
+            actor_id:
+              type: string
+              maxLength: 64
+            source_channel:
+              $ref: '#/components/schemas/SourceChannel'
+          additionalProperties: false
+    FeedbackListResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackListItem'
+      additionalProperties: false
+    RunFeedbackResponse:
+      type: object
+      required:
+        - recommendation_run_id
+        - items
+      properties:
+        recommendation_run_id:
+          type: string
+          maxLength: 64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackListItem'
+      additionalProperties: false
+    FeedbackStatsResponse:
+      type: object
+      required:
+        - total_feedback
+        - useful_count
+        - not_useful_count
+        - unknown_count
+        - useful_ratio
+      properties:
+        total_feedback:
+          type: integer
+          minimum: 0
+        useful_count:
+          type: integer
+          minimum: 0
+        not_useful_count:
+          type: integer
+          minimum: 0
+        unknown_count:
+          type: integer
+          minimum: 0
+        useful_ratio:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: >
+            有用率，计算公式：useful / (useful + not_useful)。
+            排除 unknown 计数，仅基于明确的有用/无用反馈计算。
+            当 useful + not_useful = 0 时，返回 0.0。
+      additionalProperties: false
+    ErrorField:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - FEEDBACK_TARGET_NOT_FOUND
+            - FEEDBACK_TARGET_MISMATCH
+            - INTERNAL_ERROR
+        message:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorField'
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false

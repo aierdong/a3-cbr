@@ -1,0 +1,510 @@
+openapi: 3.0.3
+info:
+  title: CBR Retrieval Recommendation API
+  version: 1.0.0
+  description: >
+    相似案例检索与推荐契约，覆盖推荐请求、运行状态查询、降级状态和错误响应。
+    本契约依据 `.kiro/specs/cbr-retrieval-recommendation/design.md` 整理。
+servers:
+  - url: /api
+tags:
+  - name: Recommendations
+    description: 相似案例推荐接口
+paths:
+  /recommendations/similar-cases:
+    post:
+      tags: [Recommendations]
+      summary: 检索并返回相似案例推荐
+      operationId: recommendSimilarCases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationRequest'
+      responses:
+        '200':
+          description: 推荐成功、空候选或降级成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /recommendations/runs/{run_id}:
+    get:
+      tags: [Recommendations]
+      summary: 查询推荐运行状态与快照元数据
+      operationId: getRecommendationRun
+      parameters:
+        - $ref: '#/components/parameters/RunIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationRunResponse'
+        '404':
+          $ref: '#/components/responses/RunNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    RunIdPath:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+  responses:
+    ValidationError:
+      description: 请求参数或字段校验失败（不创建运行记录）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VALIDATION_ERROR
+            message: request validation failed
+            fields:
+              - field: query_text
+                message: query_text must not be empty
+    DependencyUnavailable:
+      description: 外部依赖不可用（LLM normalizer 或向量搜索失败）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            query_summarization_failed:
+              value:
+                code: QUERY_SUMMARIZATION_FAILED
+                message: failed to understand user query
+                meta:
+                  recommendation_run_id: run_01JABCDEF123
+                  status: failed
+                  degraded_reason: query_summarization_failed
+            vector_search_failed:
+              value:
+                code: VECTOR_SEARCH_FAILED
+                message: vector search dependency unavailable
+                meta:
+                  recommendation_run_id: run_01JABCDEF123
+                  status: failed
+                  degraded_reason: vector_search_failed
+    RunNotFound:
+      description: 推荐运行不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: RECOMMENDATION_RUN_NOT_FOUND
+            message: recommendation run not found
+    InternalError:
+      description: 系统内部异常（如运行记录终态持久化失败）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
+  schemas:
+    RecommendationStatus:
+      type: string
+      enum: [succeeded, empty, degraded, failed]
+    DegradedReason:
+      type: string
+      description: >
+        降级原因枚举，对应 design.md 失败模式矩阵（1365-1374行）。
+        explanation_fallback: 解释生成失败或不可解析，改用降级解释文案，不改变既有排序。
+        partial_candidate_data: 部分候选案例详情/结构化字段不完整，通过 missing_fields 标记。
+      enum:
+        - query_summarization_failed
+        - vector_search_failed
+        - no_candidates
+        - reranker_failed
+        - aggregation_failed
+        - reranker_and_aggregation_failed
+        - explanation_fallback
+        - partial_candidate_data
+    ExplanationStatus:
+      type: string
+      enum: [generated, fallback, unavailable]
+    ScoreFinalSource:
+      type: string
+      enum: [aggregated, default_zero_not_aggregated]
+    RecommendationFilters:
+      type: object
+      properties:
+        brand_id:
+          type: string
+        store_id:
+          type: string
+        business_type:
+          type: string
+        store_scale:
+          type: string
+        franchise_type:
+          type: string
+        city:
+          type: string
+        city_tier:
+          type: string
+        problem_type:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        case_status:
+          type: string
+        created_at_from:
+          type: string
+          format: date-time
+        created_at_to:
+          type: string
+          format: date-time
+      additionalProperties: false
+    BusinessWeights:
+      type: object
+      description: >
+        业务参数权重，用于调整推荐排序。权重值为浮点数，范围 0.0-1.0。
+        可用字段包括：brand（品牌权重）、business_type（业态权重）、
+        store_scale（门店规模权重）、franchise_type（加盟类型权重）、
+        same_city（是否同城权重）、city_tier（城市规模权重）。
+        具体可用字段及默认值由服务端配置文件约束。
+      properties:
+        brand:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        business_type:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        store_scale:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        franchise_type:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        same_city:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        city_tier:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+      additionalProperties: false
+    RecommendationRequest:
+      type: object
+      required: [query_text, top_k]
+      properties:
+        query_text:
+          type: string
+          minLength: 1
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        filters:
+          $ref: '#/components/schemas/RecommendationFilters'
+        business_weights:
+          $ref: '#/components/schemas/BusinessWeights'
+      additionalProperties: false
+    CaseReference:
+      type: object
+      required: [title_preview, description_preview, case_updated_at]
+      properties:
+        title_preview:
+          type: string
+        description_preview:
+          type: string
+        brand_summary:
+          type: string
+          nullable: true
+        store_summary:
+          type: string
+          nullable: true
+        filter_summary:
+          type: string
+          nullable: true
+        case_updated_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ScoreBreakdown:
+      type: object
+      required: [final_score_source]
+      properties:
+        final_score_source:
+          $ref: '#/components/schemas/ScoreFinalSource'
+        weights:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        factors:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    RecommendationItem:
+      type: object
+      required:
+        - recommendation_item_id
+        - case_id
+        - rank
+        - case_reference
+        - vector_similarity_score
+        - final_score
+        - score_breakdown
+        - explanation_status
+        - missing_fields
+      properties:
+        recommendation_item_id:
+          type: string
+          description: >
+            推荐项唯一标识。nullable 表示运行级推荐（无具体推荐项）。
+            注意：历史设计中曾使用字面值 "RUN" 表示运行级，现已废弃，统一使用 null。
+          nullable: true
+        case_id:
+          type: string
+        rank:
+          type: integer
+          minimum: 1
+        case_reference:
+          $ref: '#/components/schemas/CaseReference'
+        core_solution_steps:
+          type: array
+          items:
+            type: string
+        outcome_summary:
+          type: string
+          nullable: true
+        structured_suggestions_summary:
+          type: string
+          nullable: true
+        vector_similarity_score:
+          type: number
+          format: float
+        semantic_similarity_score:
+          type: number
+          format: float
+          nullable: true
+        structured_similarity_score:
+          type: number
+          format: float
+          nullable: true
+        business_score:
+          type: number
+          format: float
+          nullable: true
+        final_score:
+          type: number
+          format: float
+          description: 未聚合或降级路径下可为 0.0
+        score_breakdown:
+          $ref: '#/components/schemas/ScoreBreakdown'
+        recommendation_reason:
+          type: string
+          nullable: true
+        reference_points:
+          type: array
+          items:
+            type: string
+        cautions:
+          type: array
+          items:
+            type: string
+        source_references:
+          type: array
+          items:
+            type: string
+        explanation_status:
+          $ref: '#/components/schemas/ExplanationStatus'
+        missing_fields:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    QueryMetadata:
+      type: object
+      required:
+        - query_hash
+        - requested_top_k
+        - vector_candidate_count
+        - returned_count
+        - latency_ms
+      properties:
+        query_hash:
+          type: string
+        requested_top_k:
+          type: integer
+        vector_candidate_count:
+          type: integer
+        returned_count:
+          type: integer
+        latency_ms:
+          type: integer
+      additionalProperties: false
+    RecommendationResponse:
+      type: object
+      required:
+        - recommendation_run_id
+        - contract_version
+        - status
+        - applied_filters
+        - score_weights
+        - query_metadata
+        - items
+      properties:
+        recommendation_run_id:
+          type: string
+        contract_version:
+          type: string
+        status:
+          $ref: '#/components/schemas/RecommendationStatus'
+        message:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        degraded_reason:
+          allOf:
+            - $ref: '#/components/schemas/DegradedReason'
+          nullable: true
+        applied_filters:
+          type: object
+          additionalProperties: true
+        score_weights:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        query_metadata:
+          $ref: '#/components/schemas/QueryMetadata'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationItem'
+      additionalProperties: false
+    RecommendationRunResponse:
+      type: object
+      required:
+        - recommendation_run_id
+        - contract_version
+        - status
+        - applied_filters
+        - score_weights
+        - requested_top_k
+        - returned_count
+        - vector_candidate_count
+        - reranker_status
+        - aggregation_status
+        - latency_ms
+        - created_at
+        - updated_at
+        - items
+      properties:
+        recommendation_run_id:
+          type: string
+        contract_version:
+          type: string
+        status:
+          $ref: '#/components/schemas/RecommendationStatus'
+        message:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        degraded_reason:
+          allOf:
+            - $ref: '#/components/schemas/DegradedReason'
+          nullable: true
+        applied_filters:
+          type: object
+          additionalProperties: true
+        score_weights:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        query_hash:
+          type: string
+        requested_top_k:
+          type: integer
+        returned_count:
+          type: integer
+        vector_candidate_count:
+          type: integer
+        reranker_model_id:
+          type: string
+        reranker_status:
+          type: string
+          enum: [pending, succeeded, failed]
+        aggregation_status:
+          type: string
+        latency_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationItem'
+      additionalProperties: false
+    ErrorField:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - QUERY_SUMMARIZATION_FAILED
+            - VECTOR_SEARCH_FAILED
+            - RECOMMENDATION_RUN_NOT_FOUND
+            - INTERNAL_ERROR
+        message:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorField'
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
