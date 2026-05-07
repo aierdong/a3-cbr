@@ -76,25 +76,29 @@
 
 2. **调用顺序**（同步级联删除）：
    - 用户确认删除案例后，后台按以下顺序同步执行：
-     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
-     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
-     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
+     1. 调用 `POST /api/a3-cases/delete` 删除案例基础数据
+     2. 调用 `POST /api/enrichment/delete` 删除 LLM 派生数据
+     3. 调用 `POST /api/vector-index/delete` 删除向量索引数据
+     4. 调用 `POST /api/recommendation-feedback/delete` 删除推荐反馈数据
    - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
 
 3. **降级策略**：
    - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
    - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
-   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
-   - **下游服务不可用**：若 `llm-case-enrichment` 或 `case-vector-indexing` 服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理；继续尝试删除推荐反馈。
+   - **推荐反馈数据删除失败**：案例基础数据、LLM 派生数据和向量索引已删除，向用户展示"案例已删除，但推荐反馈清理失败"，记录日志供后台异步清理。
+   - **下游服务不可用**：若 `llm-case-enrichment`、`case-vector-indexing` 或 `recommendation-feedback` 服务不可用，或该案例从未生成过对应下游数据，可跳过对应的删除调用（超时或无数据均视为可跳过）。
 
 4. **幂等性保证**：
-   - `DELETE /api/a3-cases/{case_id}` 对已删除或不存在的案例返回 `404 CASE_NOT_FOUND`，前端应将 404 视为删除成功（目标状态已达成）。
-   - `DELETE /api/a3-cases/{case_id}/enrichment-data` 对不存在的派生数据返回 HTTP 200（幂等删除）。
-   - `POST /api/a3-cases/{case_id}/vector-index/remove` 对不存在的向量索引返回成功状态（幂等删除）。
+   - `POST /api/a3-cases/delete` 对已删除或不存在的案例返回 `404 CASE_NOT_FOUND`。
+   - `POST /api/enrichment/delete` 对不存在的派生数据返回 HTTP 200（`deleted_count = 0`）。
+   - `POST /api/vector-index/delete` 对不存在的向量索引返回成功状态（如 `deleted_count = 0`）。
+   - `POST /api/recommendation-feedback/delete` 对不存在的反馈返回 HTTP 200（`deleted_count = 0`）。
+   - 级联接口 `POST /api/a3-cases/cascade-delete` 由协调器统一幂等语义：对上游 `CASE_NOT_FOUND` 按“目标状态已达成”处理并继续下游清理，避免前端/服务端重复实现冲突语义。
 
 5. **后台异步清理**：
    - 系统应提供后台定期扫描任务，检测孤立的派生数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_enrichment_results` 或 `case_vectors` 中存在）。
-   - 后台清理任务定期调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 和 `POST /api/a3-cases/{case_id}/vector-index/remove` 清理孤立数据。
+   - 后台清理任务定期调用 `POST /api/enrichment/delete`、`POST /api/vector-index/delete` 和 `POST /api/recommendation-feedback/delete` 清理孤立数据。
    - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
 
 ### Revalidation Triggers
@@ -241,11 +245,13 @@ sequenceDiagram
 | 5.4         | 分页和稳定排序         | CaseRepository                                                        | PaginatedCaseListResponse                                | List                      |
 | 5.5         | 空列表分页           | CaseRepository                                                        | PaginatedCaseListResponse                                | List                      |
 | 5.6         | 列表摘要字段且排除派生信息   | CaseSchemas, CaseRepository                                           | CaseListItem                                             | List                      |
-| 6.1         | 删除已有案例          | CaseRouter, CaseService, CaseRepository                               | DELETE cases id                                          | Delete                    |
+| 6.1         | 删除已有案例          | CaseRouter, CaseService, CaseRepository                               | POST `/api/a3-cases/delete`                              | Delete                    |
 | 6.2         | 删除不存在案例         | CaseService, ErrorMapper                                              | NotFoundResponse                                         | Delete                    |
-| 6.3         | 物理删除            | CaseRepository                                                        | DELETE cases id                                          | Delete                    |
-| 6.4         | 删除任意状态案例        | CaseService                                                           | DELETE cases id                                          | Delete                    |
+| 6.3         | 物理删除            | CaseRepository                                                        | POST `/api/a3-cases/delete`                              | Delete                    |
+| 6.4         | 删除任意状态案例        | CaseService                                                           | POST `/api/a3-cases/delete`                              | Delete                    |
 | 6.5         | 删除后不可见          | CaseRepository                                                        | GET cases id, GET cases                                  | Delete, Detail, List      |
+| 6.6         | 级联删除协调能力        | CaseDeleteCoordinator, CaseRouter                                     | POST `/api/a3-cases/cascade-delete`                      | Cascade Delete            |
+| 6.7         | 部分失败可观测且不回滚     | CaseDeleteCoordinator                                                 | `CascadeDeleteResponse.partial_failures`                 | Cascade Delete            |
 | 7.1         | 稳定 CRUD 查询契约    | CaseRouter, CaseSchemas                                               | HTTP API                                                 | All                       |
 | 7.2         | 一致结果结构          | ErrorMapper, CaseSchemas                                              | ErrorResponse                                            | All                       |
 | 7.3         | 下游所需标识和字段       | CaseSchemas                                                           | CaseDetailResponse, CaseListItem                         | Detail, List              |
@@ -289,13 +295,14 @@ sequenceDiagram
 **API Contract**
 
 
-| Method | Endpoint                  | Request             | Response                    | Errors             |
-| ------ | ------------------------- | ------------------- | --------------------------- | ------------------ |
-| POST   | `/api/a3-cases`           | `CreateCaseRequest` | `CaseDetailResponse`        | 422, 500           |
-| PUT    | `/api/a3-cases/{case_id}` | `UpdateCaseRequest` | `CaseDetailResponse`        | 404, 409, 422, 500 |
-| DELETE | `/api/a3-cases/{case_id}` | path `case_id`      | `DeleteCaseResponse`        | 404, 500           |
-| GET    | `/api/a3-cases/{case_id}` | path `case_id`      | `CaseDetailResponse`        | 404, 500           |
-| GET    | `/api/a3-cases`           | `CaseListQuery`     | `PaginatedCaseListResponse` | 422, 500           |
+| Method | Endpoint                      | Request                | Response                    | Errors             |
+| ------ | ----------------------------- | ---------------------- | --------------------------- | ------------------ |
+| POST   | `/api/a3-cases`               | `CreateCaseRequest`    | `CaseDetailResponse`        | 422, 500           |
+| PUT    | `/api/a3-cases/{case_id}`     | `UpdateCaseRequest`    | `CaseDetailResponse`        | 404, 409, 422, 500 |
+| POST   | `/api/a3-cases/delete`        | `DeleteCaseRequest`    | `DeleteCaseResponse`        | 404, 422, 500      |
+| POST   | `/api/a3-cases/cascade-delete`| `CascadeDeleteRequest` | `CascadeDeleteResponse`     | 404, 422, 500      |
+| GET    | `/api/a3-cases/{case_id}`     | path `case_id`         | `CaseDetailResponse`        | 404, 500           |
+| GET    | `/api/a3-cases`               | `CaseListQuery`        | `PaginatedCaseListResponse` | 422, 500           |
 
 
 **Implementation Notes**
@@ -303,7 +310,8 @@ sequenceDiagram
 - API 前缀保持独立，便于前端和下游规格引用。
 - 错误响应必须包含 `code`、`message`、可选 `fields`。
 - 不在端点中调用 LLM、embedding 或推荐服务。
-- 删除接口返回 `DeleteCaseResponse`，包含 `case_id` 和 `deleted: true`。
+- 基础删除接口返回 `DeleteCaseResponse`，包含 `success`、`deleted_count`、`deleted_at`。
+- 级联删除接口返回 `CascadeDeleteResponse`，包含 `success`、`case_id`、各步骤删除状态和 `partial_failures`。
 
 ### Domain Layer
 
@@ -321,7 +329,7 @@ sequenceDiagram
 - 创建时生成稳定 `case_id`、状态和时间戳。
 - 编辑时先加载现有案例，校验状态，再应用允许变更的字段。
 - 删除时执行物理删除，支持任意状态的案例，删除不存在的案例返回 `CASE_NOT_FOUND`。
-- 创建或编辑案例时仅提交 `store_id`（映射为 `A3Case.store_info_id`）；**不得**通过案例 API 写入或更新 `store_infos` 行。
+- 创建或编辑案例时仅提交 `store_id`；**不得**通过案例 API 写入或更新 `store_infos` 行。
 - 创建或变更门店关联前，须校验 `store_id` 在本库 `store_infos` 中存在（该行由外部同步写入）；不存在则拒绝保存。
 - 保证编辑校验失败时不持久化部分修改。
 - 拒绝把 AI 派生字段写入案例基础模型。
@@ -417,7 +425,7 @@ class CaseRepository:
 **Responsibilities & Constraints**
 
 - 定义 `store_infos`、`a3_cases` 表、枚举、约束和索引；其中 `store_infos` 为外部门店主数据在本库的**只读镜像**，本规格的案例模块不负责写入。
-- `A3Case` 通过 `store_info_id` 关联 `StoreInfo`，不重复保存门店和品牌检索维度。
+- `A3Case` 通过 `store_id` 关联 `StoreInfo`，不重复保存门店和品牌检索维度。
 - 保留结构化 JSON 字段用于上下文、解决步骤和效果，避免过早拆分过多子表。
 - 不包含向量、相似度、推荐、反馈字段。
 
@@ -441,7 +449,7 @@ erDiagram
     }
     A3Case {
         string case_id
-        string store_info_id
+        string store_id
         string problem_type
         string status
         datetime created_at
@@ -464,7 +472,7 @@ erDiagram
 | --------------------- | ----------- | -------- | ----------------------------- |
 | `case_id`             | string      | yes      | 全局唯一、创建后不可变                   |
 | `problem_description` | text        | yes      | 问题描述                          |
-| `store_info_id`       | string      | yes      | 关联 `StoreInfo.store_id`       |
+| `store_id`            | string      | yes      | 关联 `StoreInfo.store_id`       |
 | `problem_type`        | string enum | yes      | 受控问题类型                        |
 | `context`             | object      | yes      | 场景上下文                         |
 | `root_cause`          | text        | yes      | 根因分析                          |
@@ -496,7 +504,7 @@ erDiagram
 
 - `store_id` 是门店信息主键；同一门店的品牌、业态、规模、加盟类型、城市和城市规模以 **外部系统为准**，本库 `store_infos` 为与之对齐的只读镜像。
 - `case_id` 唯一且不可变。
-- `A3Case.store_info_id` 必须指向存在的 `StoreInfo.store_id`。
+- `A3Case.store_id` 必须指向存在的 `StoreInfo.store_id`。
 - `created_at` 创建后不可变；`updated_at` 每次成功编辑更新。
 - `archived` 状态不可编辑，但仍可查看详情；列表默认是否包含归档由查询参数控制。
 - 解决步骤按顺序保存。
@@ -563,7 +571,7 @@ erDiagram
 | --------------------- | ----------- | ------------------------------------------- |
 | `case_id`             | varchar(64) | primary key                                 |
 | `problem_description` | text        | not null                                    |
-| `store_info_id`       | varchar(64) | not null references `store_infos(store_id)` |
+| `store_id`            | varchar(64) | not null references `store_infos(store_id)` |
 | `problem_type`        | varchar(64) | not null                                    |
 | `context`             | jsonb       | not null                                    |
 | `root_cause`          | text        | not null                                    |
@@ -578,7 +586,7 @@ erDiagram
 
 - Primary key: `case_id`
 - B-tree (`store_infos`): `brand_id`, `business_type`, `store_scale`, `franchise_type`, `city`, `city_tier`
-- B-tree (`a3_cases`): `store_info_id`, `problem_type`, `status`, `created_at`
+- B-tree (`a3_cases`): `store_id`, `problem_type`, `status`, `created_at`
 - Composite: `(created_at desc, case_id desc)` for stable pagination
 
 ### Data Contracts & Integration
@@ -620,12 +628,19 @@ erDiagram
 - Includes joined store profile fields from `StoreInfo`.
 - Excludes embedding, summary, recommendation reason, similarity score and feedback data.
 - **内部模块集成方式**：`llm-case-enrichment` 通过直接 import `CaseDetailResponse` schema（`from app.cases.schemas import CaseDetailResponse`）保证类型一致性，无需运行时版本字段。Python 类型系统和集成测试会自动捕获不兼容的 schema 变更。
-- **下游字段级契约**：`llm-case-enrichment` 依赖的详情字段、枚举语义及 `store_info_id` ↔ 对外 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`（该文档用于说明字段的业务语义和使用约定）。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
+- **下游字段级契约**：`llm-case-enrichment` 依赖的详情字段、枚举语义及 `store_id` 命名约定，见 `docs/contract-a3-case-detail-for-enrichment.md`（该文档用于说明字段的业务语义和使用约定）。本规格的 `CaseSchemas`（`backend/app/cases/schemas.py`）实现应与该文档一致；若实现先用代码落地，须在合并前回填文档或显式记录偏差。
 
-**DeleteCaseResponse**
+**DeleteCaseRequest / DeleteCaseResponse**
 
-- Includes `case_id` and `deleted: true` to confirm successful deletion.
-- Used by frontend to verify deletion completion before triggering downstream cleanup.
+- `DeleteCaseRequest` 包含 `case_id`、`reason`、`requested_by`。
+- `DeleteCaseResponse` 包含 `success`、`deleted_count`、`deleted_at`。
+- 基础删除接口只负责本地案例数据删除，不主动触发下游删除。
+
+**CascadeDeleteRequest / CascadeDeleteResponse**
+
+- `CascadeDeleteRequest` 包含 `case_id`、`requested_by`。
+- `CascadeDeleteResponse` 包含 `success`、`case_id`、`case_deleted`、`enrichment_deleted`、`vector_deleted`、`feedback_deleted`、各子步骤 `deleted_count` 以及 `partial_failures`。
+- 级联删除由协调器统一执行并处理部分失败，不把下游清理职责下放到前端编排。
 
 - Includes `case_id`, problem description preview, store profile fields, problem type, status, created_at, updated_at.
 - Excludes full solution step body unless required by detail request.

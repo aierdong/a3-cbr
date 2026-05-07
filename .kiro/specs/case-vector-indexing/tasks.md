@@ -44,6 +44,9 @@
 
 - [ ] 2.3 (P) 构建远程 embedding 客户端与响应校验
   - 调用配置的云端 embedding 接入点，并记录供应商、模型 id、维度和调用状态。
+  - **区分索引路径（`embed_for_index`）和搜索路径（`embed_for_query`）的超时/重试配置**：
+    - 索引路径：默认超时 30 秒，最多重试 2 次（容忍延迟）
+    - 搜索路径：默认超时 5 秒，不重试（延迟敏感，失败直接返回 503）
   - 将超时、限流、供应商错误、格式不可解析和向量维度不匹配映射为稳定错误。
   - 确保失败日志只包含标识、模型、状态和错误码，不包含完整文本或向量数组。
   - 完成后，fake 和远程客户端都遵循同一响应校验与错误结构。
@@ -84,9 +87,18 @@
 - [ ] 3.4 实现手动删除一致性
   - 当调用方明确请求删除时，物理删除向量记录。
   - 通过任务记录保留状态变化审计（记录 `old_vector_id` 和 `old_content_hash`），并确保搜索不会返回已删除案例。
+  - **本规格只提供删除 API，不实现级联删除协调器**（协调器由 `a3-case-management` 的 `CaseDeleteCoordinator` 负责）。
   - 完成后，案例不可作为来源时仍可查询索引状态，但不会出现在向量搜索命中中。
   - _Requirements: 3.4, 4.5, 6.2_
   - _Boundary: VectorIndexService, VectorRepository_
+
+- [ ] 3.5 实现后台异步清理服务
+  - 定期扫描并清理孤立的向量数据（`case_id` 在 `a3_cases` 中不存在，或 `enrichment_id` 在 `case_enrichment_results` 中不存在）。
+  - 清理任务在应用启动时自动启动，清理间隔通过配置项 `vector_cleanup_interval_seconds` 指定（默认 86400 秒）。
+  - 清理操作创建 `job_type=remove` 且 `requested_by=system` 的审计任务，记录清理原因和删除的向量标识。
+  - 完成后，孤立向量数据会被定期清理，避免数据库膨胀和搜索结果包含已删除案例。
+  - _Requirements: 3.4, 6.2_
+  - _Boundary: VectorCleanupService_
 
 - [ ] 4. Search primitives: 查询向量化与 Top-K 候选搜索原语
 - [ ] 4.1 构建用户问题查询向量生成和搜索请求校验
@@ -106,9 +118,9 @@
   - _Boundary: VectorSearchService, VectorRepository_
 
 - [ ] 4.3 明确候选搜索原语与推荐编排解耦
-  - 搜索响应不包含推荐理由、业务参数分、reranker 分数、CBRKit 内部结构、反馈或最终展示顺序字段。
-  - 为下游保留必要索引元数据，便于 CBR 检索推荐规格在候选集内完成补齐、重排和解释。
-  - 完成后，搜索接口只提供向量候选原语，不会调用 CBRKit、reranker 或推荐文案服务，也不会决定最终推荐展示顺序。
+  - 搜索响应不包含推荐理由、业务参数分、reranker 分数、聚合分数、反馈或最终展示顺序字段。
+  - 为下游保留必要索引元数据，便于检索推荐规格在候选集内完成补齐、重排和解释。
+  - 完成后，搜索接口只提供向量候选原语，不会执行分数加权聚合、调用 reranker 或推荐文案服务，也不会决定最终推荐展示顺序。
   - _Requirements: 5.5_
   - _Boundary: VectorSearchService_
 
@@ -131,6 +143,7 @@
   - 验证生产配置缺失时 fail closed。
   - 验证日志、错误响应和任务记录不包含完整案例正文、完整 embedding 输入文本或向量数组。
   - 验证任务生命周期记录覆盖排队、处理中、成功、失败、重试和删除。
+  - 验证后台清理服务能识别并清理孤立向量数据，且清理操作创建审计任务。
   - 完成后，运维可按案例标识查看状态和失败原因，敏感内容不会进入日志或错误响应。
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
-  - _Boundary: VectorJobRunner, VectorIndexService, VectorSearchService, ErrorMapper_
+  - _Boundary: VectorJobRunner, VectorIndexService, VectorSearchService, VectorCleanupService, ErrorMapper_

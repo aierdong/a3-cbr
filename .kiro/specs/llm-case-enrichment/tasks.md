@@ -87,6 +87,17 @@
   - _Boundary: EnrichmentJobRunner_
   - _Depends: 2.6_
 
+- [ ] 2.8 实现孤立派生数据清理服务
+  - 实现 `EnrichmentCleanupService`，定期扫描并清理孤立派生数据（`case_id` 在 `a3_cases` 中不存在的派生结果和运行记录）。
+  - 创建配置文件 `backend/config/cleanup.yaml`，定义 `enrichment_cleanup` 配置段（`enabled`、`interval_seconds`、`batch_size`）。
+  - 实现清理逻辑：通过 LEFT JOIN 查询孤立记录，调用 `EnrichmentRepository` 的内部删除方法批量清理（默认批次大小 1000）。
+  - 实现生命周期管理：提供 `run_periodic()` 方法（使用 `asyncio.create_task` 启动后台任务）和 `stop()` 方法（优雅停止）。
+  - 实现失败处理：启动初始化失败或单次清理失败时记录错误日志，不阻塞应用启动，下一个周期自动重试。
+  - 完成后清理服务可独立运行，定期清理孤立派生数据，支持配置化控制清理间隔和批次大小。
+  - _Requirements: 7.4_
+  - _Boundary: EnrichmentCleanupService_
+  - _Depends: 2.5_
+
 - [ ] 3. 实现推荐文案生成能力
 
 - [ ] 3.1 实现推荐候选文案服务
@@ -111,7 +122,7 @@
 - [ ] 4.1 实现案例增强 API
   - 暴露创建增强运行、查询当前增强状态、删除派生数据和重试运行接口。
   - 创建增强运行和重试接口立即返回 HTTP 200 + `running` 状态，客户端无需等待或轮询。
-  - **删除接口**：`DELETE /api/a3-cases/{case_id}/enrichment-data` 删除指定案例的所有派生数据，对不存在的派生数据返回 HTTP 200（幂等），删除失败返回 HTTP 500。
+  - **删除接口**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：`POST /api/enrichment/delete`，接收 `DeleteEnrichmentRequest`（含 `case_id` 或 `enrichment_id`、`reason`、`requested_by`），在单个事务内删除派生结果和运行记录。至少提供 `case_id` 或 `enrichment_id` 之一。对不存在的派生数据返回 HTTP 200 + `deleted_count: 0`（幂等），参数校验失败返回 HTTP 422，删除失败返回 HTTP 500。
   - 成功响应包含 `run_id`、派生结果状态、输出版本和上游案例更新时间。
   - 完成后客户端可通过 HTTP 触发增强、查看状态、删除派生数据和执行允许的重试。
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 4.4, 4.5, 6.4, 7.1, 7.3, 7.5_
@@ -127,13 +138,16 @@
   - _Depends: 3.2_
 
 - [ ] 4.3 接入应用入口和数据库会话
-  - 将 enrichment 路由注册到后端应用入口，并纳入数据库 metadata。
+  - 将 enrichment 路由和清理服务注册到后端应用入口（`backend/app/main.py`）。
+  - 在 `@app.on_event("startup")` 钩子中注册 `EnrichmentCleanupService`，使用 `asyncio.create_task(cleanup_service.run_periodic())` 启动后台任务。
+  - 在 `@app.on_event("shutdown")` 钩子中调用 `cleanup_service.stop()` 优雅停止清理服务。
+  - 将 enrichment ORM metadata 纳入数据库 metadata。
   - 为增强运行、审核和推荐文案生成提供事务提交和失败回滚行为。
-  - 只追加路由注册、metadata 导入和本模块事务使用，不重构共享应用入口或数据库会话基础设施。
-  - 完成后从应用入口发起 HTTP 请求可以访问全部 LLM 增强端点。
-  - _Requirements: 4.2, 4.3, 4.4, 6.3_
-  - _Boundary: EnrichmentRouter, EnrichmentRepository_
-  - _Depends: 4.1, 4.2_
+  - 只追加路由注册、清理服务注册、metadata 导入和本模块事务使用，不重构共享应用入口或数据库会话基础设施。
+  - 完成后从应用入口发起 HTTP 请求可以访问全部 LLM 增强端点，清理服务在应用启动时自动运行。
+  - _Requirements: 4.2, 4.3, 4.4, 6.3, 7.4_
+  - _Boundary: EnrichmentRouter, EnrichmentRepository, EnrichmentCleanupService_
+  - _Depends: 4.1, 4.2, 2.8_
 
 - [ ] 4.4 验证与上游和下游边界分离
   - 检查代码路径不会修改 `a3_cases` 基础字段，也不会生成 embedding、向量索引、相似度或排序决策。
@@ -148,7 +162,10 @@
 - [ ] 5.1 编写输出校验和 Prompt 安全单元测试
   - 覆盖 JSON 解析失败、字段缺失、枚举越界、标签规范化、来源引用缺失和候选引用不匹配。
   - 覆盖 `missing_information[]` 契约：信息不足时必须返回结构化原因，且不得发布伪成功结果。
-  - 覆盖案例正文中包含提示词注入文本时仍按固定 schema 输出和校验。
+  - **覆盖 Prompt 注入防护测试**（至少 5 类攻击向量，详见 `docs/prompt-injection-defense.md`）：
+    - **输入侧高风险阻断**：直接指令覆盖（"忽略以上所有指令"）、角色扮演劫持（"你现在是另一个 AI 助手"）、输出格式篡改（"忽略 JSON 格式要求"）、嵌套注入（`<system>` 标签）——验证返回 HTTP 200 + `INJECTION_RISK_DETECTED`，不调用 LLM。
+    - **输入侧低风险告警**：低风险关键词（"忽略次要因素"等正常业务表达）——验证通过检测且 LLM 输出正常，日志记录告警。
+    - **输出侧校验**：角色声明注入（"我是 AI 助手"）、拒绝回答模板（"抱歉，我无法回答"）——验证 `OutputValidator` 标记为 `validation_failed` + `INJECTION_SUSPECTED`。
   - 完成后输出校验和 Prompt 安全边界可独立通过测试验证。
   - _Requirements: 2.3, 3.3, 4.1, 4.2, 5.2, 5.3, 6.2_
   - _Boundary: OutputValidator, PromptCatalog_
@@ -173,7 +190,11 @@
 
 - [ ] 5.4 编写 API 与安全隐私集成测试
   - 覆盖增强运行创建（立即返回 HTTP 200 + `running`）、状态查询、删除派生数据、重试、推荐文案和统一错误响应。
-  - **覆盖删除幂等性**：对从未生成过派生数据的案例调用删除接口返回 HTTP 200；对已删除派生数据的案例再次调用删除接口返回 HTTP 200；删除后查询派生结果和运行记录确认已不存在。
+  - **覆盖删除幂等性**：对从未生成过派生数据的案例调用删除接口返回 HTTP 200 + `deleted_count: 0`；对已删除派生数据的案例再次调用删除接口返回 HTTP 200 + `deleted_count: 0`；删除后查询派生结果和运行记录确认已不存在。
+  - **覆盖级联删除集成测试**（与 `docs/cascade-deletion-design.md` §6.2 对齐）：
+    - 从案例节点发起完整级联删除（调用 `POST /api/a3-cases/cascade-delete`），验证派生数据被正确删除。
+    - 从案例增强节点发起级联删除（调用 `POST /api/enrichment/delete`），验证下游向量索引和推荐反馈被协调删除。
+    - 下游服务不可用时的降级行为：验证删除操作不阻塞，记录日志供后续清理。
   - 覆盖运行记录审计字段（`request_purpose`）写入和查询。
   - 覆盖生产隐私配置缺失、供应商超时、限流和日志脱敏。
   - 覆盖多模型配置正确加载：验证 4 个配置对象（enrichment_llm/normalizer_llm/embedding/reranker）在应用启动后独立存在，共享 `LLMClient` 通过构造函数接收配置对象。
@@ -181,3 +202,14 @@
   - _Requirements: 1.3, 1.4, 4.2, 4.4, 4.6, 5.5, 6.1, 6.3, 6.4, 6.5, 7.3, 7.5_
   - _Boundary: EnrichmentRouter, LLMClient, ErrorMapper_
   - _Depends: 4.3_
+
+- [ ] 5.5 编写清理服务测试
+  - 验证 `EnrichmentCleanupService` 在应用启动时自动注册（通过 `@app.on_event("startup")` 钩子）。
+  - 创建孤立派生数据（案例已删除但派生数据仍存在），手动触发清理任务，验证孤立数据被正确清理（派生结果和运行记录均被删除）。
+  - 验证清理任务的周期性执行（通过配置文件 `backend/config/cleanup.yaml` 的 `enrichment_cleanup.interval_seconds` 控制）。
+  - 验证清理任务失败时的错误处理（记录错误日志，不阻塞应用启动，下一个周期自动重试）。
+  - 验证应用关闭时清理服务优雅停止（通过 `@app.on_event("shutdown")` 钩子调用 `stop()` 方法）。
+  - 完成后清理服务的生命周期管理、孤立数据清理逻辑和失败处理都有测试覆盖。
+  - _Requirements: 7.4_
+  - _Boundary: EnrichmentCleanupService_
+  - _Depends: 2.8, 4.3_

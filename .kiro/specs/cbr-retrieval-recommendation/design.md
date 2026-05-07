@@ -257,7 +257,7 @@ sequenceDiagram
     participant Structured
     participant Business
     participant Reranker
-    participant CBR
+    participant Aggregator
     participant Explainer
     Client->>Router: submit query
     Router->>Service: validate request and weights
@@ -741,9 +741,9 @@ def recommend_similar_cases(self, request: RecommendationRequest) -> Recommendat
             semantic_scores = None
             reranker_status = 'failed'
         
-        # CBR 聚合失败触发降级
+        # ScoreAggregator 聚合失败触发降级
         try:
-            ranked = self.orchestrator.aggregate(
+            ranked = self.aggregator.aggregate(
                 query=normalized,
                 candidates=self._merge_scores(snapshots, structured_scores, 
                                                business_scores, semantic_scores)

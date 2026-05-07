@@ -35,7 +35,7 @@
 
 - 案例基础数据模型、校验规则和持久化。
 - LLM 摘要、结构化提取、标签建议、推荐文案生成和审核。
-- embedding、pgvector、向量搜索、CBRKit 编排、reranker 调用和推荐运行持久化。
+- embedding、pgvector、向量搜索、分数加权聚合、reranker 调用和推荐运行持久化。
 - 推荐反馈保存、幂等规则、统计查询和学习排序。
 - 复杂权限、菜单配置平台、经营指标看板、消息渠道和移动端深度适配。
 
@@ -96,6 +96,7 @@ flowchart TB
 | State | Composition API + 可选轻量 store | 管理页面请求状态和当前推荐结果 | 避免复杂全局状态 |
 | Styling | 原生 CSS 或轻量 scoped CSS | 基础布局、表单、表格和状态提示 | 不引入重型设计系统 |
 | Testing | Vitest + Vue Test Utils | 组件、API 映射和页面交互测试 | E2E 可后续接入 Playwright |
+| Type Generation | openapi-typescript | 从 OpenAPI 契约生成前端类型 | 保证契约一致性 |
 
 ## File Structure Plan
 
@@ -113,11 +114,15 @@ frontend/
 │   ├── router/
 │   │   └── index.ts                     # 后台路由定义
 │   ├── api/
+│   │   ├── generated/                   # openapi-typescript 生成的类型（禁止手动编辑）
+│   │   │   ├── cases.ts                 # 来源：a3-case-management.openapi.yaml
+│   │   │   ├── recommendations.ts       # 来源：cbr-retrieval-recommendation.openapi.yaml
+│   │   │   └── feedback.ts             # 来源：recommendation-feedback.openapi.yaml
 │   │   ├── client.ts                    # fetch 封装、错误映射和请求配置
 │   │   ├── errors.ts                    # API 错误类型、字段错误和状态分类
-│   │   ├── cases.ts                     # 案例 API 类型和 service
-│   │   ├── recommendations.ts           # 推荐检索 API 类型和 service
-│   │   └── feedback.ts                  # 推荐反馈 API 类型和 service
+│   │   ├── cases.ts                     # 案例 API service（引用 generated 类型）
+│   │   ├── recommendations.ts           # 推荐检索 API service（引用 generated 类型）
+│   │   └── feedback.ts                  # 推荐反馈 API service（引用 generated 类型）
 │   ├── components/
 │   │   ├── layout/
 │   │   │   └── AdminLayout.vue          # 案例与推荐导航、页面容器
@@ -268,13 +273,71 @@ sequenceDiagram
 #### 环境与认证（MVP）
 
 - **全匿名（产品决策）**：MVP 阶段后端 API 不要求认证，前端不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header。所有需要用户标识的场景（如反馈提交的 `actor_id`）统一使用匿名占位符（`anonymous_user` 或 `user_id=0`）。这是 MVP 产品边界决策，不是设计缺陷。若后续产品规格要求真实用户认证，须单独立项并修订本设计。
-- **前后端一体化架构（重要设计原则）**：本系统前后端作为单一产品一体开发和部署，前后端是内部模块的相互调用关系，不是外部系统集成。API 类型定义参考后端规格文档（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`）中的数据模型和接口定义，通过代码审查和集成测试保证字段映射的正确性。**不应将"契约同步"作为设计缺陷**：前后端字段映射是内部模块协作的自然结果，不需要像对待外部系统一样引入复杂的契约同步机制、自动化类型生成工具或契约测试框架。若后续产品演进为前后端分离部署或需要对接外部系统，应单独立项评估契约管理策略并修订本设计。
+- **前后端一体化架构（重要设计原则）**：本系统前后端作为单一产品一体开发和部署，前后端是内部模块的相互调用关系，不是外部系统集成。API 类型定义以后端规格文档（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`）中的 OpenAPI 契约为权威来源，通过 `openapi-typescript` 自动生成前端 TypeScript 类型，并结合代码审查和集成测试保证字段映射的正确性。详见下方「Contract Synchronization」小节。
 - **开发环境代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求。代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源。
 - **MVP 部署策略（单节点同源部署）**：MVP 阶段前后端部署在同一节点上，前端静态资源由后端 FastAPI 应用托管（通过 `StaticFiles` 中间件或 Nginx 反向代理），前端请求后端 API 为同源请求，无需配置 CORS。具体部署方式：
   - **方式 1（FastAPI 托管）**：FastAPI 应用挂载 `StaticFiles` 中间件，将前端构建产物（`frontend/dist`）托管在根路径或 `/admin` 路径下，API 路由保持 `/api` 前缀，前端通过相对路径访问 API。
   - **方式 2（Nginx 反向代理）**：Nginx 同时托管前端静态资源和反向代理后端 API，前端和 API 共享同一域名和端口，前端通过相对路径访问 API。
   - **环境变量注入**：前端构建时通过 `VITE_API_BASE_URL` 环境变量注入 API base URL（开发环境为空或 `/api`，生产环境为 `/api` 或绝对路径），`ApiClient` 根据环境变量动态拼接请求路径。
   - **后续扩展**：验证无误后，若需要前后端分离部署或多节点部署，需单独评估 CORS 配置、CDN 托管、负载均衡和会话管理策略，并修订本设计。
+
+#### Contract Synchronization
+
+前后端一体化开发不意味着类型定义可以手动维护。本设计使用 `openapi-typescript` 从后端 OpenAPI 契约自动生成前端 TypeScript 类型，消除字段映射漂移风险。
+
+**类型生成流程**
+
+```
+docs/contracts/*.openapi.yaml  →  openapi-typescript  →  frontend/src/api/generated/*.ts
+           (权威来源)                (自动转换)              (前端消费，禁止手动编辑)
+```
+
+**类型文件存放**
+
+| 目录 | 用途 | 维护方式 |
+|------|------|---------|
+| `frontend/src/api/generated/` | 从 OpenAPI 契约生成的类型定义 | 自动生成，禁止手动编辑 |
+| `frontend/src/api/*.ts` (cases, recommendations, feedback) | API service 层，引用 generated 类型 | 手动编写，消费生成类型 |
+
+生成的类型文件按契约来源分文件：
+
+- `generated/cases.ts` — 来源：`a3-case-management.openapi.yaml`
+- `generated/recommendations.ts` — 来源：`cbr-retrieval-recommendation.openapi.yaml`
+- `generated/feedback.ts` — 来源：`recommendation-feedback.openapi.yaml`
+
+**生成命令**
+
+```bash
+# 从后端 OpenAPI 契约生成前端类型
+npx openapi-typescript docs/contracts/a3-case-management.openapi.yaml -o frontend/src/api/generated/cases.ts
+npx openapi-typescript docs/contracts/cbr-retrieval-recommendation.openapi.yaml -o frontend/src/api/generated/recommendations.ts
+npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o frontend/src/api/generated/feedback.ts
+```
+
+`package.json` 中注册为 npm script：
+
+```json
+{
+  "scripts": {
+    "generate:types": "npx openapi-typescript docs/contracts/a3-case-management.openapi.yaml -o frontend/src/api/generated/cases.ts && npx openapi-typescript docs/contracts/cbr-retrieval-recommendation.openapi.yaml -o frontend/src/api/generated/recommendations.ts && npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o frontend/src/api/generated/feedback.ts"
+  }
+}
+```
+
+**生成时机**
+
+| 场景 | 操作 | 说明 |
+|------|------|------|
+| 开发时 | `npm run generate:types` | 后端契约变更后手动执行 |
+| CI 流水线 | `npm run generate:types && git diff --exit-code` | 校验生成文件与提交文件一致，不一致则 CI 失败 |
+
+**契约变更响应流程**
+
+1. 后端修改 `docs/contracts/*.openapi.yaml` 并提交。
+2. 前端开发者拉取最新代码后执行 `npm run generate:types`。
+3. 若生成的类型导致编译错误，更新对应的 API service 层（`cases.ts`、`recommendations.ts`、`feedback.ts`）以适配新契约。
+4. 运行集成测试验证字段映射正确性。
+5. 提交更新后的生成文件和 service 代码。
 
 #### ApiClient
 
@@ -707,6 +770,35 @@ ApiClient 构造 `ApiError` 时遵循以下脱敏规则（对应需求 6.4）：
 - 推荐页提交 `/api/recommendations/similar-cases` 后展示运行元数据和有序推荐项。
 - 反馈控件向 `/api/recommendation-feedback` 提交运行级和推荐项级反馈，请求中包含 `actor_id: "anonymous_user"` 和 `source_channel: "admin_web"`（MVP 产品决策：后端 API 不要求认证）。
 - 推荐降级和反馈失败同时出现时，推荐项仍然可见。
+
+### Contract Consistency Tests
+
+契约一致性测试保证前端类型与后端 OpenAPI 契约的字段级同步。
+
+**CI 类型一致性校验**
+
+CI 流水线中执行以下检查，确保生成的类型文件与提交的版本一致：
+
+```bash
+# 重新生成类型文件
+npm run generate:types
+# 检查是否有未提交的变更（生成文件与提交文件不一致则 CI 失败）
+git diff --exit-code frontend/src/api/generated/
+```
+
+若 `git diff` 有输出，说明开发者修改了后端契约但未重新生成前端类型，CI 直接失败并提示执行 `npm run generate:types`。
+
+**集成测试字段映射验证**
+
+集成测试在 mock 或真实后端响应的基础上，验证前端 service 层对生成类型的使用是否正确：
+
+| 测试场景 | 验证内容 |
+|---------|---------|
+| 案例列表响应映射 | `CaseApiService.list()` 返回的对象字段与生成的 `CaseListItem` 类型一致，必填字段不为空 |
+| 案例详情响应映射 | `CaseApiService.detail()` 返回的对象包含 `problem_description`、`context`、`solution_steps`、`outcome` 等详情字段 |
+| 推荐响应映射 | `RecommendationApiService.recommend()` 返回的 `items` 数组中每个元素包含 `rank`、`final_score`、`recommendation_reason` 等字段 |
+| 反馈请求映射 | `FeedbackApiService.submit()` 发送的请求体包含 `recommendation_run_id`、`usefulness`、`actor_id`、`source_channel` 字段 |
+| 枚举值覆盖 | 响应中的 `status`、`problem_type`、`explanation_status` 等枚举字段值在生成类型中有对应定义 |
 
 ### E2E/UI Tests
 

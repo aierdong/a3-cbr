@@ -16,10 +16,13 @@
 
 - [ ] 2. 实现案例领域核心能力
 - [ ] 2.1 定义案例请求、响应和分页契约
-  - 定义创建、编辑、删除、详情、列表项和分页响应的数据契约。
+  - 定义创建、编辑、删除（基础删除和级联删除）、详情、列表项和分页响应的数据契约。
   - 创建请求包含全部必填基础字段及 **`store_id`**（引用已存在的门店镜像）；**不在请求体中承载**门店画像字段（详情/列表通过关联 `StoreInfo` 返回）；编辑请求禁止修改案例标识和创建时间。
-  - **`CaseDetailResponse` 根级包含服务端只读的 `case_contract_version`**（字符串，来自应用配置或常量），与 `docs/contract-a3-case-detail-for-enrichment.md` §6 对齐；创建/编辑请求不得接受客户端传入该字段。
-  - 删除响应 `DeleteCaseResponse` 包含 `case_id` 和 `deleted: true`，用于前端确认删除成功。
+  - 删除契约包含：
+    - `DeleteCaseRequest`：包含 `case_id`、`reason`（删除原因枚举）、`requested_by`（删除者标识）
+    - `DeleteCaseResponse`：包含 `success`、`deleted_count`、`deleted_at`
+    - `CascadeDeleteRequest`：包含 `case_id`、`requested_by`
+    - `CascadeDeleteResponse`：包含 `success`、`case_id`、各步骤删除状态和 `partial_failures`
   - 响应契约保留案例标识、状态、过滤字段和更新时间，并排除派生字段。
   - 完成后，API 层和测试可复用同一套请求响应结构。
   - _Requirements: 1.1, 1.3, 1.5, 1.6, 4.5, 5.1, 5.6, 6.1, 7.1, 7.2, 7.3, 7.4_
@@ -35,6 +38,7 @@
 
 - [ ] 2.3 (P) 实现字段与步骤校验
   - 校验必填字段与枚举值，并校验解决步骤内容。
+  - 校验 `store_id` 在 `store_infos` 中存在（通过 Repository 预检或注入查询结果）。
   - 保留解决步骤顺序，并对非法步骤返回字段级错误。
   - 完成后，非法创建或编辑请求不会进入持久化流程。
   - _Requirements: 2.1, 2.2, 2.3, 3.2, 4.3_
@@ -49,6 +53,7 @@
   - 完成后，数据库可保存案例并按 MVP 过滤条件查询。
   - _Requirements: 1.2, 1.5, 1.6, 3.1, 3.3, 4.1, 5.3, 5.4, 5.5, 6.3, 6.5_
   - _Boundary: CaseRepository_
+  - _Depends: 2.2_
 
 - [ ] 2.5 实现案例业务服务
   - 编排创建、编辑、删除、详情和列表查询的业务流程。
@@ -60,15 +65,27 @@
   - _Boundary: CaseService_
   - _Depends: 2.1, 2.2, 2.3, 2.4_
 
+- [ ] 2.6 实现级联删除协调器
+  - 部署在本规格服务中，作为跨规格级联删除的协调入口。
+  - 依次调用本规格的 `CaseService.delete_case` 和下游规格的删除 API（`llm-case-enrichment`、`case-vector-indexing`、`recommendation-feedback`）。
+  - 下游服务不可用或删除失败时，不阻塞上游删除，记录失败信息到 `partial_failures`。
+  - 支持从案例、案例增强、向量索引节点发起的级联删除（`delete_case_cascade`、`delete_enrichment_cascade`、`delete_vector_cascade`）。
+  - 所有删除操作幂等，重复调用不产生副作用。
+  - 完成后，前端可通过级联删除 API 一次性清理案例及其派生数据。
+  - _Requirements: 6.1, 6.3, 6.6, 6.7_
+  - _Boundary: CaseDeleteCoordinator_
+  - _Depends: 2.5_
+
 - [ ] 3. 暴露案例管理 API
 - [ ] 3.1 实现创建、编辑与删除接口
   - 暴露创建 A3 案例接口，成功时返回案例标识、基础状态和创建时间。
   - 暴露编辑 A3 案例接口，成功时返回更新后的核心字段和更新时间。
-  - 暴露删除 A3 案例接口，成功时返回 `DeleteCaseResponse`（包含 `case_id` 和 `deleted: true`）。
+  - 暴露基础删除接口（`POST /api/a3-cases/delete`），接受 `DeleteCaseRequest`，返回 `DeleteCaseResponse`。
+  - 暴露级联删除协调接口（`POST /api/a3-cases/cascade-delete`），接受 `CascadeDeleteRequest`，返回 `CascadeDeleteResponse`。
   - 完成后，合法创建、编辑和删除请求可通过 HTTP 调用完成持久化变更。
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4, 4.5, 6.1, 6.2, 7.1, 7.2_
   - _Boundary: CaseRouter_
-  - _Depends: 2.5_
+  - _Depends: 2.5, 2.6_
 
 - [ ] 3.2 实现详情与列表查询接口
   - 暴露案例详情接口，返回完整基础字段并处理不存在案例。
@@ -85,6 +102,7 @@
   - 完成后，API 错误不会暴露数据库内部异常，客户端可按错误码处理。
   - _Requirements: 2.2, 2.4, 3.2, 4.2, 4.3, 4.4, 5.2, 6.2, 7.2_
   - _Boundary: ErrorMapper_
+  - _Depends: 2.1_
 
 - [ ] 4. 完成应用集成与边界校验
 - [ ] 4.1 接入应用入口、数据库会话和路由注册
@@ -107,12 +125,14 @@
 - [ ] 5.1 编写领域校验与服务单元测试
   - 覆盖必填字段、枚举、解决步骤、不可变字段和不可编辑状态。
   - 覆盖创建默认状态、时间戳生成和编辑失败不落库。
+  - 覆盖门店不存在时的校验拒绝（`STORE_NOT_FOUND`）。
   - 完成后，领域校验和服务行为可通过单元测试独立验证。
   - _Requirements: 2.1, 2.2, 2.3, 3.2, 4.3, 4.4, 4.5_
   - _Boundary: CaseValidator, CaseService_
+  - _Depends: 2.3, 2.5_
 
 - [ ] 5.2 编写 API 集成测试
-  - 覆盖创建、编辑、删除、详情、列表、未找到、`STORE_NOT_FOUND`、校验失败和状态冲突。
+  - 覆盖创建、编辑、删除（基础删除和级联删除）、详情、列表、未找到、`STORE_NOT_FOUND`、校验失败和状态冲突。
   - 断言成功响应和错误响应结构稳定。
   - 完成后，五类案例管理 API 均有 HTTP 层验证。
   - _Requirements: 3.1, 3.2, 4.1, 4.2, 5.1, 5.2, 6.1, 6.2, 7.1, 7.2_
@@ -126,4 +146,14 @@
   - 完成后，列表查询满足 MVP 检索入口和前端展示的基础要求。
   - _Requirements: 1.5, 1.6, 5.3, 5.4, 5.5, 5.6, 7.3, 7.4, 7.5_
   - _Boundary: CaseRepository, CaseRouter_
+  - _Depends: 4.1_
+
+- [ ] 5.4 编写级联删除集成测试
+  - 覆盖级联删除协调器依次调用本规格和下游规格删除 API。
+  - 覆盖下游服务不可用或删除失败时的降级行为（不阻塞上游删除）。
+  - 断言 `partial_failures` 正确记录失败信息。
+  - 覆盖从案例、案例增强、向量索引节点发起的级联删除场景。
+  - 完成后，级联删除功能有完整的集成验证。
+  - _Requirements: 6.1, 6.3, 6.6, 6.7_
+  - _Boundary: CaseDeleteCoordinator_
   - _Depends: 4.1_

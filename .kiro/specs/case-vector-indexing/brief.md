@@ -19,7 +19,7 @@
 ## Scope
 
 - **In**: 问题侧 embedding 输入文本策略、云端 embedding API 调用、BGE-M3（模型 ID: bge-large-zh）默认适配、云端替代方案评估边界、pgvector 字段和索引、案例问题向量手动创建/更新/移除、索引状态记录。
-- **Out**: CBRKit 重排、推荐理由生成、反馈学习排序、Milvus 等独立向量库、模型本地部署及推理成本优化。
+- **Out**: `ScoreAggregator`加权聚合与重排、推荐理由生成、反馈学习排序、Milvus 等独立向量库、模型本地部署及推理成本优化。
 
 ## Boundary Candidates
 

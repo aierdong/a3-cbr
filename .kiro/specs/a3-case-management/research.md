@@ -87,7 +87,7 @@
 - **Alternatives Considered**:
   1. 继续把所有门店和品牌字段放在 `A3Case` 表中 — 查询直接但字段会持续膨胀，多个案例会重复保存同一门店画像。
   2. 抽出 `StoreInfo` 独立实体，由 `A3Case` 关联 — 模型边界清晰，过滤字段可扩展，适合后续列表检索。
-- **Selected Approach**: 新增 `StoreInfo`（本库**只读镜像表**），保存门店名称、品牌标识、品牌名称、业态、门店规模、加盟类型、城市和城市规模；`A3Case` 只保存 `store_id`/`store_info_id` 关联；案例创建请求**仅提交 `store_id`**，镜像行由外部同步写入。
+- **Selected Approach**: 新增 `StoreInfo`（本库**只读镜像表**），保存门店名称、品牌标识、品牌名称、业态、门店规模、加盟类型、城市和城市规模；`A3Case` 只保存 `store_id` 关联；案例创建请求**仅提交 `store_id`**，镜像行由外部同步写入。
 - **Rationale**: 门店画像是可复用的基础维度，不属于单个案例内容，且权威归属外部系统。独立镜像表能减少案例表宽度并支撑列表过滤，同时避免案例 API 承担门店主数据写入。
 - **Trade-offs**: 列表查询需要关联门店信息表；依赖外部同步及时性；实施时要补齐存在性校验、`STORE_NOT_FOUND` 与集成测试夹具中的镜像种子数据。
 - **Follow-up**: 本规格不考虑历史快照；少量门店画像变化按外部同步更新镜像即可。
@@ -102,6 +102,17 @@
 - **Rationale**: 既能满足案例管理和下游输入需求，也能避免把行业库审核提前塞进本规格。
 - **Trade-offs**: 后续审核流需要在独立规格中扩展状态或引入新实体。
 - **Follow-up**: 实施时用枚举和状态校验集中维护语义。
+
+### Decision: 级联删除采用协调器非事务模式
+
+- **Context**: 案例删除会影响案例增强、向量索引和推荐反馈，跨规格无法使用单库事务。
+- **Alternatives Considered**:
+  1. 前端逐个调用各服务删除接口 — 实现分散，失败语义不一致。
+  2. 在 `a3-case-management` 内提供统一协调器入口并顺序调用下游清理 API。
+- **Selected Approach**: 采用协调器入口 `POST /api/a3-cases/cascade-delete`，由服务端统一编排删除链路与部分失败结果。
+- **Rationale**: 统一幂等语义与降级策略，降低联调复杂度，并保持前端删除入口稳定。
+- **Trade-offs**: 协调器需要维护下游客户端与可观测日志；短时允许部分失败，通过异步清理达成最终一致。
+- **Follow-up**: 与 `docs/cascade-deletion-design.md` 保持同一删除契约（`POST /api/a3-cases/delete`、`POST /api/enrichment/delete`、`POST /api/vector-index/delete`、`POST /api/recommendation-feedback/delete`）。
 
 ## Risks & Mitigations
 

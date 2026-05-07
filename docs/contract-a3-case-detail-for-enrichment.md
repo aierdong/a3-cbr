@@ -60,7 +60,7 @@
 
 ### 3.3 门店镜像（过滤维度）
 
-持久层外键列名为 `store_info_id`；**对外 JSON 统一使用 `store_id`**，取值等于 `store_infos.store_id`，便于与创建/更新请求及前端契约一致。
+持久层外键列名为 `store_id`；**对外 JSON 统一使用 `store_id`**，取值等于 `store_infos.store_id`，便于与创建/更新请求及前端契约一致。
 
 
 | JSON 属性          | 类型     | 必填  | 说明              |

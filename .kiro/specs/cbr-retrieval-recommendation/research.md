@@ -6,8 +6,8 @@
 - **Discovery Scope**: Complex Integration
 - **Key Findings**:
   - 上游规格已将案例基础字段、LLM 推荐文案与候选向量搜索原语拆分；本规格只负责编排检索与推荐，不反向承担上游数据生命周期。
-  - 推荐目标为 Hybrid CBR：硬过滤剔除明显无关案例，问题语义向量做初筛，reranker 产出纯语义相似度，结构化派生字段与业务参数提供可解释的局部评分，再由 CBRKit 聚合得到最终排序。
-  - CBRKit 适合作为候选集内的可替换编排/重排适配层；持久化模型与对外响应契约须由系统自行定义。
+  - 推荐目标为 Hybrid CBR：硬过滤剔除明显无关案例，问题语义向量做初筛，reranker 产出纯语义相似度，结构化派生字段与业务参数提供可解释的局部评分，再由自实现的 `ScoreAggregator` 聚合得到最终排序。
+  - `ScoreAggregator` 作为候选集内的加权聚合组件，逻辑简单、完全可控、易于测试，无外部 CBR 框架依赖。
   - 远程重排默认 model 为 `qwen3-reranker-8b`，应通过独立的 `provider/model/base_url` 配置与适配层记录分值、状态、耗时及降级原因。
 
 ## Research Log
@@ -25,9 +25,9 @@
   - 推荐运行记录保存查询哈希、候选引用、分值与状态，不保存反馈结果。
   - 最终响应须同时包含向量分值、语义相似度分、结构化局部相似度、业务参数分、最终聚合分、解释状态与可追溯引用。
 
-### CBRKit 候选编排能力（已更新：2026-05-02）
+### 分值聚合方案选型（已更新：2026-05-02）
 
-- **Context**: Roadmap 要求 CBRKit 可替换，且核心持久化勿与其强绑定。需验证 CBRKit aggregator 能否满足本规格的加权聚合需求。
+- **Context**: Roadmap 要求聚合方案可替换，且核心持久化勿与外部框架强绑定。需验证 CBRKit aggregator 能否满足本规格的加权聚合需求。
 - **Sources Consulted**:
   - CBRKit 官方文档：https://wi2trier.github.io/cbrkit/cbrkit.html
   - CBRKit aggregator 模块：https://wi2trier.github.io/cbrkit/cbrkit/sim/aggregator.html
@@ -51,7 +51,7 @@
     4. CBRKit 侧仅剩加权求和（约 1 行）
     5. 为约 1 行代码引入整套框架，收益不足
 - **Implications**:
-  - **决策**：采用自研 `ScoreAggregator` 组件
+  - **决策**：采用自实现 `ScoreAggregator` 组件
   - **理由**：
     - 逻辑简单、完全可控、易于测试
     - 代码量约 200 行（含类型注解与文档）
@@ -61,7 +61,7 @@
     - 实现：`poc/cbrkit_validation/score_aggregator_implementation.py`
     - 测试：`poc/cbrkit_validation/test_score_aggregator.py`
     - 详细分析见本文件末尾「附录：CBRKit vs 自实现对比分析」
-  - 设计以 `ScoreAggregator` 替代 `CBROrchestrator`；领域层使用系统自定义 `RetrievalCandidate`、`RerankedCandidate`、`RecommendationItem`。
+  - 设计以 `ScoreAggregator` 替代原计划的外部 CBR 框架；领域层使用系统自定义 `RetrievalCandidate`、`RerankedCandidate`、`RecommendationItem`。
   - `ScoreAggregator` 仅处理向量搜索已返回的候选集，不从全量 SQL casebase 重新检索。
   - 聚合失败时可降级为向量顺序候选，不影响向量搜索契约与响应结构。
 
@@ -75,7 +75,7 @@
   - 模型适于基于查询与候选文档做精排；须限制候选数量与输入长度以控制延迟。
 - **Implications**:
   - 设计通过 `RerankerClient` 抹平供应商差异；默认模型 id 固定为 `qwen3-reranker-8b`。
-  - 响应保存 `semantic_similarity_score`、模型 id、调用状态与耗时；最终排序由 CBRKit 聚合结果决定。
+  - 响应保存 `semantic_similarity_score`、模型 id、调用状态与耗时；最终排序由 `ScoreAggregator` 聚合结果决定。
   - 重排失败时返回降级状态，按向量候选原始顺序组装结果。
 
 ### 产品与 MVP 边界
@@ -94,9 +94,9 @@
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| CBRKit 直连持久化 | 由 CBRKit 内部对象直接读全量库并保存推荐运行 | 接入快 | 数据模型与 CBRKit 强绑定，替换成本高；且会绕过向量索引边界 | Rejected |
-| 系统契约 + CBRKit 适配器 | 系统定义查询、候选、排序与响应契约；CBRKit 只做编排适配 | 可替换、可测试、边界清晰 | 需要额外适配层 | Selected |
-| 纯自研排序流水线 | 不接入 CBRKit，仅手写向量候选重排 | 依赖少 | 不符合 roadmap，CBR 扩展能力弱 | Rejected |
+| 外部 CBR 框架直连持久化 | 由外部框架内部对象直接读全量库并保存推荐运行 | 接入快 | 数据模型与框架强绑定，替换成本高；且会绕过向量索引边界 | Rejected |
+| 系统契约 + 自实现聚合器 | 系统定义查询、候选、排序与响应契约；`ScoreAggregator` 做加权聚合 | 可替换、可测试、边界清晰、无外部依赖 | 需自行实现归一化与重加权逻辑（约 200 行） | Selected |
+| 纯自研排序流水线 | 不接入任何 CBR 框架，仅手写向量候选重排 | 依赖少 | 与 Selected 方案实质相同，已采纳 | Selected（实质）|
 
 ## Design Decisions
 

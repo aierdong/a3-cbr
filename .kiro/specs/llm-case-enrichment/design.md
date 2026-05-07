@@ -38,7 +38,7 @@
 
 - `A3Case` 基础实体、字段校验、创建、编辑、详情、列表查询。
 - embedding 输入拼接、BGE-M3 调用、pgvector 存储与索引状态。
-- CBRKit 编排、查询标准化、候选召回、reranker 重排、相似度分值与 Top-K 返回顺序。
+- 分数加权聚合、查询标准化、候选召回、reranker 重排、相似度分值与 Top-K 返回顺序。
 - 推荐运行、推荐项快照、召回或排序持久化；这些归 `cbr-retrieval-recommendation` 所有，`RecommendationCopyRun` 不代表推荐运行。
 - 推荐反馈、有用/无用、评分、采纳状态与排序学习。
 - 跨品牌行业库脱敏、复杂权限体系与前端展示实现。
@@ -66,42 +66,59 @@
 
 ### Cross-Spec Coordination: "删除案例"
 
-用户在前端的"删除案例"操作是一个跨 `a3-case-management`、`llm-case-enrichment` 和 `case-vector-indexing` 的业务事务，需要协调三个规格的 API 调用：
+用户在前端的"删除案例"操作是一个跨规格的业务事务。**完整的级联删除设计见 `docs/cascade-deletion-design.md`**，本节仅说明本规格在级联删除中的职责边界。
 
 1. **职责边界**：
-   - `a3-case-management` 负责删除案例基础数据（`a3_cases` 表记录）。
    - 本规格（`llm-case-enrichment`）负责删除对应的 LLM 派生数据（派生结果、运行记录）。
-   - `case-vector-indexing` 负责删除对应的向量索引数据（向量记录、索引任务记录）。
-   - 三个规格通过 API 调用解耦，不共享数据库事务。
+   - 本规格**不主动触发下游删除**，由级联删除协调器（`CaseDeleteCoordinator`，部署在 `a3-case-management` 服务中）统一编排。
 
-2. **调用顺序**（同步级联删除）：
-   - 用户确认删除案例后，后台按以下顺序同步执行：
-     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
-     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
-     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
-   - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
+2. **删除 API 契约**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：
+   - **端点**：`POST /api/enrichment/delete`
+   - **请求体**：
+     ```json
+     {
+       "case_id": "string (optional)",
+       "enrichment_id": "string (optional)",
+       "reason": "case_deleted | enrichment_deleted | vector_deleted | feedback_deleted | schedule_deleted",
+       "requested_by": "anonymous_user | system"
+     }
+     ```
+   - **参数说明**：
+     - `case_id` (optional)：案例标识，按案例删除所有增强数据
+     - `enrichment_id` (optional)：增强标识，删除特定增强记录
+     - **至少提供 `case_id` 或 `enrichment_id` 之一**
+     - `reason` (required)：删除原因枚举
+     - `requested_by` (required)：删除者标识（`anonymous_user` | `system`）
+   - **响应**：
+     - 200：删除成功，返回 `{"success": true, "deleted_count": 2, "deleted_at": "2026-05-07T10:30:00Z"}`
+     - 422：参数校验失败（未提供任何标识）
+     - 500：删除失败（数据库错误）
+   - **行为**：在单个事务内删除 `case_enrichment_results` 和 `case_enrichment_runs`，**不主动触发下游删除**（由调用方协调）。
+   - **幂等性**：对不存在的派生数据返回 `deleted_count: 0`。
 
-3. **降级策略**：
-   - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
-   - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
-   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
-   - **下游服务不可用**：若本规格或 `case-vector-indexing` 服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+3. **级联删除场景**：
+   - **从案例节点发起**：见 `docs/cascade-deletion-design.md` §3.1
+   - **从案例增强节点发起**：见 `docs/cascade-deletion-design.md` §3.2
 
-4. **幂等性保证**：
-   - `DELETE /api/a3-cases/{case_id}/enrichment-data` 对不存在的派生数据返回 HTTP 200（目标状态已达成），不返回 404。
-   - 多次调用删除接口应返回相同结果，不产生副作用。
-
-5. **后台异步清理**：
-   - 系统应提供后台定期扫描任务，检测孤立的派生数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_enrichment_results` 或 `case_vectors` 中存在）。
-   - 后台清理任务定期调用本规格的删除接口和 `case-vector-indexing` 的删除接口清理孤立数据。
-   - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
+4. **后台异步清理**（与 `docs/cascade-deletion-design.md` §4.4 对齐）：
+   - 本规格提供 `EnrichmentCleanupService`，定期扫描并清理孤立的派生数据（`case_id` 在 `a3_cases` 中不存在）。
+   - 清理任务在应用启动时自动注册（见 `docs/cascade-deletion-design.md` §4.3），清理间隔通过配置文件 `backend/config/cleanup.yaml` 的 `enrichment_cleanup.interval_seconds` 指定（默认 86400 秒）。
+   - 清理条件：
+     ```sql
+     SELECT e.enrichment_id 
+     FROM case_enrichment_results e
+     LEFT JOIN a3_cases c ON e.case_id = c.case_id
+     WHERE c.case_id IS NULL
+     ```
+   - 清理动作：调用内部删除方法（不通过 HTTP API），批量删除孤立记录（默认批次大小 1000）。
+   - 详细设计见 `docs/cascade-deletion-design.md` §4.4 "案例增强清理"。
 
 ### Implementation Sequencing
 
 本规格作为 `a3-case-management` 的下游消费者，实现时须遵循以下依赖顺序（详细依赖关系见 `.kiro/steering/roadmap.md`）：
 
 1. **先行依赖**：`a3-case-management` 的核心数据模型（`A3Case` 表）、`CaseService.get_case()` 和 `CaseDetailResponse` schema 必须先于本规格实现。至少以下能力可用后，本规格方可进入集成阶段：
-   - `CaseDetailResponse` 包含 `case_id`、A3 基础字段、`status`、`updated_at`、`case_contract_version`。
+   - `CaseDetailResponse` 包含 `case_id`、A3 基础字段、`status`、`updated_at`。
    - `GET /api/a3-cases/{case_id}` 端点可返回 200（成功）或 404（`CASE_NOT_FOUND`）。
    - **说明**：在规格驱动开发流程中，执行本规格的 `tasks.md` 时，上游依赖必然已就绪（由 roadmap.md 中的依赖顺序保证）。
 2. **可并行推进**：以下模块不依赖上游实现，可与 `a3-case-management` 并行开发：
@@ -193,7 +210,10 @@ backend/
 │       ├── prompts.py                        # Prompt 模板、任务类型和注入防护约束
 │       ├── validators.py                     # LLM 输出解析、schema 校验和标签规范化
 │       ├── jobs.py                           # 同步运行记录和未来异步 worker 边界
+│       ├── cleanup.py                        # 孤立派生数据清理服务（与 docs/cascade-deletion-design.md §4.4 对齐）
 │       └── router.py                         # LLM 增强和推荐文案 API 端点
+├── config/
+│   └── cleanup.yaml                          # 清理服务配置（与 docs/cascade-deletion-design.md §4.2 对齐）
 ├── alembic/
 │   └── versions/
 │       └── <revision>_create_case_enrichment.py
@@ -203,17 +223,20 @@ backend/
         ├── test_enrichment_service.py        # 摘要、结构化建议、过期和重试逻辑
         ├── test_recommendation_copy.py       # 推荐文案不改变排序并保留引用
         ├── test_enrichment_api.py            # API 成功、失败和轮询状态
+        ├── test_enrichment_deletion.py       # 删除 API、幂等性和级联删除集成测试
+        ├── test_enrichment_cleanup.py        # 清理服务生命周期和孤立数据清理测试
         └── test_llm_safety.py                # 提示词注入、隐私配置和日志边界
 ```
 
 ### Modified Files
 
-- `backend/app/main.py` — 只追加注册 `EnrichmentRouter`，不改应用入口基础实现。
+- `backend/app/main.py` — 只追加注册 `EnrichmentRouter` 和 `EnrichmentCleanupService`（与 `docs/cascade-deletion-design.md` §4.3 对齐），不改应用入口基础实现。
 - `backend/app/core/config.py` — 只追加 LLM、Embedding、Reranker 三类模型各自的开关、供应商、模型、base_url、超时、重试、数据保留确认等配置项；新增全局共享配置 `max_recommendation_candidates`（供本规格与 `cbr-retrieval-recommendation` 共同引用）；不接管共享配置基础设施。
 - `backend/app/core/errors.py` — 只追加 `ENRICHMENT_*`、`LLM_*` 错误码映射，不接管 `ErrorMapper` 基础实现。
 - `backend/app/common/llm_client.py` — 共享 LLM 客户端基础设施，供本规格和 `cbr-retrieval-recommendation` 共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
 - `backend/app/db/base.py` — 只追加 enrichment ORM metadata 导入，不接管数据库基础设施。
 - `backend/app/cases/service.py` — 不改案例契约，仅供 `CaseSnapshotProvider` 读详情。
+- `backend/config/cleanup.yaml` — 新增清理服务配置文件（与 `docs/cascade-deletion-design.md` §4.2 对齐），定义 `enrichment_cleanup` 配置段（`enabled`、`interval_seconds`、`batch_size`）。
 
 ## System Flows
 
@@ -319,6 +342,7 @@ sequenceDiagram
 | OutputValidator           | Validation        | 解析并校验 LLM 结构化输出                          | 3.3, 4.1, 4.2, 5.2                | EnrichmentSchemas P0                               | Service        |
 | EnrichmentRepository      | Data Access       | 持久化派生结果、运行记录、状态、错误与删除                       | 2.4, 4.3, 4.4, 4.5, 4.6, 6.3      | PostgreSQL P0                                      | Service, State |
 | EnrichmentJobRunner       | Runtime           | 运行生命周期管理：创建运行记录、加载快照、委托 Service 执行、重试入口与状态流转 | 1.4, 6.4                          | CaseSnapshotProvider P0, EnrichmentService P0, EnrichmentRepository P0 | Batch          |
+| EnrichmentCleanupService  | Background Task   | 定期扫描并清理孤立派生数据（与 `docs/cascade-deletion-design.md` §4.4 对齐） | -                                 | EnrichmentRepository P0, Config P0                 | Batch          |
 | ErrorMapper               | API Support       | 统一 LLM 增强错误响应                            | 1.2, 4.2, 5.5                     | FastAPI P0                                         | API            |
 
 
@@ -340,7 +364,7 @@ sequenceDiagram
 | ------ | ---------------------------------------------- | ---------------------------- | ------------------------------ | ------------------ |
 | POST   | `/api/a3-cases/{case_id}/enrichment-runs`      | `CreateEnrichmentRunRequest` | `EnrichmentRunResponse`        | 200, 404, 409, 422, 503 |
 | GET    | `/api/a3-cases/{case_id}/enrichment`           | path `case_id`               | `CaseEnrichmentStatusResponse` | 404                |
-| DELETE | `/api/a3-cases/{case_id}/enrichment-data`      | path `case_id`               | `DeleteEnrichmentDataResponse` | 200, 500           |
+| POST   | `/api/enrichment/delete`                       | `DeleteEnrichmentRequest`    | `DeleteEnrichmentResponse`     | 200, 422, 500      |
 | POST   | `/api/recommendations/copy`                    | `RecommendationCopyRequest`  | `RecommendationCopyResponse`   | 503                |
 | POST   | `/api/enrichment-runs/{run_id}/retry`          | path `run_id`                | `EnrichmentRunResponse`        | 200, 404, 409, 503 |
 
@@ -349,7 +373,12 @@ sequenceDiagram
 
 - 创建增强运行和重试端点委托 `EnrichmentJobRunner` 执行；响应须始终带 `run_id` 与状态。
 - **异步执行语义**：`POST /api/a3-cases/{case_id}/enrichment-runs` 和 `POST /api/enrichment-runs/{run_id}/retry` 端点立即返回 HTTP 200 + `EnrichmentRunResponse`（`status: running`），LLM 增强在后台同步执行（MVP 阶段在请求线程内完成，未来可替换为异步 worker）。客户端无需等待或轮询增强结果，增强完成后派生内容自动关联到案例。
-- **删除端点幂等性**：`DELETE /api/a3-cases/{case_id}/enrichment-data` 删除指定案例的所有派生数据（`case_enrichment_results` 和 `case_enrichment_runs`）。对不存在的派生数据返回 HTTP 200（目标状态已达成），不返回 404。删除失败时返回 HTTP 500。
+- **删除端点契约**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：
+  - `POST /api/enrichment/delete` 接收 `DeleteEnrichmentRequest`（含 `case_id` 或 `enrichment_id`、`reason`、`requested_by`）。
+  - 在单个事务内删除 `case_enrichment_results` 和 `case_enrichment_runs`。
+  - 返回 HTTP 200 + `DeleteEnrichmentResponse`（含 `success`、`deleted_count`、`deleted_at`），对不存在的派生数据返回 `deleted_count: 0`（幂等性）。
+  - 参数校验失败返回 HTTP 422，删除失败返回 HTTP 500。
+  - **不主动触发下游删除**，由调用方（`CaseDeleteCoordinator`）协调。
 - **推荐文案端点失败策略**：推荐文案端点委托 `RecommendationCopyService` 执行，LLM 调用失败（含超时、供应商错误、校验失败）时返回 HTTP 503。不得返回新排序字段、相似度分值或过滤决策。
 - 错误响应沿用上游统一结构，并新增稳定错误码。
 
@@ -369,7 +398,7 @@ sequenceDiagram
 ```python
 class EnrichmentService:
     def execute_enrichment(self, input_snapshot: CaseInputSnapshot) -> CaseEnrichmentResult: ...
-    def delete_enrichment_data(self, case_id: str) -> bool: ...
+    def delete_enrichment_data(self, case_id: Optional[str] = None, enrichment_id: Optional[str] = None) -> DeleteEnrichmentResult: ...
 ```
 
 - **调用约束**：`execute_enrichment` 为内部编排方法，仅由 `EnrichmentJobRunner` 调用，Router 层**不得**直接调用。
@@ -378,13 +407,14 @@ class EnrichmentService:
 - 后置条件：生成成功且校验通过后，委托 `EnrichmentRepository.complete_run` 写入新的 `valid` 结果（Repository 层保证事务内原子性地删除旧记录，见 §5.2）；失败或校验未通过则仅记录失败阶段、错误类型与是否可重试。
 - 不变量：不修改 `A3Case` 基础字段；仅 `valid` 结果可供下游消费。
 
-**删除操作**：
+**删除操作**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：
 
-- `delete_enrichment_data(case_id)` 删除指定案例的所有派生数据（`case_enrichment_results` 和 `case_enrichment_runs`）。
-- 前置条件：无（不依赖上游案例是否存在）。
-- 后置条件：该 `case_id` 的所有派生数据已从数据库中物理删除。
-- 返回值：`True` 表示删除成功（无论是否实际删除了数据），`False` 表示删除失败（数据库错误）。
+- `delete_enrichment_data(case_id, enrichment_id)` 删除指定案例或增强标识的派生数据（`case_enrichment_results` 和 `case_enrichment_runs`）。
+- 前置条件：至少提供 `case_id` 或 `enrichment_id` 之一（不依赖上游案例是否存在）。
+- 后置条件：匹配的派生数据已从数据库中物理删除。
+- 返回值：`DeleteEnrichmentResult`（含 `success`、`deleted_count`、`deleted_at`），`deleted_count: 0` 表示无匹配数据（幂等性）。
 - 幂等性：多次调用返回相同结果，不产生副作用。
+- 事务语义：在单个数据库事务内完成删除操作（见 `EnrichmentRepository.delete_enrichment_data`）。
 
 #### EnrichmentJobRunner
 
@@ -622,7 +652,7 @@ class EnrichmentRepository:
     def complete_run(self, run_id: str, result: CaseEnrichmentResultCreate) -> EnrichmentRunRecord: ...
     def fail_run(self, run_id: str, error: EnrichmentErrorData) -> EnrichmentRunRecord: ...
     def get_current_result(self, case_id: str) -> CaseEnrichmentResultRecord | None: ...
-    def delete_enrichment_data(self, case_id: str) -> bool: ...
+    def delete_enrichment_data(self, case_id: Optional[str] = None, enrichment_id: Optional[str] = None) -> DeleteEnrichmentResult: ...
 ```
 
 **事务语义**：
@@ -645,22 +675,81 @@ class EnrichmentRepository:
           return run_record
   ```
 
-- `delete_enrichment_data` 须在**同一数据库事务**内完成以下原子操作：
-  1. 删除该 `case_id` 的所有派生结果（`DELETE FROM case_enrichment_results WHERE case_id = ?`）
-  2. 删除该 `case_id` 的所有运行记录（`DELETE FROM case_enrichment_runs WHERE case_id = ?`）
+- `delete_enrichment_data` 须在**同一数据库事务**内完成以下原子操作（与 `docs/cascade-deletion-design.md` §2.2 对齐）：
+  1. 删除匹配的派生结果（`DELETE FROM case_enrichment_results WHERE case_id = ? OR enrichment_id = ?`）
+  2. 删除匹配的运行记录（`DELETE FROM case_enrichment_runs WHERE case_id = ? OR run_id IN (SELECT run_id FROM case_enrichment_runs WHERE ...)`）
   
   伪代码示例：
   ```python
-  def delete_enrichment_data(self, case_id: str) -> bool:
+  def delete_enrichment_data(self, case_id: Optional[str] = None, enrichment_id: Optional[str] = None) -> DeleteEnrichmentResult:
       with transaction:
+          deleted_count = 0
           # 1. 删除派生结果
-          delete(case_enrichment_results).where(case_id == case_id)
+          if case_id:
+              deleted_count += delete(case_enrichment_results).where(case_id == case_id).count()
+          elif enrichment_id:
+              deleted_count += delete(case_enrichment_results).where(enrichment_id == enrichment_id).count()
+          
           # 2. 删除运行记录
-          delete(case_enrichment_runs).where(case_id == case_id)
-          return True
+          if case_id:
+              deleted_count += delete(case_enrichment_runs).where(case_id == case_id).count()
+          elif enrichment_id:
+              # 通过 enrichment_id 找到对应的 case_id，再删除运行记录
+              target_case_id = select(case_id).from(case_enrichment_results).where(enrichment_id == enrichment_id).scalar()
+              if target_case_id:
+                  deleted_count += delete(case_enrichment_runs).where(case_id == target_case_id).count()
+          
+          return DeleteEnrichmentResult(success=True, deleted_count=deleted_count, deleted_at=now())
   ```
 
 **并发说明**：本设计不实现应用层并发控制机制（见 §2 "Overview" 并发假设）。业务流程应确保单一案例的增强操作顺序执行。数据库层面的 `UNIQUE(case_id)` 约束用于保证数据完整性，防止代码逻辑错误（如重复调用增强接口）导致同一案例产生多条派生结果，**该约束是数据完整性保障，不是并发控制手段**。
+
+#### EnrichmentCleanupService（与 `docs/cascade-deletion-design.md` §4.4 对齐）
+
+
+| Field        | Detail                                  |
+| ------------ | --------------------------------------- |
+| Intent       | 定期扫描并清理孤立派生数据（上游案例已删除但派生数据仍存在） |
+| Requirements | -                                       |
+
+
+**Service Interface**
+
+```python
+class EnrichmentCleanupService:
+    def __init__(self, repository: EnrichmentRepository, config: EnrichmentCleanupConfig): ...
+    async def run_periodic(self) -> None: ...
+    async def cleanup_orphaned_enrichments(self) -> int: ...
+    async def stop(self) -> None: ...
+```
+
+**职责与约束**：
+
+- **清理条件**：扫描 `case_enrichment_results` 和 `case_enrichment_runs`，查找 `case_id` 在 `a3_cases` 中不存在的记录。
+  ```sql
+  SELECT e.enrichment_id 
+  FROM case_enrichment_results e
+  LEFT JOIN a3_cases c ON e.case_id = c.case_id
+  WHERE c.case_id IS NULL
+  ```
+- **清理动作**：调用 `EnrichmentRepository` 的内部删除方法（不通过 HTTP API），批量删除孤立记录（默认批次大小 1000）。
+- **执行频率**：通过配置文件 `backend/config/cleanup.yaml` 的 `enrichment_cleanup.interval_seconds` 指定（默认 86400 秒，即每日执行）。
+- **生命周期管理**：
+  - 在应用启动时通过 `backend/app/main.py` 的 `@app.on_event("startup")` 钩子自动注册（见 `docs/cascade-deletion-design.md` §4.3）。
+  - 使用 `asyncio.create_task(cleanup_service.run_periodic())` 启动后台任务。
+  - 应用关闭时通过 `@app.on_event("shutdown")` 钩子调用 `stop()` 方法优雅停止。
+- **失败处理**：
+  - 启动初始化失败：记录错误日志，不阻塞应用启动。
+  - 单次清理失败：记录错误日志，下一个周期自动重试。
+- **配置项**（`backend/config/cleanup.yaml`）：
+  ```yaml
+  enrichment_cleanup:
+    enabled: true
+    interval_seconds: 86400  # 每日执行
+    batch_size: 1000
+  ```
+
+**实现说明**：详细实现模式见 `docs/cascade-deletion-design.md` §4.3 和 §5.2。
 
 ## Data Models
 
@@ -754,7 +843,7 @@ erDiagram
 - **Unique constraint**: `UNIQUE(case_id)` — 确保同一案例只有一条派生结果记录（无论 `status` 为何值）
 - Indexes: `case_id`, `(case_id, status)`, `(case_id, case_updated_at)`
 - JSONB fields: `structured_suggestions`, `tag_suggestions`, `source_references`
-- **删除策略**：应用层显式删除（通过 `DELETE /api/a3-cases/{case_id}/enrichment-data` 端点），不依赖数据库外键级联。
+- **删除策略**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：应用层通过 `POST /api/enrichment/delete` 端点显式删除，不依赖数据库外键级联。支持按 `case_id` 或 `enrichment_id` 删除，幂等操作（对不存在的数据返回 `deleted_count: 0`）。
 
 **唯一性说明**：`UNIQUE(case_id)` 约束在数据库层面保证同一案例只有一条派生结果，用于保证数据完整性，防止代码逻辑错误（如重复调用增强接口）导致同一案例产生多条派生结果。应用层设计不实现并发控制机制（见 §2 "Overview" 并发假设），假设业务流程确保单一案例的增强操作顺序执行。**该约束是数据完整性保障，不是并发控制手段**。
 
@@ -763,7 +852,7 @@ erDiagram
 - Primary key: `run_id`
 - Indexes: `case_id`, `status`, `(case_id, started_at desc)`
 - Stores model_id/status/error metadata, not full prompt body.
-- **删除策略**：应用层显式删除（通过 `DELETE /api/a3-cases/{case_id}/enrichment-data` 端点），不依赖数据库外键级联。
+- **删除策略**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：应用层通过 `POST /api/enrichment/delete` 端点显式删除，不依赖数据库外键级联。支持按 `case_id` 删除，幂等操作。
 
 **Table: `recommendation_copy_runs`**
 
@@ -782,6 +871,20 @@ erDiagram
 - `tag_suggestions`：规范化标签列表（字符串数组），仅存标签值，不包含理由字段。
 - `source_references`：来源字段列表，如 `problem_description`、`context`、`root_cause`、`solution_steps`、`outcome`。
 - `missing_information`：结构化条目数组，每项含 `field`、`reason`、`blocking_level`（`required` | `recommended`）。摘要或推荐文案无法可靠生成时必须返回该字段，禁止编造。
+
+**DeleteEnrichmentRequest**（与 `docs/cascade-deletion-design.md` §2.2 对齐）
+
+- `case_id` (optional)：案例标识，按案例删除所有增强数据
+- `enrichment_id` (optional)：增强标识，删除特定增强记录
+- **至少提供 `case_id` 或 `enrichment_id` 之一**
+- `reason` (required)：删除原因枚举（`case_deleted` | `enrichment_deleted` | `vector_deleted` | `feedback_deleted` | `schedule_deleted`）
+- `requested_by` (required)：删除者标识（`anonymous_user` | `system`）
+
+**DeleteEnrichmentResponse**（与 `docs/cascade-deletion-design.md` §2.2 对齐）
+
+- `success` (boolean)：删除是否成功
+- `deleted_count` (integer)：删除的记录数（包含派生结果和运行记录）
+- `deleted_at` (datetime)：删除时间戳
 
 **RecommendationCopyResponse**
 
@@ -825,13 +928,26 @@ erDiagram
 
 - POST `/api/a3-cases/{case_id}/enrichment-runs`：立即返回 HTTP 200 + `running` 状态，加载上游快照、创建运行、校验 mock LLM 输出并写入 `valid`。若请求前已存在旧派生结果，须在**本轮校验通过后的落库事务内**先删除旧记录再写入新结果。
 - GET `/api/a3-cases/{case_id}/enrichment`：返回当前状态。
-- DELETE `/api/a3-cases/{case_id}/enrichment-data`：删除指定案例的所有派生数据（派生结果和运行记录），返回 HTTP 200。对不存在的派生数据返回 HTTP 200（幂等性）。删除失败返回 HTTP 500。
+- POST `/api/enrichment/delete`（与 `docs/cascade-deletion-design.md` §2.2 对齐）：
+  - 按 `case_id` 删除：删除指定案例的所有派生数据（派生结果和运行记录），返回 HTTP 200 + `DeleteEnrichmentResponse`（含 `deleted_count`）。
+  - 按 `enrichment_id` 删除：删除特定增强记录及其运行记录，返回 HTTP 200 + `DeleteEnrichmentResponse`。
+  - 参数校验失败（未提供任何标识）：返回 HTTP 422。
+  - 删除失败（数据库错误）：返回 HTTP 500。
 - POST `/api/recommendations/copy`：单次 LLM 调用生成全部候选文案，顺序不变；整体失败时返回 HTTP 503。
 - 重试接口：仅对可重试的失败运行重试，并递增重试计数。
-- **删除幂等性测试**：
-  - 对从未生成过派生数据的案例调用删除接口，返回 HTTP 200。
-  - 对已删除派生数据的案例再次调用删除接口，返回 HTTP 200。
+- **删除幂等性测试**（与 `docs/cascade-deletion-design.md` §6.2 对齐）：
+  - 对从未生成过派生数据的案例调用删除接口，返回 HTTP 200 + `deleted_count: 0`。
+  - 对已删除派生数据的案例再次调用删除接口，返回 HTTP 200 + `deleted_count: 0`。
   - 删除后查询派生结果和运行记录，确认已不存在。
+- **级联删除集成测试**（与 `docs/cascade-deletion-design.md` §6.2 对齐）：
+  - 从案例节点发起完整级联删除（调用 `POST /api/a3-cases/cascade-delete`），验证派生数据被正确删除。
+  - 从案例增强节点发起级联删除（调用 `POST /api/enrichment/delete`），验证下游向量索引和推荐反馈被协调删除。
+  - 下游服务不可用时的降级行为：验证删除操作不阻塞，记录日志供后续清理。
+- **清理服务测试**（与 `docs/cascade-deletion-design.md` §4.4 和 §6.2 对齐）：
+  - 验证 `EnrichmentCleanupService` 在应用启动时自动注册（见 `docs/cascade-deletion-design.md` §4.3）。
+  - 创建孤立派生数据（案例已删除但派生数据仍存在），手动触发清理任务，验证孤立数据被正确清理。
+  - 验证清理任务的周期性执行（通过配置文件 `backend/config/cleanup.yaml` 的 `enrichment_cleanup.interval_seconds` 控制）。
+  - 验证清理任务失败时的错误处理（记录日志，下一个周期自动重试）。
 - **多模型配置隔离测试**：
   - 验证四个配置类（`EnrichmentLLMConfig`、`NormalizerLLMConfig`、`EmbeddingConfig`、`RerankerConfig`）在应用启动后是独立实例：`id(app_config.enrichment_llm) != id(app_config.normalizer_llm)`。
   - 验证配置值互不干扰：修改一个配置对象的 `timeout_ms` 不影响另一个配置对象的值。

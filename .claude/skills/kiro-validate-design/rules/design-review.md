@@ -9,6 +9,8 @@ Conduct interactive quality review of technical design documents to ensure they 
 - **Interactive dialogue**: Engage with designer, not one-way evaluation
 - **Balanced assessment**: Recognize strengths and weaknesses
 - **Clear decision**: Definitive GO/NO-GO with rationale
+- **Avoid over-defensive programming**: Do not flag issues for minor edge cases or excessive error handling unless the risk is material and likely
+- **Concurrency is external**: Do not flag concurrent request handling (e.g., duplicate requests, race conditions) as design defects — these are handled by external systems (API Gateway, load balancer)
 
 ## Scope & Non-Goals
 
@@ -101,6 +103,8 @@ Engage on designer's perspective, alternatives, clarifications, and necessary ch
 4. **Balanced Assessment**: Recognize both strengths and weaknesses
 5. **Clear Decision**: Make definitive GO/NO-GO recommendation
 6. **Actionable Feedback**: Ensure all suggestions are implementable
+7. **Avoid Over-Defensive Programming**: Do not require excessive error handling, transaction rollback mechanisms, or consistency guarantees for non-critical failures. Database operation failures should simply return error responses without forcing cleanup of all side effects (e.g., logs, generated embeddings) unless they directly impact business logic.
+8. **Concurrency is External**: Do not flag concurrent request handling (duplicate requests, race conditions, distributed locks) as design defects. These concerns are handled by external infrastructure (API Gateway, load balancer, rate limiter).
 
 ## Final Checklist
 

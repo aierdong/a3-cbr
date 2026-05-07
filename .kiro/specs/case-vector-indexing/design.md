@@ -4,7 +4,9 @@
 
 `case-vector-indexing` 在案例基础数据和 LLM 派生内容之上建立独立的问题侧语义向量索引。该模块负责：组合问题侧 embedding 输入文本、调用云端 `bge-large-zh` embedding 接口、保存 PostgreSQL + pgvector 向量记录、维护索引状态，以及向下游提供基础 Top-K 问题语义搜索原语。
 
-本设计延续 Python + FastAPI + PostgreSQL 的后端路线。它不修改 `a3-case-management` 的基础案例表，不接管 `llm-case-enrichment` 的派生内容生成，也不承担 `cbr-retrieval-recommendation` 的 CBRKit 编排、reranker、推荐理由和最终排序职责。Router 层实现防抖机制，避免同一案例的并发刷新请求（详见 `research.md` §"并发假设与防抖策略"）。
+本设计延续 Python + FastAPI + PostgreSQL 的后端路线。它不修改 `a3-case-management` 的基础案例表，不接管 `llm-case-enrichment` 的派生内容生成，也不承担 `cbr-retrieval-recommendation` 的分数加权聚合、reranker、推荐理由和最终排序职责。
+
+**并发与防御策略说明**：本系统不考虑并发控制问题（如同一案例的并发刷新请求），此类问题由外部系统（如网关层、API Gateway）负责处理。数据库操作失败即整体失败，返回失败响应，不强制修正所有不一致状态（如日志、已生成的 embedding 等），在不影响业务的前提下，这些不一致不会造成影响。
 
 ### Goals
 
@@ -13,13 +15,13 @@
 - 使用 PostgreSQL + pgvector `0.8.2+` 保存向量、过滤字段和 HNSW 索引。
 - 提供手动刷新、手动删除、重试、状态查询和基础向量搜索能力。
 - 通过案例和派生结果的时间戳判断是否需要刷新向量。
-- 保持向量索引与 CBR 推荐边界解耦，不硬绑定 CBRKit。
+- 保持向量索引与推荐编排边界解耦，仅提供候选搜索原语。
 
 ### Non-Goals
 
 - 不实现 A3 案例 CRUD、基础字段校验或状态生命周期。
 - 不生成 LLM 摘要、结构化建议、标签建议或推荐理由文案。
-- 不实现 CBRKit 编排、reranker 重排、推荐解释、反馈学习排序或最终推荐展示顺序。
+- 不实现分数加权聚合、reranker 重排、推荐解释、反馈学习排序或最终推荐展示顺序。
 - 不引入 Milvus 等独立向量库，不做本地模型部署、多模型候选搜索或推理成本优化。
 - 不实现前端页面，仅提供后端契约供下游和管理后台消费。
 
@@ -37,7 +39,7 @@
 
 - `A3Case` 基础实体、案例字段、创建、编辑、详情、列表查询。
 - `CaseEnrichmentResult` 的 LLM 摘要、结构化建议、审核状态和推荐文案生成。
-- CBRKit 编排、候选重排、推荐理由、推荐展示排序、反馈记录和排序学习。
+- 分数加权聚合、候选重排、推荐理由、推荐展示排序、反馈记录和排序学习。
 - 独立向量数据库、百万级以上专用向量集群、模型本地部署和多模型融合。
 - 将向量、相似度或推荐信息写回案例基础表。
 
@@ -61,35 +63,45 @@
 
 ### Cross-Spec Coordination: "删除案例"
 
-用户在前端的"删除案例"操作是一个跨 `a3-case-management`、`llm-case-enrichment` 和 `case-vector-indexing` 的业务事务，需要协调三个规格的 API 调用：
+用户在前端的"删除案例"操作是一个跨规格的业务事务。**完整的级联删除设计见 `docs/cascade-deletion-design.md`**，本节仅说明本规格在级联删除中的职责边界。
 
 1. **职责边界**：
-   - `a3-case-management` 负责删除案例基础数据（`a3_cases` 表记录）。
-   - `llm-case-enrichment` 负责删除对应的 LLM 派生数据（派生结果、运行记录）。
    - 本规格（`case-vector-indexing`）负责删除对应的向量索引数据（向量记录、索引任务记录）。
-   - 三个规格通过 API 调用解耦，不共享数据库事务。
+   - 本规格**不主动触发下游删除**，由级联删除协调器（`CaseDeleteCoordinator`，部署在 `a3-case-management` 服务中）统一编排。
 
-2. **调用顺序**（同步级联删除）：
-   - 用户确认删除案例后，后台按以下顺序同步执行：
-     1. 调用 `DELETE /api/a3-cases/{case_id}` 删除案例基础数据
-     2. 调用 `DELETE /api/a3-cases/{case_id}/enrichment-data` 删除 LLM 派生数据
-     3. 调用 `POST /api/a3-cases/{case_id}/vector-index/remove` 删除向量索引数据
-   - 每一步成功后才执行下一步；任一步失败则中断后续步骤。
+2. **删除 API 契约**：
+   - **端点**：`POST /api/vector-index/delete`
+   - **请求体**：
+     ```json
+     {
+       "case_id": "string (optional)",
+       "vector_id": "string (optional)",
+       "reason": "case_deleted | enrichment_deleted | vector_deleted | feedback_deleted | schedule_deleted",
+       "requested_by": "anonymous_user | system"
+     }
+     ```
+   - **参数说明**：
+     - `case_id` (optional)：案例标识，按案例删除向量索引
+     - `vector_id` (optional)：向量标识，删除特定向量记录
+     - **至少提供 `case_id` 或 `vector_id` 之一**
+     - `reason` (required)：删除原因枚举
+     - `requested_by` (required)：删除者标识（`anonymous_user` 表示前端用户触发，`system` 表示异步清理程序触发）
+   - **响应**：
+     - 200：删除成功，返回 `{"success": true, "deleted_count": 1, "deleted_at": "2026-05-07T10:30:00Z"}`
+     - 422：参数校验失败（未提供任何标识）
+     - 500：删除失败（数据库错误）
+   - **行为**：创建 `job_type=remove` 的审计任务，在单个事务内删除 `case_vectors` 和 `vector_index_jobs`，**不主动触发下游删除**（由调用方协调）。
+   - **幂等性**：对不存在的向量索引返回 `deleted_count: 0`。
 
-3. **降级策略**：
-   - **案例基础数据删除失败**：整个删除操作失败，向用户展示删除失败原因，不触发下游删除。
-   - **LLM 派生数据删除失败**：案例基础数据已删除，向用户展示"案例已删除，但派生数据清理失败"，记录日志供后台异步清理。继续尝试删除向量索引数据。
-   - **向量索引数据删除失败**：案例基础数据和 LLM 派生数据已删除，向用户展示"案例已删除，但向量索引清理失败"，记录日志供后台异步清理。
-   - **下游服务不可用**：若 `llm-case-enrichment` 或本规格服务不可用，或该案例从未生成过派生数据/向量索引，可跳过对应的删除调用（返回 404 或超时时视为可跳过）。
+3. **级联删除场景**：
+   - **从案例节点发起**：见 `docs/cascade-deletion-design.md` §3.1
+   - **从案例增强节点发起**：见 `docs/cascade-deletion-design.md` §3.2
+   - **从向量索引节点发起**：见 `docs/cascade-deletion-design.md` §3.3
 
-4. **幂等性保证**：
-   - `POST /api/a3-cases/{case_id}/vector-index/remove` 对不存在的向量索引返回成功状态（幂等删除）。
-   - 多次调用删除接口应返回相同结果，不产生副作用。
-
-5. **后台异步清理**：
-   - 系统应提供后台定期扫描任务，检测孤立的向量数据（`case_id` 在 `a3_cases` 中不存在，但在 `case_vectors` 中存在）。
-   - 后台清理任务定期调用本规格的删除接口清理孤立数据。
-   - 清理频率和策略由运维配置决定（如每日凌晨执行），不在本规格 API 范围内。
+4. **后台异步清理**：
+   - 本规格提供 `VectorCleanupService`，定期扫描并清理孤立的向量数据（`case_id` 在 `a3_cases` 中不存在，或 `enrichment_id` 在 `case_enrichment_results` 中不存在）。
+   - 清理任务在应用启动时自动启动，清理间隔通过配置项 `vector_cleanup_interval_seconds` 指定（默认 86400 秒，即每日执行）。
+   - 详细设计见 `docs/cascade-deletion-design.md` §4.5 "向量索引清理"。
 
 ## Architecture
 
@@ -167,9 +179,9 @@ backend/
 │       ├── embedding_client.py               # bge-large-zh 云端 embedding 适配
 │       ├── service.py                        # 索引刷新、发布、删除、状态和一致性编排
 │       ├── search.py                         # 查询 embedding 和向量搜索原语
-│       ├── deduplicator.py                   # Router 层防抖机制（内存 set，未来可替换为 redis）
+│       ├── cleanup.py                        # 后台异步清理服务（VectorCleanupService）
 │       ├── pgvector_checks.py                # pgvector 版本、扩展和索引运行检查
-│       └── router.py                         # 向量索引状态、刷新、重试、搜索 API
+│       └── router.py                         # 向量索引状态、刷新、删除、重试、搜索 API
 ├── alembic/
 │   └── versions/
 │       └── <revision>_create_case_vectors.py
@@ -179,15 +191,15 @@ backend/
         ├── test_embedding_client.py          # 远程调用、维度校验和错误映射测试
         ├── test_vector_index_service.py      # 刷新、发布、过期、删除逻辑测试
         ├── test_vector_repository.py         # pgvector 持久化、过滤和搜索测试
-        ├── test_deduplicator.py              # Router 层防抖机制、超时清理测试
-        ├── test_vector_api.py                # 状态、刷新、重试和搜索 API 测试
+        ├── test_vector_cleanup.py            # 后台清理服务、孤立数据识别测试
+        ├── test_vector_api.py                # 状态、刷新、删除、重试和搜索 API 测试
         └── test_vector_privacy.py            # 日志、隐私配置和敏感内容边界测试
 ```
 
 ### Modified Files
 
-- `backend/app/main.py` — 仅追加注册 `VectorRouter`，不改写应用入口基础实现。
-- `backend/app/core/config.py` — 仅追加 embedding 的 provider、model、base_url、维度、索引路径超时/重试（`index_timeout`/`index_max_retries`）、搜索路径超时/重试（`search_timeout`/`search_max_retries`）、pgvector 版本、`PGVECTOR_HNSW_EF_SEARCH`（默认 40）和隐私确认配置值，不拥有共享配置基础设施。
+- `backend/app/main.py` — 仅追加注册 `VectorRouter` 和启动 `VectorCleanupService`，不改写应用入口基础实现。
+- `backend/app/core/config.py` — 仅追加 embedding 的 provider、model、base_url、维度、索引路径超时/重试（`index_timeout`/`index_max_retries`）、搜索路径超时/重试（`search_timeout`/`search_max_retries`）、pgvector 版本、`PGVECTOR_HNSW_EF_SEARCH`（默认 40）、清理服务配置（`vector_cleanup_interval_seconds` 默认 86400）和隐私确认配置值，不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加向量索引与 embedding 错误码映射，不拥有 `ErrorMapper` 基础实现。
 - `backend/app/db/base.py` — 仅追加导入 `vector_indexing` ORM metadata，不拥有数据库基础设施。
 - `backend/app/cases/service.py` — 不改变案例契约，仅供 `CaseIndexSourceProvider` 读取案例快照。
@@ -300,8 +312,7 @@ stateDiagram-v2
 
 | Component               | Domain/Layer      | Intent                       | Req Coverage                 | Key Dependencies                              | Contracts      |
 | ----------------------- | ----------------- | ---------------------------- | ---------------------------- | --------------------------------------------- | -------------- |
-| VectorRouter            | API               | 暴露手动刷新、重试、状态和搜索端点；实现防抖机制            | 3.3, 4.1, 5.1, 6.3           | VectorIndexService P0, VectorSearchService P0, RefreshDeduplicator P0 | API            |
-| RefreshDeduplicator     | API Support       | Router 层防抖机制，防止同一案例并发刷新 | -                            | -                                             | API            |
+| VectorRouter            | API               | 暴露手动刷新、重试、状态和搜索端点            | 3.3, 4.1, 5.1, 6.3           | VectorIndexService P0, VectorSearchService P0 | API            |
 | VectorSchemas           | API/Data Contract | 定义请求响应、状态、过滤和错误 schema       | 3.3, 5.3, 5.4                | Pydantic P0                                   | API, State     |
 | CaseIndexSourceProvider | Integration       | 读取案例和 LLM 派生输入快照             | 1.1, 1.3, 3.5                | CaseService P0, EnrichmentRepository P1       | Service        |
 | EmbeddingInputComposer  | Domain Service    | 组合输入文本和来源分段               | 1.1, 1.2, 1.4, 1.5, 6.1      | SourceProvider P0                             | Service        |
@@ -331,19 +342,18 @@ stateDiagram-v2
 | ------ | ---------------------------------------------- | --------------------------- | --------------------------- | ------------------ |
 | POST   | `/api/a3-cases/{case_id}/vector-index/refresh` | `RefreshVectorIndexRequest` | `VectorIndexJobResponse`    | 404, 409, 422, 503 |
 | GET    | `/api/a3-cases/{case_id}/vector-index`         | path `case_id`              | `VectorIndexStatusResponse` | 404                |
-| POST   | `/api/a3-cases/{case_id}/vector-index/remove` | `RemoveVectorIndexRequest` | `VectorIndexJobResponse` | 404, 409, 422      |
+| POST   | `/api/vector-index/delete`                     | `DeleteVectorIndexRequest`  | `DeleteVectorIndexResponse` | 422, 500           |
 | POST   | `/api/vector-index/jobs/{job_id}/retry`        | path `job_id`               | `VectorIndexJobResponse`    | 404, 409, 503      |
 | POST   | `/api/vector-search`                           | `VectorSearchRequest`       | `VectorSearchResponse`      | 422, 503           |
 
 
 **Implementation Notes**
 
-- **Router 层防抖**：刷新端点在执行前检查是否有正在进行的刷新任务，若有则返回 409 错误（`VECTOR_REFRESH_IN_PROGRESS`）。刷新完成后释放防抖锁。防抖锁超时 120 秒后自动清理。
 - 刷新端点在请求线程内同步执行索引逻辑，完成后返回最终状态（`succeeded` 或 `failed`），必须始终保存 `job_id`。
 - 不提供自动刷新或 stale 扫描 API；案例或 LLM 派生内容变化后的刷新由调用方显式触发。
-- 删除端点用于案例删除、归档或上游明确要求移除检索来源的场景；它必须创建 `job_type=remove` 的审计任务，并物理删除当前向量记录。若当前没有向量，端点仍返回成功状态和 remove 任务记录（幂等操作）。
+- 删除端点（`POST /api/vector-index/delete`）用于级联删除场景，支持按 `case_id` 或 `vector_id` 删除；它必须创建 `job_type=remove` 的审计任务，在单个事务内物理删除 `case_vectors` 和 `vector_index_jobs` 记录。若当前没有向量，端点仍返回成功状态（幂等操作，`deleted_count: 0`）。
 - 搜索响应只返回候选案例、相似度、距离、输入索引版本和过滤元数据。
-- 不返回推荐理由、reranker 分数、CBRKit 内部结构或反馈字段。
+- 不返回推荐理由、reranker 分数、聚合分数或反馈字段。
 
 ### Integration Layer
 
@@ -429,7 +439,7 @@ class VectorIndexService:
     def refresh_case_index(self, case_id: str, request: RefreshVectorIndexRequest) -> VectorIndexJobResponse: ...
     def get_case_status(self, case_id: str) -> VectorIndexStatusResponse: ...
     def retry_job(self, job_id: str) -> VectorIndexJobResponse: ...
-    def remove_case_vector(self, case_id: str, request: RemoveVectorIndexRequest) -> VectorIndexJobResponse: ...
+    def delete_case_vector(self, request: DeleteVectorIndexRequest) -> DeleteVectorIndexResponse: ...
 ```
 
 - Preconditions: pgvector 检查通过；生产 embedding 配置可用；上游案例存在。
@@ -455,7 +465,7 @@ class VectorSearchService:
 
 - Preconditions: 查询文本非空，`top_k` 在允许范围内，过滤字段有效。
 - Postconditions: 返回按距离排序的候选列表和搜索元数据，供推荐服务继续补齐、重排和解释。
-- Invariants: 只执行查询向量生成（通过 `EmbeddingClient.embed_for_query`，搜索路径超时 ≤2 秒、不重试）和 pgvector Top-K 候选搜索；不调用 CBRKit、不调用 reranker、不生成推荐理由、不改变下游最终排序策略。
+- Invariants: 只执行查询向量生成和 pgvector Top-K 候选搜索；不执行分数加权聚合、不调用 reranker、不生成推荐理由、不改变下游最终排序策略。
 
 ### External Adapter
 
@@ -477,7 +487,7 @@ class EmbeddingClient:
 ```
 
 - Default config: `provider`、`model_id="bge-large-zh"`、`base_url`、`dimension=1024`、隐私确认；仅用于 Embedding，不复用 LLM 或 Reranker 配置。
-- **索引路径与搜索路径的超时/重试分离**：`EmbeddingConfig` 区分 `index_timeout`（默认 30 秒）/ `index_max_retries`（默认 2 次）和 `search_timeout`（默认 2 秒）/ `search_max_retries`（默认 0 次，即不重试）。`embed_for_index` 使用索引路径配置，适用于刷新任务中对延迟容忍度较高的场景；`embed_for_query` 使用搜索路径配置，适用于候选搜索中对延迟敏感的场景——embedding 调用失败直接返回 503，避免下游推荐服务阻塞。两个方法共享同一供应商和模型配置，仅超时和重试策略不同。
+- **索引路径与搜索路径的超时/重试分离**：`EmbeddingConfig` 区分 `index_timeout`（默认 30 秒）/ `index_max_retries`（默认 2 次）和 `search_timeout`（默认 5 秒）/ `search_max_retries`（默认 0 次，即不重试）。`embed_for_index` 使用索引路径配置，适用于刷新任务中对延迟容忍度较高的场景；`embed_for_query` 使用搜索路径配置，适用于候选搜索中对延迟敏感的场景——embedding 调用失败直接返回 503，避免下游推荐服务阻塞。两个方法共享同一供应商和模型配置，仅超时和重试策略不同。
 - Errors: `EMBEDDING_TIMEOUT`、`EMBEDDING_RATE_LIMITED`、`EMBEDDING_PROVIDER_ERROR`、`EMBEDDING_INVALID_RESPONSE`、`EMBEDDING_DIMENSION_MISMATCH`、`EMBEDDING_CONFIG_MISSING`。
 - Logging: 记录供应商、模型、任务类型、状态、错误码和输入哈希，不记录完整输入文本或向量数组。
 
@@ -499,12 +509,12 @@ class VectorRepository:
     def create_job(self, job: VectorIndexJobCreate) -> VectorIndexJobRecord: ...
     def refresh_case_vector(self, case_id: str, vector: CaseVectorCreate) -> tuple[CaseVectorRecord, str | None]: ...
     def get_current_vector(self, case_id: str) -> CaseVectorRecord | None: ...
-    def remove_case_vector(self, case_id: str) -> str | None: ...
+    def delete_case_vector(self, case_id: str | None, vector_id: str | None) -> tuple[list[str], list[str]]: ...
     def search(self, query: VectorSearchQuery) -> list[VectorCandidateRecord]: ...
 ```
 
 - `refresh_case_vector` 在单数据库事务内执行以下原子操作：(1) 查询并删除旧向量记录（如果存在），记录 `old_vector_id` 和 `old_content_hash`；(2) `INSERT` 新向量记录。事务保证两步操作的原子性——若插入失败，旧向量不会被删除，避免出现案例无向量的中间态。返回新向量记录和旧向量 ID（用于审计）。
-- `remove_case_vector` 物理删除案例的向量记录，返回被删除的 `vector_id`（用于审计）。若向量不存在，返回 `None`（幂等操作）。
+- `delete_case_vector` 在单数据库事务内物理删除向量记录和相关任务记录，支持按 `case_id` 或 `vector_id` 删除。返回 `(deleted_vector_ids, deleted_job_ids)` 元组用于审计。若目标不存在，返回空列表（幂等操作）。
 - 搜索只包含存在于 `case_vectors` 表中的记录（向量存在即可搜索）。
 - 搜索策略使用 pgvector `0.8.2+` 的 iterative scan：在 HNSW 遍历过程中同时检查过滤条件（`brand_id`、`store_id`、`problem_type`、`tags`、`case_status`、时间范围），避免"先 ANN 后过滤"导致候选为空或"先过滤后 ANN"退化为全表扫描。迁移时通过 `SET hnsw.iterative_scan = strict_order` 启用。
 - 数据库异常映射为稳定错误，不暴露 SQL 或底层向量数据。
@@ -606,12 +616,20 @@ erDiagram
 
 ### Data Contracts & Integration
 
-**RemoveVectorIndexRequest**
+**DeleteVectorIndexRequest**
 
-- `reason`: required string or enum，表示删除原因，例如 `case_deleted`、`case_archived`、`source_not_allowed`、`manual_admin_action`。
-- `requested_by`: optional string，记录触发该操作的系统、管理员或上游流程标识。
-- 请求体不携带 vector id 或 embedding 数据；目标始终是该 `case_id` 的向量记录。
-- 响应使用 `VectorIndexJobResponse`，包含 remove 任务元数据。
+- `case_id`: optional string，按案例删除向量索引。
+- `vector_id`: optional string，删除特定向量记录。
+- **至少提供 `case_id` 或 `vector_id` 之一**。
+- `reason`: required enum，删除原因（`case_deleted` | `enrichment_deleted` | `vector_deleted` | `feedback_deleted` | `schedule_deleted`）。
+- `requested_by`: required string，删除者标识（`anonymous_user` 表示前端用户触发，`system` 表示异步清理程序触发）。
+
+**DeleteVectorIndexResponse**
+
+- `success`: boolean，删除是否成功。
+- `deleted_count`: integer，删除的向量记录数量。
+- `deleted_at`: datetime，删除时间戳。
+- 幂等性：对不存在的向量索引返回 `deleted_count: 0`。
 
 **VectorSearchRequest**
 
@@ -624,7 +642,7 @@ erDiagram
 
 - `items`: ordered list of `VectorSearchCandidate`，按问题语义相似度排序。
 - `query_metadata`: query hash, model id, dimension, filters applied, total candidates considered when available.
-- Excludes recommendation reason, reranker score, CBRKit state and feedback data.
+- Excludes recommendation reason, reranker score, aggregated score and feedback data.
 
 **VectorSearchCandidate**
 
@@ -672,11 +690,9 @@ erDiagram
 
 ### Integration Tests
 
-- **Router 层防抖测试**：同一 `case_id` 的并发刷新请求，第二个请求返回 409 错误（`VECTOR_REFRESH_IN_PROGRESS`）；第一个请求完成后（无论成功或失败），防抖锁释放，后续请求可正常执行。
-- **防抖锁超时测试**：模拟刷新任务执行超过 120 秒的场景，验证防抖锁自动清理，后续请求可正常执行。
 - POST `/api/a3-cases/{case_id}/vector-index/refresh` 读取案例和派生结果，生成 fake embedding，并保存向量记录。
 - GET `/api/a3-cases/{case_id}/vector-index` 基于最近任务和当前向量返回 running、succeeded、failed、published/degraded 等状态和最近失败原因。
-- POST `/api/a3-cases/{case_id}/vector-index/remove` 创建 remove 任务，物理删除向量记录；当前无向量时仍返回成功状态（幂等操作）。
+- POST `/api/vector-index/delete` 支持按 `case_id` 或 `vector_id` 删除，创建 `job_type=remove` 的审计任务，在单个事务内物理删除 `case_vectors` 和 `vector_index_jobs` 记录；当前无向量时仍返回成功状态（幂等操作，`deleted_count: 0`）。
 - POST `/api/vector-index/jobs/{job_id}/retry` 允许失败任务重试，并递增重试次数。
 - 案例归档或删除并显式调用删除接口后，`/api/vector-search` 不再返回该案例。
 - 案例删除后再次触发刷新，若案例状态为 `archived` 则刷新被拒绝（`VECTOR_CASE_NOT_INDEXABLE`）；若案例状态正常则刷新成功且新向量正常可搜索。
@@ -701,7 +717,7 @@ erDiagram
 
 - Top-K 搜索在 MVP 规模下使用 HNSW 索引，常用过滤字段避免全表扫描。
 - 手动刷新和重试任务应限制并发和重试上限，避免耗尽 embedding 供应商配额。
-- 查询路径不依赖 CBRKit 或 LLM 推荐文案，保持问题语义候选向量搜索原语低耦合。
+- 查询路径不依赖分数加权聚合或 LLM 推荐文案，保持问题语义候选向量搜索原语低耦合。
 
 ## Security Considerations
 
@@ -715,7 +731,7 @@ erDiagram
 - MVP 使用 PostgreSQL + pgvector 单库部署，优先 HNSW cosine 索引满足低延迟 Top-K 候选搜索。
 - HNSW 索引参数：`m=16`、`ef_construction=200` 在迁移时固定；`ef_search` 通过 `PGVECTOR_HNSW_EF_SEARCH` 配置项（默认 40）在连接初始化时 `SET hnsw.ef_search` 动态调整，无需重建索引。未来可按查询特征在会话级别临时调高。
 - 过滤字段建立 B-tree/GIN 索引。搜索使用 pgvector `0.8.2+` 的 iterative scan（`strict_order` 模式），在 HNSW 遍历过程中同时检查过滤条件，避免候选为空或退化为全表扫描。
-- **搜索路径延迟策略**：`VectorSearchService.search()` 通过 `EmbeddingClient.embed_for_query` 同步调用远程 embedding 服务生成查询向量，搜索路径超时 ≤2 秒、不重试——embedding 调用失败直接返回 503，避免下游推荐服务等待。索引刷新路径通过 `EmbeddingClient.embed_for_index` 使用独立的超时（默认 30 秒）和重试（默认 2 次）配置。两条路径的超时和重试策略在 `EmbeddingConfig` 中分别配置，互不影响。
+- **搜索路径延迟策略**：`VectorSearchService.search()` 通过 `EmbeddingClient.embed_for_query` 同步调用远程 embedding 服务生成查询向量，搜索路径超时 ≤5 秒、不重试——embedding 调用失败直接返回 503，避免下游推荐服务等待。索引刷新路径通过 `EmbeddingClient.embed_for_index` 使用独立的超时（默认 30 秒）和重试（默认 2 次）配置。两条路径的超时和重试策略在 `EmbeddingConfig` 中分别配置，互不影响。
 - 若数据规模超过单库可接受范围，未来可在不改变下游搜索原语的前提下迁移到独立向量服务；本规格不实现该迁移。
 
 ## Migration Strategy

@@ -4,12 +4,12 @@
 
 `case-vector-indexing` 为 A3 案例知识库提供可检索的问题侧语义向量索引能力。该模块消费 `a3-case-management` 的基础问题字段和过滤字段，以及 `llm-case-enrichment` 已校验的问题摘要、结构化建议、标签建议和派生结果状态；在明确触发刷新、重试或移除操作后生成或更新 embedding，并维护可供下游推荐阶段稳定消费的索引状态与候选向量搜索原语。
 
-本规格聚焦以下能力：云端 embedding 生成、问题侧 embedding 输入文本组合、PostgreSQL + pgvector 向量存储与索引、刷新/重试/状态管理，以及向量搜索基础能力。相似案例推荐、CBRKit 编排、reranker、推荐理由生成和反馈学习排序由后续规格负责。
+本规格聚焦以下能力：云端 embedding 生成、问题侧 embedding 输入文本组合、PostgreSQL + pgvector 向量存储与索引、刷新/重试/状态管理，以及向量搜索基础能力。相似案例推荐、分数加权聚合、reranker、推荐理由生成和反馈学习排序由后续规格负责。
 
 ## Boundary Context
 
 - **In scope**: 问题侧向量化输入文本策略、云端 embedding 调用、案例问题向量记录、索引状态、手动刷新与重试、手动删除一致性、基础 Top-K 向量搜索原语。
-- **Out of scope**: CBRKit 编排、候选重排、推荐理由、最终推荐排序、反馈学习、多模型候选搜索、Milvus 等独立向量库、本地模型部署和推理成本优化。
+- **Out of scope**: 分数加权聚合、候选重排、推荐理由、最终推荐排序、反馈学习、多模型候选搜索、Milvus 等独立向量库、本地模型部署和推理成本优化。
 - **Adjacent expectations**: 本规格依赖 `a3-case-management` 提供稳定的 `case_id`、基础字段、状态、过滤字段和 `updated_at`；依赖 `llm-case-enrichment` 提供已发布或明确可消费的摘要与规范化文本；`cbr-retrieval-recommendation` 仅消费本规格输出的候选搜索原语和索引状态，不反向要求本规格承担推荐编排。
 
 ## Requirements
@@ -64,7 +64,7 @@
 
 ### Requirement 5: 向量搜索原语
 
-**Objective:** As a CBR 检索推荐实现者, I want 使用向量搜索原语获取候选案例, so that 推荐流程可在本规格之外完成候选补齐、重排和解释。
+**Objective:** As a 检索推荐实现者, I want 使用向量搜索原语获取候选案例, so that 推荐流程可在本规格之外完成候选补齐、重排和解释。
 
 #### Acceptance Criteria
 
@@ -72,7 +72,7 @@
 5.2 When 下游提交品牌、门店、问题类型、标签、状态或时间范围过滤条件, the 案例向量索引服务 shall 在搜索结果中仅返回满足过滤条件且存在向量记录的案例。
 5.3 If 查询文本为空、Top-K 越界或过滤条件无效, then the 案例向量索引服务 shall 拒绝搜索并返回字段级错误信息。
 5.4 If 没有满足条件的向量结果, then the 案例向量索引服务 shall 返回空候选列表和有效查询元数据。
-5.5 The 案例向量索引服务 shall 不生成推荐理由、不调用 reranker、不执行 CBRKit 重排，也不决定最终推荐展示顺序。
+5.5 The 案例向量索引服务 shall 不生成推荐理由、不调用 reranker、不执行分数加权聚合，也不决定最终推荐展示顺序。
 
 ### Requirement 6: 安全、隐私、可观测性与运行约束
 

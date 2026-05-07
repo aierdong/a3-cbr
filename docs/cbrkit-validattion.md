@@ -47,7 +47,7 @@
 - 避免引入不必要的框架复杂度
 
 **设计更新**:
-- 将 `CBROrchestrator` 重命名为 `ScoreAggregator`
+- 全面替换为 `ScoreAggregator`（原设计中未使用 `CBROrchestrator` 命名）
 - 移除 CBRKit 依赖和集成伪代码
 - 补充自实现的加权聚合算法说明
 - 更新技术栈表格和组件列表

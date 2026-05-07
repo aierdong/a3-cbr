@@ -24,7 +24,7 @@
 
 ### Non-Goals
 
-- 不实现相似案例检索、向量召回、CBRKit 重排或推荐解释生成。
+- 不实现相似案例检索、向量召回、分数加权聚合或推荐解释生成。
 - 不实现前端 UI、反馈控件、复杂权限体系或运营分析看板。
 - 不基于反馈自动调权、学习排序、A/B 实验或行业库审核。
 - 不把反馈写回案例质量评分、向量索引、推荐运行或推荐项快照。
@@ -50,7 +50,7 @@
 
 ### Allowed Dependencies
 
-- `cbr-retrieval-recommendation` 的 `recommendation_run_id` 和 `recommendation_item_id`（只读标识，不读取推荐运行元数据或推荐项快照）。
+- `cbr-retrieval-recommendation` 的 `recommendation_run_id` 和 `recommendation_item_id`。反馈模块可只读关联查询 `recommendation_runs` 与 `recommendation_item_snapshots` 以获取查询上下文和推荐项详细信息，但不复制快照数据到反馈表，也不写回上游记录。
 - `a3-case-management` 的 `case_id`（只读标识，用于关联命中案例）。
 - 后续后台前端可以调用本规格 API，但本规格不依赖前端实现。
 - Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、PostgreSQL 15+、pytest。
@@ -71,14 +71,16 @@
 
 ### Data Lifecycle Constraints
 
+**完整的级联删除设计见 `docs/cascade-deletion-design.md`**，本节仅说明本规格在级联删除中的职责边界。
+
 - **反馈记录生命周期与上游推荐记录绑定**：反馈记录的存续依赖于上游 `recommendation_runs` 和 `recommendation_item_snapshots` 的保留。
 - **级联删除机制**：
-  - **主路径**：`cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，同步调用本规格的删除接口（DELETE `/api/recommendation-feedback`），确保不产生悬空引用。
+  - **主路径**：上游规格（如 `a3-case-management` 的级联删除协调器）删除案例或推荐记录时，调用本规格的删除接口（POST `/api/recommendation-feedback/delete`），确保不产生悬空引用。
   - **兜底机制**：定时清理任务（`FeedbackCleanupService`）定期扫描并删除悬空引用的反馈记录，作为数据一致性的兜底保障。
 - **质量分析时间窗口**：需求 3.1、3.2 的"后续分析召回质量和解释质量"能力受限于上游推荐记录的保留周期。如需长期质量分析（如跨季度趋势、模型迭代对比），应由独立的分析规格在上游删除前归档反馈数据快照。
 - **删除触发场景**：
-  - 上游推荐记录因存储策略、隐私合规或数据保留政策被清理时触发（主路径：上游主动调用本规格删除接口）。
-  - 案例被删除时，上游可能级联删除相关推荐记录，进而触发反馈删除（主路径：上游主动调用本规格删除接口）。
+  - 案例被删除时，级联删除协调器调用本规格删除接口（主路径）。
+  - 上游推荐记录因存储策略、隐私合规或数据保留政策被清理时触发（主路径）。
   - 用户主动删除反馈（通过本规格 API）。
   - 定时清理任务识别并删除悬空引用（兜底机制）。
 
@@ -125,7 +127,7 @@ flowchart TB
 backend/
 ├── app/
 │   ├── core/
-│   │   ├── config.py                         # 增加反馈备注长度、统计默认配置和定时清理配置
+│   │   ├── config.py                         # 增加加载 cleanup.yaml 配置文件的逻辑
 │   │   └── errors.py                         # 增加 FEEDBACK_* 错误码
 │   ├── db/
 │   │   └── base.py                           # 纳入 feedback ORM metadata
@@ -133,34 +135,37 @@ backend/
 │   │   └── repository.py                     # 被 RecommendationReferenceResolver 只读推荐标识和关联数据
 │   └── feedback/
 │       ├── models.py                         # 推荐反馈 ORM、枚举和约束
-│       ├── schemas.py                        # 反馈提交、删除、查询、统计和响应 schema
+│       ├── schemas.py                        # 反馈提交、删除（含 reason 和 requested_by）、查询、统计和响应 schema
 │       ├── reference_resolver.py             # 推荐运行和推荐项引用解析（校验存在性并返回关联数据）
-│       ├── repository.py                     # 反馈 upsert、删除、查询和聚合数据访问
+│       ├── repository.py                     # 反馈 upsert、删除（记录删除原因和删除者）、查询和聚合数据访问
 │       ├── stats.py                          # 有用率及有用性分布等基础统计
-│       ├── service.py                        # 反馈提交、删除、引用解析和查询编排
-│       ├── cleanup.py                        # 定时清理无效反馈记录的后台任务
-│       └── router.py                         # 推荐反馈 API 端点
+│       ├── service.py                        # 反馈提交、删除（验证删除原因和删除者）、引用解析和查询编排
+│       ├── cleanup.py                        # 定时清理无效反馈记录的后台任务（使用 system 标识）
+│       └── router.py                         # 推荐反馈 API 端点（POST /delete, POST /api/admin/cleanup/feedback）
 ├── alembic/
 │   └── versions/
 │       └── <revision>_create_recommendation_feedback.py
+├── config/
+│   └── cleanup.yaml                          # 清理服务配置文件（包含 feedback_cleanup 配置块）
 └── tests/
     └── feedback/
         ├── test_feedback_submission.py       # 提交和引用解析测试
-        ├── test_feedback_deletion.py         # 删除反馈测试
+        ├── test_feedback_deletion.py         # 删除反馈测试（验证 reason、requested_by、幂等性）
         ├── test_feedback_reference.py        # 推荐运行和推荐项引用解析测试
         ├── test_feedback_queries.py          # 明细、运行级查询和过滤测试
         ├── test_feedback_stats.py            # 基础统计测试
-        ├── test_feedback_cleanup.py          # 定时清理任务测试
+        ├── test_feedback_cleanup.py          # 定时清理任务测试（验证 system 标识）
         └── test_feedback_privacy.py          # 隐私、日志和边界测试
 ```
 
 ### Modified Files
 
-- `backend/app/main.py` — 仅追加注册 `FeedbackRouter` 和启动定时清理任务，不改写应用入口基础实现。
-- `backend/app/core/config.py` — 仅追加反馈备注最大长度、统计默认窗口和定时清理间隔配置，不拥有共享配置基础设施。
+- `backend/app/main.py` — 仅追加注册 `FeedbackRouter` 和启动定时清理任务（使用 `asyncio.create_task()`），不改写应用入口基础实现。
+- `backend/app/core/config.py` — 仅追加加载 `backend/config/cleanup.yaml` 配置文件的逻辑，不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加反馈校验、上游引用缺失和查询错误码映射，不拥有 `ErrorMapper` 基础实现。
 - `backend/app/db/base.py` — 仅追加导入 `feedback` ORM metadata，不拥有数据库基础设施。
 - `backend/app/retrieval/repository.py` — 不改变上游写入契约，仅提供只读推荐标识和关联数据访问（如 `case_id`）。
+- `backend/config/cleanup.yaml` — 新增清理服务配置文件（包含 `feedback_cleanup` 配置块）。
 
 ## System Flows
 
@@ -198,10 +203,10 @@ sequenceDiagram
     participant Router
     participant Service
     participant Repository
-    Client->>Router: delete feedback by case/run/item
-    Router->>Service: validate delete request
+    Client->>Router: delete feedback by case/run/item/feedback_id
+    Router->>Service: validate delete request (reason, requested_by)
     Service->>Repository: delete matching feedback
-    Repository-->>Service: deleted count
+    Repository-->>Service: FeedbackDeleteResult (success, deleted_count, deleted_at)
     Service-->>Router: delete response
     Router-->>Client: deletion result
 ```
@@ -210,21 +215,31 @@ sequenceDiagram
 
 **删除触发场景**：
 
-1. **用户主动删除**：通过 API 直接删除特定反馈记录。
-2. **上游级联删除**：`cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，调用本规格删除接口清理关联反馈。
-3. **案例删除触发**：案例被删除时，上游可能级联删除相关推荐记录，进而触发反馈删除。
+1. **用户主动删除**：通过 API 直接删除特定反馈记录（`reason: feedback_deleted`, `requested_by: anonymous_user`）。
+2. **上游级联删除**：`cbr-retrieval-recommendation` 删除推荐运行或推荐项快照时，调用本规格删除接口清理关联反馈（`reason: case_deleted | enrichment_deleted | vector_deleted`）。
+3. **案例删除触发**：案例被删除时，级联删除协调器调用本规格删除接口（`reason: case_deleted`, `requested_by: anonymous_user | system`）。
+4. **定时清理触发**：异步清理任务识别悬空引用并删除（`reason: schedule_deleted`, `requested_by: system`）。
 
-**级联删除示例**（由上游 `cbr-retrieval-recommendation` 触发）：
+**级联删除示例**（由上游级联删除协调器触发）：
 
 ```python
-# 上游删除推荐运行时的伪代码
-def delete_recommendation_run(run_id: str):
-    # 1. 删除推荐项快照
-    delete_recommendation_items(run_id)
-    # 2. 调用反馈规格删除接口
-    feedback_client.delete_feedback(recommendation_run_id=run_id)
-    # 3. 删除推荐运行记录
-    delete_run_record(run_id)
+# 上游删除案例时的伪代码（由 a3-case-management 的 CaseDeleteCoordinator 执行）
+def delete_case_cascade(case_id: str, requested_by: str):
+    # 1. 删除案例基础数据
+    case_service.delete_case(case_id, reason="case_deleted", requested_by=requested_by)
+    
+    # 2. 删除案例增强
+    enrichment_client.delete_enrichment(case_id=case_id, reason="case_deleted", requested_by=requested_by)
+    
+    # 3. 删除向量索引
+    vector_client.delete_vector(case_id=case_id, reason="case_deleted", requested_by=requested_by)
+    
+    # 4. 调用反馈规格删除接口
+    feedback_client.delete_feedback(
+        case_id=case_id,
+        reason="case_deleted",
+        requested_by=requested_by
+    )
 ```
 
 ### 查询与统计流程
@@ -271,6 +286,11 @@ flowchart TD
 | 5.3         | 备注校验                                 | FeedbackSchemas                                  | comment validation                            | 反馈提交流程        |
 | 5.4         | 并发幂等                                 | FeedbackRepository                               | unique constraint                             | 反馈提交流程        |
 | 5.5         | 数据出口不学习排序                            | FeedbackStatsService, FeedbackRepository         | read-only exports                             | 查询与统计流程       |
+| 6.1         | 删除过滤条件支持                              | FeedbackRouter, FeedbackRepository               | FeedbackDeleteRequest                         | 反馈删除流程        |
+| 6.2         | 删除结果与审计字段                              | FeedbackService, FeedbackRepository, ErrorMapper | FeedbackDeleteResponse                        | 反馈删除流程        |
+| 6.3         | 删除幂等（未命中返回 0）                         | FeedbackService, FeedbackRepository              | FeedbackDeleteResponse                        | 反馈删除流程        |
+| 6.4         | 定时清理无效反馈且不影响主流程                       | FeedbackCleanupService                           | CleanupResult                                 | 反馈删除流程        |
+| 6.5         | 手动触发清理并返回清理结果                         | FeedbackRouter, FeedbackCleanupService           | CleanupTriggerRequest, CleanupResult          | 反馈删除流程        |
 
 
 ## Components and Interfaces
@@ -279,12 +299,12 @@ flowchart TD
 | Component                       | Domain/Layer        | Intent                                     | Req Coverage                 | Key Dependencies        | Contracts      |
 | ------------------------------- | ------------------- | ------------------------------------------ | ---------------------------- | ----------------------- | -------------- |
 | FeedbackRouter                  | API                 | 暴露反馈提交、删除、查询和统计入口                          | 1.1, 4.1, 4.2, 4.3           | FeedbackService P0      | API            |
-| FeedbackSchemas                 | API/Data Contract   | 定义反馈请求、枚举、查询和响应                            | 1.1, 1.3, 2.1, 2.2, 2.3, 5.3 | Pydantic P0             | API, State     |
+| FeedbackSchemas                 | API/Data Contract   | 定义反馈请求、枚举、查询和响应（包含删除原因和删除者标识）            | 1.1, 1.3, 2.1, 2.2, 2.3, 5.3 | Pydantic P0             | API, State     |
 | RecommendationReferenceResolver | Integration         | 解析上游推荐运行和推荐项引用，校验存在性与一致性，返回关联数据（如 case_id） | 1.2, 1.4, 3.5                | retrieval repository P0 | Service        |
-| FeedbackRepository              | Data Access         | 保存反馈、删除反馈、过滤查询和聚合读取                        | 2.4, 3.1, 3.2, 3.3, 5.4      | PostgreSQL P0           | Service, State |
+| FeedbackRepository              | Data Access         | 保存反馈、删除反馈（记录删除原因和删除者）、过滤查询和聚合读取           | 2.4, 3.1, 3.2, 3.3, 5.4      | PostgreSQL P0           | Service, State |
 | FeedbackStatsService            | Domain Service      | 生成有用率与有用性分布                                | 4.3, 4.4, 5.5                | FeedbackRepository P0   | Service        |
-| FeedbackCleanupService          | Background Task     | 定时清理悬空引用和过期反馈记录                            | 数据一致性维护                      | FeedbackRepository P0   | Background     |
-| FeedbackService                 | Application Service | 编排引用解析、upsert、删除和响应                        | 1.5, 2.4, 3.4, 5.1           | all core components P0  | Service        |
+| FeedbackCleanupService          | Background Task     | 定时清理悬空引用和过期反馈记录（使用 system 标识）            | 数据一致性维护                      | FeedbackRepository P0   | Background     |
+| FeedbackService                 | Application Service | 编排引用解析、upsert、删除（验证删除原因和删除者）和响应           | 1.5, 2.4, 3.4, 5.1           | all core components P0  | Service        |
 | ErrorMapper                     | API Support         | 输出稳定错误码并脱敏日志                               | 1.4, 3.5, 5.1, 5.2           | FastAPI P0              | API            |
 
 
@@ -302,13 +322,14 @@ flowchart TD
 **API Contract**
 
 
-| Method | Endpoint                                     | Request                                | Response                 | Errors        |
-| ------ | -------------------------------------------- | -------------------------------------- | ------------------------ | ------------- |
-| POST   | `/api/recommendation-feedback`               | `FeedbackCreateRequest`                | `FeedbackResponse`       | 400, 404, 422 |
-| DELETE | `/api/recommendation-feedback`               | query filters (case_id/run_id/item_id) | `FeedbackDeleteResponse` | 422           |
-| GET    | `/api/recommendation-feedback`               | query filters                          | `FeedbackListResponse`   | 422           |
-| GET    | `/api/recommendation-feedback/runs/{run_id}` | path `run_id`                          | `RunFeedbackResponse`    | 404           |
-| GET    | `/api/recommendation-feedback/stats`         | query filters                          | `FeedbackStatsResponse`  | 422           |
+| Method | Endpoint                                     | Request                 | Response                 | Errors        |
+| ------ | -------------------------------------------- | ----------------------- | ------------------------ | ------------- |
+| POST   | `/api/recommendation-feedback`               | `FeedbackCreateRequest` | `FeedbackResponse`       | 400, 404, 422 |
+| POST   | `/api/recommendation-feedback/delete`        | `FeedbackDeleteRequest` | `FeedbackDeleteResponse` | 422           |
+| POST   | `/api/admin/cleanup/feedback`                | `CleanupTriggerRequest` | `CleanupResult`          | 500           |
+| GET    | `/api/recommendation-feedback`               | query filters           | `FeedbackListResponse`   | 422           |
+| GET    | `/api/recommendation-feedback/runs/{run_id}` | path `run_id`           | `RunFeedbackResponse`    | 404           |
+| GET    | `/api/recommendation-feedback/stats`         | query filters           | `FeedbackStatsResponse`  | 422           |
 
 
 ### Domain Layer
@@ -327,15 +348,15 @@ flowchart TD
 ```python
 class FeedbackService:
     def submit_feedback(self, request: FeedbackCreateRequest, actor: FeedbackActor) -> FeedbackResponse: ...
-    def delete_feedback(self, filters: FeedbackDeleteFilters) -> FeedbackDeleteResponse: ...
+    def delete_feedback(self, request: FeedbackDeleteRequest) -> FeedbackDeleteResponse: ...
     def list_feedback(self, query: FeedbackQuery) -> FeedbackListResponse: ...
     def get_run_feedback(self, run_id: str) -> RunFeedbackResponse: ...
     def get_stats(self, query: FeedbackStatsQuery) -> FeedbackStatsResponse: ...
 ```
 
 - Preconditions: 请求已通过 schema 解析；提交者标识可用；上游推荐标识可读。
-- Postconditions: 有效反馈保存或更新为一条最终记录；无效目标不产生部分写入；删除操作返回删除数量。
-- Invariants: 不触发推荐、重排、解释或上游写回；整体推荐级（运行级）反馈的 `recommendation_item_id` 为 NULL；推荐项级反馈的 `recommendation_item_id` 为非 NULL 上游标识。
+- Postconditions: 有效反馈保存或更新为一条最终记录；无效目标不产生部分写入；删除操作返回删除数量、成功状态和删除时间戳。
+- Invariants: 不触发推荐、重排、解释或上游写回；整体推荐级（运行级）反馈的 `recommendation_item_id` 为 NULL；推荐项级反馈的 `recommendation_item_id` 为非 NULL 上游标识；删除操作记录删除原因和删除者标识。
 
 #### RecommendationReferenceResolver
 
@@ -392,14 +413,15 @@ class FeedbackStatsService:
 ```python
 class FeedbackCleanupService:
     def cleanup_orphaned_feedback(self) -> CleanupResult: ...
+    def run_periodic(self) -> None: ...
 ```
 
 - 定时扫描反馈表，识别引用不存在的推荐运行或推荐项的反馈记录（悬空引用）。
 - 删除悬空引用的反馈记录，保证数据一致性。
-- 清理间隔通过配置项 `feedback_cleanup_interval_seconds` 指定（默认 3600 秒，即 1 小时）。
-- 清理任务在应用启动时自动启动，作为后台任务运行。启动初始化失败时记录错误日志但**不阻塞应用启动**。
+- 清理间隔通过配置文件 `backend/config/cleanup.yaml` 中的 `feedback_cleanup.interval_seconds` 指定（默认 3600 秒，即 1 小时）。
+- 清理任务在应用启动时通过 `asyncio.create_task(feedback_cleanup.run_periodic())` 自动启动，作为后台任务运行。启动初始化失败时记录错误日志但**不阻塞应用启动**。
 - 清理任务运行失败时记录错误日志，下一个清理周期自动重试（无需额外重试逻辑）。
-- 不提供手动触发清理的 API 端点。
+- 提供手动触发清理的管理端点：`POST /api/admin/cleanup/feedback`（详见 `docs/cascade-deletion-design.md` §7.1）。
 - 记录清理日志：清理时间、扫描记录数、删除记录数和清理耗时。
 - 清理失败不影响主业务流程（反馈提交、查询、统计），只记录错误日志。
 
@@ -424,8 +446,12 @@ def cleanup_orphaned_feedback():
         WHERE f.recommendation_item_id IS NOT NULL AND i.item_id IS NULL
     """
     
-    # 3. 删除悬空记录
-    deleted_count = delete_feedback_by_ids(orphaned_ids)
+    # 3. 删除悬空记录（使用内部删除方法，reason="schedule_deleted", requested_by="system"）
+    deleted_count = delete_feedback_by_ids(
+        orphaned_ids,
+        reason="schedule_deleted",
+        requested_by="system"
+    )
     
     # 4. 记录清理结果
     log_cleanup_result(deleted_count, scan_count, duration)
@@ -435,13 +461,23 @@ def cleanup_orphaned_feedback():
 
 ```python
 # 应用启动时初始化清理任务（不阻塞启动）
-def start_cleanup_task():
-    try:
-        cleanup_service = FeedbackCleanupService(repository, config)
-        asyncio.create_task(cleanup_service.run_periodic())
-    except Exception as e:
-        # 启动初始化失败：记录错误日志，不阻塞应用启动
-        logger.error(f"Failed to start cleanup task: {e}")
+# backend/app/main.py
+@app.on_event("startup")
+async def start_cleanup_services():
+    """应用启动时注册清理服务"""
+    config = load_config("cleanup.yaml")
+    
+    if config.feedback_cleanup.enabled:
+        try:
+            feedback_cleanup = FeedbackCleanupService(
+                repository=feedback_repo,
+                config=config.feedback_cleanup
+            )
+            asyncio.create_task(feedback_cleanup.run_periodic())
+            logger.info("Feedback cleanup service started")
+        except Exception as e:
+            # 启动初始化失败：记录错误日志，不阻塞应用启动
+            logger.error(f"Failed to start feedback cleanup task: {e}")
 
 # 清理任务周期运行（失败不影响下一个周期）
 async def run_periodic(self):
@@ -451,13 +487,23 @@ async def run_periodic(self):
         except Exception as e:
             # 单次清理失败：记录错误日志，下一个周期自动重试
             logger.error(f"Cleanup task failed: {e}")
-        await asyncio.sleep(self.cleanup_interval)
+        await asyncio.sleep(self.interval_seconds)
 ```
 
 **配置项**
 
-- `feedback_cleanup_interval_seconds`：清理间隔（秒），默认 3600（1 小时）。
-- `feedback_cleanup_batch_size`：单次清理批次大小，默认 1000，避免长事务。
+配置文件：`backend/config/cleanup.yaml`
+
+```yaml
+feedback_cleanup:
+  enabled: true
+  interval_seconds: 3600  # 每小时执行
+  batch_size: 1000
+```
+
+- `enabled`：是否启用清理服务（默认 true）。
+- `interval_seconds`：清理间隔（秒），默认 3600（1 小时）。
+- `batch_size`：单次清理批次大小，默认 1000，避免长事务。
 
 ### Data Layer
 
@@ -475,7 +521,7 @@ async def run_periodic(self):
 ```python
 class FeedbackRepository:
     def upsert_feedback(self, feedback: FeedbackCreate) -> FeedbackRecord: ...
-    def delete_feedback(self, filters: FeedbackDeleteFilters) -> int: ...
+    def delete_feedback(self, request: FeedbackDeleteRequest) -> FeedbackDeleteResult: ...
     def list_feedback(self, query: FeedbackQuery) -> list[FeedbackRecord]: ...
     def get_run_feedback(self, run_id: str) -> list[FeedbackRecord]: ...
     def aggregate_stats(self, query: FeedbackStatsQuery) -> FeedbackStatsData: ...
@@ -484,8 +530,9 @@ class FeedbackRepository:
 - 唯一约束：`(actor_id, recommendation_run_id, recommendation_item_id)` UNIQUE NULLS NOT DISTINCT（PostgreSQL 15+）。
 - 运行级反馈的 `recommendation_item_id` 为 NULL。
 - 同一目标并发提交使用数据库唯一约束和事务保持最终一致。
-- 删除操作支持按 `case_id`、`recommendation_run_id`、`recommendation_item_id` 过滤。
-- 日志只记录标识、状态和错误码，不记录完整备注。
+- 删除操作支持按 `case_id`、`feedback_id`、`recommendation_run_id`、`recommendation_item_id` 过滤，并记录删除原因（`reason`）和删除者标识（`requested_by`）。
+- 删除操作返回 `FeedbackDeleteResult`，包含 `success`、`deleted_count` 和 `deleted_at` 字段。
+- 日志只记录标识、状态、错误码、删除原因和删除者，不记录完整备注。
 - 查询上下文（查询哈希、过滤条件等）和推荐项详细信息（分值、排序位置等）通过关联查询 `recommendation_runs` 和 `recommendation_item_snapshots` 获取，不在反馈表中冗余存储。
 
 ## Data Models
@@ -567,12 +614,15 @@ UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_
 - `comment`: optional bounded text.
 - `source_channel`: optional, defaults to `admin_web`.
 
-**FeedbackDeleteFilters**
+**FeedbackDeleteRequest**
 
 - `case_id`: optional，按案例删除反馈。
+- `feedback_id`: optional，删除特定反馈记录。
 - `recommendation_run_id`: optional，按推荐运行删除反馈。
 - `recommendation_item_id`: optional，按推荐项删除反馈。
-- 至少提供一个过滤条件。
+- `reason`: required，删除原因枚举（`case_deleted` | `enrichment_deleted` | `vector_deleted` | `feedback_deleted` | `schedule_deleted`）。
+- `requested_by`: required，删除者标识（`anonymous_user` | `system`）。
+- 至少提供 `case_id`、`feedback_id`、`recommendation_run_id`、`recommendation_item_id` 之一。
 
 **FeedbackResponse**
 
@@ -588,7 +638,21 @@ UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_
 
 **FeedbackDeleteResponse**
 
+- `success`: 删除是否成功
 - `deleted_count`: 删除的反馈数量
+- `deleted_at`: 删除时间戳
+
+**CleanupTriggerRequest**
+
+- `reason`: required，删除原因枚举（固定为 `schedule_deleted`）。
+- `requested_by`: required，删除者标识（固定为 `system`）。
+
+**CleanupResult**
+
+- `success`: 清理是否成功
+- `scanned_count`: 扫描的记录数
+- `deleted_count`: 删除的记录数
+- `duration_ms`: 清理耗时（毫秒）
 
 **FeedbackListItem**
 
@@ -616,7 +680,7 @@ UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_
 
 - Logs: feedback accepted, reference resolved, feedback upserted, feedback deleted, query executed, stats computed, cleanup executed.
 - Metrics: submit success rate, submit error rate, target missing rate, usefulness ratio, usefulness distribution, delete count, cleanup orphaned count, cleanup duration.
-- Logs and error responses include `feedback_id`、`recommendation_run_id`、错误码和状态，不包含完整备注或敏感门店信息。
+- Logs and error responses include `feedback_id`、`recommendation_run_id`、错误码、状态、删除原因（`reason`）和删除者（`requested_by`），不包含完整备注或敏感门店信息。
 
 ## Testing Strategy
 
@@ -633,7 +697,15 @@ UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_
 - POST `/api/recommendation-feedback` 在 fake recommendation reference 下保存运行级反馈（`recommendation_item_id` 为 None）。
 - POST `/api/recommendation-feedback` 保存推荐项级反馈，并关联案例标识。
 - POST `/api/recommendation-feedback` 并发重复提交时通过数据库唯一约束保证幂等性。
-- DELETE `/api/recommendation-feedback` 按 `case_id`、`recommendation_run_id`、`recommendation_item_id` 删除反馈。
+- POST `/api/recommendation-feedback/delete` 按 `case_id` 删除反馈，验证 `reason` 和 `requested_by` 记录。
+- POST `/api/recommendation-feedback/delete` 按 `feedback_id` 删除特定反馈记录。
+- POST `/api/recommendation-feedback/delete` 按 `recommendation_run_id` 删除推荐运行的所有反馈。
+- POST `/api/recommendation-feedback/delete` 按 `recommendation_item_id` 删除推荐项的反馈。
+- POST `/api/recommendation-feedback/delete` 验证删除响应包含 `success`、`deleted_count` 和 `deleted_at` 字段。
+- POST `/api/recommendation-feedback/delete` 验证删除原因枚举（`case_deleted`、`enrichment_deleted`、`vector_deleted`、`feedback_deleted`、`schedule_deleted`）。
+- POST `/api/recommendation-feedback/delete` 验证删除者标识（`anonymous_user`、`system`）。
+- POST `/api/recommendation-feedback/delete` 对不存在的反馈返回 `deleted_count: 0`（幂等性）。
+- POST `/api/admin/cleanup/feedback` 手动触发清理任务，返回 `CleanupResult`（包含扫描数、删除数和耗时）。
 - GET `/api/recommendation-feedback` 支持按运行、案例、用户、时间和有用性过滤。
 - GET `/api/recommendation-feedback/runs/{run_id}` 返回运行级和项级反馈。
 - GET `/api/recommendation-feedback/stats` 返回基础聚合指标。
@@ -647,7 +719,10 @@ UNIQUE NULLS NOT DISTINCT (actor_id, recommendation_run_id, recommendation_item_
 - 反馈保存不修改推荐运行、推荐项快照、案例、向量索引或反馈外数据。
 - 上游 `recommendation_item_id` 不属于 `recommendation_run_id` 时拒绝保存。
 - 后续消费者可以按推荐运行、推荐项和案例读取反馈数据出口。
-- 上游删除推荐运行或推荐项快照时，通过调用本规格删除接口级联清理反馈记录，验证不产生悬空引用。
+- 上游删除推荐运行或推荐项快照时，通过调用本规格删除接口（`POST /api/recommendation-feedback/delete`）级联清理反馈记录，验证不产生悬空引用。
+- 删除接口验证 `reason` 和 `requested_by` 参数的必填性和枚举值有效性。
+- 删除接口验证至少提供一个过滤条件（`case_id`、`feedback_id`、`recommendation_run_id`、`recommendation_item_id`）。
+- 删除接口返回的响应包含 `success`、`deleted_count` 和 `deleted_at` 字段。
 - 定时清理任务只删除悬空引用的反馈记录，不删除有效反馈。
 - 定时清理任务失败不影响主业务流程（反馈提交、查询、统计）。
 

@@ -212,7 +212,7 @@ components:
       type: string
       description: >
         案例源字段枚举，对应 A3Case 的核心内容字段。
-        不包含 store_info_id 等关联标识字段。
+        不包含 store_id 等关联标识字段。
       enum: [problem_description, context, root_cause, solution_steps, outcome]
     StructuredSuggestions:
       type: object

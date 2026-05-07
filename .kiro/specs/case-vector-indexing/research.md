@@ -100,7 +100,7 @@
 | ------------- | ---------------------------------------------- | ---------------------- | ---------------------------------------- | -------- |
 | 轻量分层模块        | Router、Service、Repository、Client、Job Runner 分层 | 与上游 FastAPI 规格一致，实施成本低 | 若未来事件量大，需引入异步队列扩展                        | Selected |
 | 独立向量服务        | 单独服务管理 embedding 和向量搜索                         | 可独立扩缩容                 | 超出 MVP 范围，增加部署复杂度                        | Rejected |
-| CBRKit 强绑定检索层 | 直接按 CBRKit 内部格式建索引和搜索                          | 下游接入快                  | 违反 roadmap 的"不硬绑定 CBRKit"约束，并混淆向量索引与推荐编排 | Rejected |
+| 推荐编排强绑定检索层 | 直接按推荐编排内部格式建索引和搜索                          | 下游接入快                  | 违反 roadmap 的边界解耦约束，并混淆向量索引与推荐编排 | Rejected |
 | 专用向量数据库       | 使用 Milvus 等独立向量库                               | 大规模候选搜索能力强             | 超出 MVP 和单库部署约束                           | Rejected |
 
 
@@ -131,12 +131,12 @@
 
 ### Decision: 向量搜索只提供候选原语
 
-- **Context**: 下游 `cbr-retrieval-recommendation` 消费本规格输出的候选向量搜索结果，并负责 CBRKit 编排、reranker 和推荐解释。
+- **Context**: 下游 `cbr-retrieval-recommendation` 消费本规格输出的候选向量搜索结果，并负责分数加权聚合、reranker 和推荐解释。
 - **Alternatives Considered**:
   1. 本规格直接返回推荐结果。
   2. 本规格只返回 Top-K 候选、相似度和索引元数据。
 - **Selected Approach**: `VectorSearchService` 只暴露查询向量生成、pgvector 过滤、Top-K 候选和状态元数据。
-- **Rationale**: 避免吸收推荐职责，保持不硬绑定 CBRKit；CBRKit 只应在下游候选集内做编排或重排适配。
+- **Rationale**: 避免吸收推荐职责，保持边界解耦；分数加权聚合只应在下游候选集内执行。
 - **Trade-offs**: 下游需自行组合推荐上下文，但职责边界清晰。
 - **Follow-up**: 下游规格变更搜索请求或响应时触发本规格重校验。
 
@@ -155,5 +155,5 @@
 - [BAAI/bge-m3 Hugging Face](https://huggingface.co/BAAI/bge-m3) — BGE-M3 维度和多语言能力背景。
 - `docs/product-overview.md` — 产品权威入口与能力闭环。
 - `docs/mvp-product.md` — MVP 技术栈、案例向量化入库和检索流程。
-- `.kiro/steering/roadmap.md` — 规格边界、依赖顺序和 CBRKit 不硬绑定约束。
+- `.kiro/steering/roadmap.md` — 规格边界、依赖顺序和边界解耦约束。
 

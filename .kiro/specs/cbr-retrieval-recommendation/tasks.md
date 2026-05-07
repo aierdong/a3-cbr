@@ -15,9 +15,10 @@
   - 创建推荐运行和推荐项快照的数据结构，用于保存运行标识、查询哈希、过滤条件、业务权重、候选引用、分值明细和降级状态。
   - **迁移与 ORM**：在 `recommendation_runs` 表增加独立列 **`contract_version`**（建议 `varchar(64) NOT NULL`，与 `design.md` 物理模型一致）；SQLAlchemy/Alembic 迁移与 `backend/app/retrieval/models.py`（或等价 ORM）同步纳入该列；**`reranker_status` 列 `NOT NULL`，数据库默认 `'pending'`**（与 `design.md`「Reranker 状态语义」一致）。
   - **`contract_version` 语义**：运行级依赖契约快照标识（应用常量或配置注入，如 `mvp-1` / semver），须在本规格 **Version & Compatibility Policy** 与实现对齐；本条记录在 **`create_run` 时写入一次**，**`fail_run` / `complete_run` 不得改写该列**。
+  - **`recommendation_item_id` 约束**：生成或写入推荐项快照前须校验 `recommendation_item_id` 不等于字面字符串 `'RUN'`（该取值保留给下游 `recommendation-feedback` 表示运行级反馈持久化哨兵，见 Requirement 7.6）；若冲突则视为内部错误并 fail closed。
   - 数据结构只保存上游标识、分值和轻量元数据，不保存完整问题原文、完整案例正文、向量数组或反馈结果。
   - 完成后测试数据库可以应用迁移，并通过运行标识查询推荐运行和排序项。
-  - _Requirements: 2.5, 4.3, 4.5, 6.1, 6.2, 6.5_
+  - _Requirements: 2.5, 4.3, 4.5, 6.1, 6.2, 6.5, 7.6_
 
 - [ ] 1.3 定义检索请求、过滤、候选和响应契约
   - 定义相似案例推荐请求、过滤条件、业务权重参数、`NormalizedRetrievalQuery`（含单次 LLM normalizer 产出的标准化检索文本与 `query_structured_suggestions`）、推荐运行状态、推荐项、降级状态和错误响应契约。
@@ -92,11 +93,12 @@
 
 - [ ] 4.1 实现推荐服务主流程
   - 串联 QueryNormalizer（通过共享 `LLMClient` + `NormalizerLLMConfig` 执行单次 LLM normalizer）、向量候选消费、候选快照读取、语义精排、结构化局部评分、业务评分、分值聚合、推荐解释和结果组装。
+  - **实现 `RecommendationRunContext` 上下文管理器**（见 `design.md` RecommendationService 章节）：`__enter__` 执行 `create_run` 并返回 `run_id`；`__exit__` 保证运行记录终态一致性——若 `completed` 标记未置位且存在未捕获异常，须在 `__exit__` 中尽力写入 `fail_run`；提供 `complete()` 和 `fail()` 方法供主流程显式写入终态。替代方案为手写 `try/finally` + `run_completed` 标记（design.md 备选实现），但须保证同等终态语义。
   - **运行记录顺序**：进入主流程后 **先** `create_run`，再执行 LLM normalizer；Requirement `1.7` 失败时 **须** `fail_run` 且 POST 响应 **必须** 含 `recommendation_run_id`（不得在未建 run 的情况下返回 `1.7` 失败）。
   - 对空候选、候选不足、重排失败、聚合失败和解释失败分别返回成功、空结果或降级状态，并严格执行故障矩阵组合规则。
   - 当 reranker 与分值聚合同时失败时，按”业务分优先，业务分不可用再回退向量顺序”返回排序，并标记 `reranker_and_aggregation_failed`。
   - 完成后合法请求可以返回 Top-K 推荐项，并且每项包含案例引用、核心步骤、分值明细、解释和来源。
-  - _Requirements: 1.4, 2.3, 3.3, 3.4, 4.1, 4.4, 5.1, 5.3, 5.5, 6.1, 6.3_
+  - _Requirements: 1.4, 1.7, 2.3, 3.3, 3.4, 4.1, 4.4, 5.1, 5.3, 5.5, 6.1, 6.3, 7.1_
   - _Boundary: RecommendationService_
   - _Depends: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4_
 
@@ -104,14 +106,15 @@
   - **`create_run`** 写入 **`contract_version` 独立列**（取值来自配置或代码常量）；后续 **`fail_run` / `complete_run` 不更新该列**。
   - 保存每次检索的运行标识、查询哈希、应用过滤条件、有效业务权重、候选数量、返回数量、模型标识、耗时、降级状态和错误类型。
   - 保存每个推荐项的推荐项标识、案例引用、向量来源、向量分值、语义分、结构化局部相似度、业务分、最终聚合分、排序位置、解释状态和缺失字段。
+  - **实现级联删除**：删除推荐运行或推荐项快照时，须同步调用 `recommendation-feedback` 的删除接口（`DELETE /api/recommendation-feedback`）清理关联反馈记录；反馈删除失败不阻塞推荐记录删除，但须记录告警日志。实现 `delete_recommendation_run`（先删快照 → 调反馈删除 → 删运行）和 `delete_recommendation_items`（先调反馈删除 → 删快照）两个方法。
   - 完成后下游反馈可以通过推荐运行标识和推荐项标识关联本次推荐。
   - _Requirements: 2.5, 4.3, 5.3, 7.1, 7.2, 7.3, 7.5_
   - _Boundary: RecommendationRepository_
 
 - [ ] 4.3 暴露相似案例推荐 API
-  - 提供手动相似案例推荐入口，接收当前问题、Top-K、过滤条件和可选业务权重。
-  - 响应成功、空结果、降级和失败状态时均使用一致结构。
-  - 完成后客户端可通过 HTTP 获取推荐结果、运行标识、推荐项标识、应用过滤条件、有效权重和分值明细。
+  - **POST `/api/recommendations/similar-cases`**：手动相似案例推荐入口，接收当前问题、Top-K、过滤条件和可选业务权重。响应成功、空结果、降级和失败状态时均使用一致结构。
+  - **GET `/api/recommendations/runs/{run_id}`**：返回推荐运行状态和候选快照元数据（含 `contract_version`），不返回完整查询原文或完整案例正文；运行不存在时返回 404。
+  - 完成后客户端可通过 HTTP 获取推荐结果、运行标识、推荐项标识、应用过滤条件、有效权重和分值明细；下游反馈规格可通过 GET 端点查询运行元数据。
   - _Requirements: 1.1, 1.3, 1.4, 1.5, 5.1, 7.2_
   - _Boundary: RetrievalRouter_
   - _Depends: 4.1, 4.2_

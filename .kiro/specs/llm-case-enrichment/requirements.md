@@ -7,7 +7,7 @@
 ## Boundary Context
 
 - **In scope**: 基于 A3 案例基础字段生成问题摘要、方案摘要、结构化字段建议、标签建议和推荐理由文案；定义结构化输出约束、校验、派生结果状态、失败记录、重试边界和隐私安全要求。
-- **Out of scope**: A3 案例 CRUD、案例基础字段生命周期、embedding 生成、pgvector 索引、reranker Top-K 召回、CBRKit 重排、相似度计算、反馈学习排序、复杂多轮追问、模型微调和本地大模型部署。
+- **Out of scope**: A3 案例 CRUD、案例基础字段生命周期、embedding 生成、pgvector 索引、reranker Top-K 召回、分数加权聚合、相似度计算、反馈学习排序、复杂多轮追问、模型微调和本地大模型部署。
 - **Adjacent expectations**: 本规格消费 `a3-case-management` 提供的 `case_id`、基础字段、状态、过滤字段和时间戳；`case-vector-indexing` 可消费已校验的摘要或规范化文本；`cbr-retrieval-recommendation` 可消费推荐文案生成能力，但召回和排序规则不由本规格决定。
 
 ## Requirements
