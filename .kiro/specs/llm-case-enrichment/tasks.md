@@ -157,6 +157,14 @@
   - _Boundary: EnrichmentService, RecommendationCopyService_
   - _Depends: 4.3_
 
+- [ ] 4.5 同步维护上游详情契约文档与兼容门禁
+  - 当 `a3-case-management` 的 `CaseDetailResponse` 字段、类型、状态语义或 `updated_at` 语义变化时，同步更新 `docs/contract-a3-case-detail-for-enrichment.md` 的映射说明。
+  - 将该文档同步与跨规格兼容验证纳入交付门禁，确保 `CaseSnapshotProvider` 与上游详情契约一致。
+  - 完成后上游详情契约的代码实现、文档映射和本规格消费语义保持一致，避免隐式契约漂移。
+  - _Requirements: 1.1, 1.2, 6.1_
+  - _Boundary: CaseSnapshotProvider, EnrichmentSchemas_
+  - _Depends: 4.4_
+
 - [ ] 5. 补齐验证覆盖
 
 - [ ] 5.1 编写输出校验和 Prompt 安全单元测试

@@ -1,7 +1,7 @@
 {
   "feature_name": "mvp-admin-frontend",
   "created_at": "2026-04-28T14:35:00+08:00",
-  "updated_at": "2026-05-06T22:30:00+08:00",
+  "updated_at": "2026-05-08T15:45:00+08:00",
   "language": "zh",
   "phase": "design-approved",
   "approvals": {
@@ -12,7 +12,7 @@
     "design": {
       "generated": true,
       "approved": true,
-      "revision_reason": "二次审查通过：明确 Keyset 分页 UI 交互模式为'加载更多'按钮"
+      "revision_reason": "三次审查通过：补充契约维护职责、加载更多按钮状态机、匿名认证演进路径"
     },
     "tasks": {
       "generated": false,

@@ -320,6 +320,8 @@ stateDiagram-v2
 | VectorIndexService      | Domain Service    | 编排手动刷新、发布、删除和状态         | 3.1, 3.2, 3.4, 4.1, 4.2, 4.4 | Repository P0, Client P0                      | Service        |
 | VectorSearchService     | Domain Service    | 生成用户问题查询向量并返回 Top-K 问题语义候选原语 | 5.1, 5.2, 5.4, 5.5           | EmbeddingClient P0, Repository P0             | API, Service   |
 | VectorRepository        | Data Access       | 保存成功向量、任务审计并执行 pgvector 搜索    | 3.1, 4.2, 4.5, 5.2           | PostgreSQL pgvector P0                        | Service, State |
+| VectorJobRunner         | Domain Service    | 管理任务生命周期、状态转换和重试编排            | 2.3, 4.3, 4.4, 4.5           | Repository P0, ErrorMapper P0                 | Service, State |
+| VectorCleanupService    | Infrastructure    | 后台定期扫描并清理孤立向量数据              | 3.4（间接）, 级联删除协同           | Repository P0, CaseService P1, EnrichmentRepository P1 | Batch          |
 | PgvectorChecks          | Infrastructure    | 校验扩展、版本、维度和索引前置条件            | 6.4                          | PostgreSQL P0                                 | Batch          |
 | ErrorMapper             | API Support       | 输出稳定错误码并执行日志脱敏               | 1.4, 2.3, 5.3, 6.5           | FastAPI P0                                    | API            |
 

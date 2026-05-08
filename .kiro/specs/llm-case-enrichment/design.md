@@ -45,7 +45,7 @@
 
 ### Allowed Dependencies
 
-- `a3-case-management` 的详情读取能力与基础字段契约：`case_id`、A3 基础字段、状态、过滤字段、`updated_at`。**字段名、JSON 形状、`CaseInputSnapshot` 与 `CaseDetailResponse` 的映射**以 `docs/contract-a3-case-detail-for-enrichment.md` 为准（跨规格引用，作为字段语义说明文档）。
+- `a3-case-management` 的详情读取能力与基础字段契约：`case_id`、A3 基础字段、状态、过滤字段、`updated_at`。**字段名、JSON 形状、`CaseInputSnapshot` 与 `CaseDetailResponse` 的映射**以 `docs/contract-a3-case-detail-for-enrichment.md` 为准（跨规格引用，作为字段语义说明文档）。**增强触发条件**见该文档 §6。
 - Python + FastAPI、Pydantic、SQLAlchemy、Alembic、PostgreSQL，与上游后端栈一致。
 - 云端 LLM：MVP 默认 `deepseek-v4-pro`，经 OpenAI 兼容或等价 HTTP 客户端接入。
 - **下游消费约定**：下游只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。本规格不实现自动过期检测或自动触发机制。
@@ -56,9 +56,10 @@
 
 1. **事务语义**：用户点击"提交且摘要"按钮后，系统应完成案例保存（创建或更新）并异步触发 LLM 增强。案例保存失败时不触发增强；案例保存成功后立即返回客户端，增强在后台异步执行。
 2. **实现策略**：
-   - **案例保存优先**：前端调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}`，后台成功后返回前端 HTTP 200，同时异步调用 `POST /api/a3-cases/{case_id}/enrichment-runs`。
-   - **客户端无需等待**：案例保存成功后前端即可返回成功状态，用户无需等待增强完成，也无需轮询增强结果。增强结果在后台生成后自动关联到案例，用户下次查看案例详情时可看到派生内容。
+   - **案例保存优先**：前端先调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例，成功后（HTTP 200）前端再调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发增强。
+   - **客户端无需等待**：前端触发增强接口后立即返回成功状态（不等待增强完成，也无需轮询增强结果）。增强结果在后台生成后自动关联到案例，用户下次查看案例详情时可看到派生内容。
    - **增强失败处理**：若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，增强运行记录标记为 `failed` 或 `validation_failed`。用户可通过管理后台或重试接口手动触发重新增强。
+   - **触发条件**：详见 `docs/contract-a3-case-detail-for-enrichment.md` §6 "增强触发条件"。
 3. **后端职责边界**：
    - `a3-case-management` 不感知 LLM 增强，只负责案例 CRUD。
    - `llm-case-enrichment` 不修改案例基础字段，只负责生成派生结果。
@@ -365,7 +366,7 @@ sequenceDiagram
 | POST   | `/api/a3-cases/{case_id}/enrichment-runs`      | `CreateEnrichmentRunRequest` | `EnrichmentRunResponse`        | 200, 404, 409, 422, 503 |
 | GET    | `/api/a3-cases/{case_id}/enrichment`           | path `case_id`               | `CaseEnrichmentStatusResponse` | 404                |
 | POST   | `/api/enrichment/delete`                       | `DeleteEnrichmentRequest`    | `DeleteEnrichmentResponse`     | 200, 422, 500      |
-| POST   | `/api/recommendations/copy`                    | `RecommendationCopyRequest`  | `RecommendationCopyResponse`   | 503                |
+| POST   | `/api/recommendations/copy`                    | `RecommendationCopyRequest`  | `RecommendationCopyResponse`   | 503 (失败时下游应展示候选基础信息，不阻塞推荐结果) |
 | POST   | `/api/enrichment-runs/{run_id}/retry`          | path `run_id`                | `EnrichmentRunResponse`        | 200, 404, 409, 503 |
 
 
@@ -546,6 +547,7 @@ class LLMClient:
 1. **独立配置类定义**（`backend/app/core/config.py`）：
   ```python
    from pydantic import BaseModel
+   from functools import lru_cache
 
    class EnrichmentLLMConfig(BaseModel):
        """LLM enrichment 专用配置（本规格使用）"""
@@ -586,12 +588,67 @@ class LLMClient:
        embedding: EmbeddingConfig
        reranker: RerankerConfig
        max_recommendation_candidates: int = 10  # 全局共享配置：推荐候选数量上限，供 cbr-retrieval-recommendation 在召回阶段使用，本规格的推荐文案生成消费该上限控制后的候选列表
+   
+   @lru_cache()
+   def get_app_config() -> AppConfig:
+       """全局单例配置，应用启动时加载一次"""
+       return load_app_config()
   ```
 
 2. **配置加载与依赖注入**：
   - **配置来源**：从 `.env` 文件读取环境变量（如 `ENRICHMENT_LLM_PROVIDER`、`ENRICHMENT_LLM_MODEL_ID`、`ENRICHMENT_LLM_BASE_URL` 等）。
-  - **配置加载**：在 `backend/app/core/config.py` 中定义 `load_app_config() -> AppConfig` 函数，从环境变量构造四个配置对象，并在应用启动时（`backend/app/main.py`）调用一次，存储为全局单例 `app_config`。
-  - **依赖注入**：通过 FastAPI 的 `Depends` 机制将配置对象传递给路由和服务。
+  - **配置加载**：在 `backend/app/core/config.py` 中定义 `load_app_config() -> AppConfig` 函数，从环境变量构造四个配置对象。通过 `@lru_cache()` 装饰的 `get_app_config()` 函数在应用启动时加载一次，作为全局单例。
+  - **依赖注入链路**：`EnrichmentRouter` → `EnrichmentJobRunner` → `EnrichmentService` → `LLMClient`，配置通过构造函数传递。示例：
+    ```python
+    # backend/app/enrichment/router.py
+    from fastapi import APIRouter, Depends
+    from app.core.config import get_app_config, AppConfig
+    
+    router = APIRouter()
+    
+    @router.post("/api/a3-cases/{case_id}/enrichment-runs")
+    def create_enrichment_run(
+        case_id: str,
+        config: AppConfig = Depends(get_app_config)
+    ):
+        # 构造依赖链：Router → JobRunner → Service → LLMClient
+        llm_client = LLMClient(config.enrichment_llm)
+        enrichment_service = EnrichmentService(
+            llm_client=llm_client,
+            prompt_catalog=PromptCatalog(),
+            validator=OutputValidator(),
+            repository=EnrichmentRepository()
+        )
+        job_runner = EnrichmentJobRunner(
+            enrichment_service=enrichment_service,
+            case_provider=CaseSnapshotProvider(),
+            repository=EnrichmentRepository()
+        )
+        return job_runner.run_enrichment(case_id, request)
+    ```
+  - **测试隔离**：单元测试通过 `app.dependency_overrides` 覆盖 `get_app_config`，注入 mock 配置对象。示例：
+    ```python
+    # tests/enrichment/test_enrichment_api.py
+    from fastapi.testclient import TestClient
+    from app.core.config import get_app_config, AppConfig, EnrichmentLLMConfig
+    
+    def test_create_enrichment_run():
+        # Mock 配置
+        mock_config = AppConfig(
+            enrichment_llm=EnrichmentLLMConfig(
+                provider="mock",
+                model_id="mock-model",
+                base_url="http://mock",
+                privacy_acknowledged=True
+            ),
+            # ... 其他配置
+        )
+        app.dependency_overrides[get_app_config] = lambda: mock_config
+        
+        client = TestClient(app)
+        response = client.post("/api/a3-cases/case_001/enrichment-runs")
+        assert response.status_code == 200
+    ```
 
 3. **共享 LLMClient 的配置支持**（`backend/app/common/llm_client.py`）：
   ```python

@@ -147,13 +147,54 @@
 
 ---
 
-## 6. 规格交叉引用
+## 6. 增强触发条件
+
+### 6.1 触发职责
+
+**触发主体**：前端（`mvp-admin-frontend`）
+
+**触发时机**：用户在前端执行"提交且摘要"操作时，前端依次调用：
+1. `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例
+2. 案例保存成功（HTTP 200）后，前端调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发增强
+
+**触发条件**：
+- **首次创建案例**：用户点击"提交且摘要"按钮，案例状态从 `draft` 变为 `active`，触发首次增强。
+- **编辑已有案例**：用户修改案例后点击"提交且摘要"按钮，若 A3 核心内容字段（见 §6.2）发生变更，触发重新增强。
+- **手动重试**：用户在管理后台查看增强失败的案例，点击"重新生成"按钮，调用 `POST /api/enrichment-runs/{run_id}/retry` 触发重试。
+
+### 6.2 触发条件：字段变更范围
+
+**触发重新增强的字段**（A3 核心内容字段）：
+- `problem_description`（问题描述）
+- `context`（场景上下文）
+- `root_cause`（根因分析）
+- `solution_steps`（解决步骤）
+- `outcome`（效果结果）
+
+**不触发重新增强的字段**（门店镜像与元数据字段）：
+- `store_id`、`store_name`、`brand_id`、`brand_name`、`business_type`、`store_scale`、`franchise_type`、`city`、`city_tier`
+- `status`（案例状态变更，如 `active` → `archived`）
+- `created_at`、`updated_at`
+
+**实现说明**：
+- MVP 阶段由前端判断是否触发增强（用户点击"提交且摘要"按钮时触发，点击"保存"按钮时不触发）。
+- 后续阶段可由后端根据字段变更范围自动判断是否触发（通过事件总线或字段 diff 检测）。
+
+### 6.3 失败处理
+
+- **增强失败不回滚案例更新**：案例已保存且可查看，增强运行记录标记为 `failed` 或 `validation_failed`。
+- **用户可手动重试**：通过管理后台或重试接口（`POST /api/enrichment-runs/{run_id}/retry`）手动触发重新增强。
+- **下游消费约定**：下游只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。
+
+---
+
+## 7. 规格交叉引用
 
 
 | 文档                                          | 用途                                                 |
 | ------------------------------------------- | -------------------------------------------------- |
 | `.kiro/specs/a3-case-management/design.md`  | 案例域 API、`CaseService`、`CaseDetailResponse` 总体设计    |
-| `.kiro/specs/llm-case-enrichment/design.md` | `CaseSnapshotProvider`、`CaseInputSnapshot` 入口与映射逻辑 |
+| `.kiro/specs/llm-case-enrichment/design.md` | `CaseSnapshotProvider`、`CaseInputSnapshot` 入口与映射逻辑、增强触发流程 |
 
 
 **维护约定**：当上游详情 schema 与本文冲突时，以 intentional 变更为准：**先更新本文**，再改实现，并通知下游回归测试。

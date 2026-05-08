@@ -147,3 +147,12 @@
   - 完成后，运维可按案例标识查看状态和失败原因，敏感内容不会进入日志或错误响应。
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
   - _Boundary: VectorJobRunner, VectorIndexService, VectorSearchService, VectorCleanupService, ErrorMapper_
+
+- [ ] 5.4 完成向量搜索契约快照与下游兼容回归测试
+  - 固化向量搜索请求/响应最小字段契约（批次级 `search_ref`、`index_version`；候选级 `case_id`、`vector_id`、`similarity_score`、`index_status`）并建立快照或等价契约测试。
+  - 覆盖上游字段语义变化、索引状态语义变化和过滤字段变化时的稳定失败路径，确保不可解析结果按 `invalid_response` 处理。
+  - 覆盖与 `cbr-retrieval-recommendation` 的兼容回归，验证请求参数与响应字段保持稳定，不因字段漂移破坏下游消费。
+  - 完成后，向量搜索契约漂移可在回归阶段提前发现，避免检索链路运行时破坏。
+  - _Requirements: 2.1, 2.2, 2.4, 5.1, 5.2, 5.3, 5.4_
+  - _Boundary: VectorSearchService, VectorSchemas, VectorRepository_
+  - _Depends: 4.2, 5.1_

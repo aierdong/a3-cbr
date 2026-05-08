@@ -121,6 +121,14 @@
   - _Boundary: CaseSchemas, StoreInfoModel, A3CaseModel_
   - _Depends: 4.1_
 
+- [ ] 4.3 同步维护详情契约文档与跨规格兼容验证
+  - 当 `CaseDetailResponse` 的字段、类型、必填性或枚举语义发生变化时，同步更新 `docs/contract-a3-case-detail-for-enrichment.md` 及其他引用该详情的下游契约文档。
+  - 将契约文档更新与跨模块兼容验证纳入交付门禁，确保 `llm-case-enrichment` 等消费者可通过集成测试发现不兼容变更。
+  - 完成后，案例详情契约的代码实现、文档说明和下游消费语义保持一致，避免隐式破坏下游集成。
+  - _Requirements: 7.3, 7.5_
+  - _Boundary: CaseSchemas_
+  - _Depends: 4.2_
+
 - [ ] 5. 补齐验证覆盖
 - [ ] 5.1 编写领域校验与服务单元测试
   - 覆盖必填字段、枚举、解决步骤、不可变字段和不可编辑状态。

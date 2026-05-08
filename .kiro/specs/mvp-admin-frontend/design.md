@@ -272,7 +272,9 @@ sequenceDiagram
 
 #### 环境与认证（MVP）
 
-- **全匿名（产品决策）**：MVP 阶段后端 API 不要求认证，前端不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header。所有需要用户标识的场景（如反馈提交的 `actor_id`）统一使用匿名占位符（`anonymous_user` 或 `user_id=0`）。这是 MVP 产品边界决策，不是设计缺陷。若后续产品规格要求真实用户认证，须单独立项并修订本设计。
+- **全匿名（产品决策）**：MVP 阶段后端 API 不要求认证，前端不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header。所有需要用户标识的场景（如反馈提交的 `actor_id`）统一使用匿名占位符 `anonymous_user`。这是 MVP 产品边界决策，不是设计缺陷。
+  - **MVP 实现策略**：`FeedbackApiService` 在提交反馈时统一注入 `actor_id: "anonymous_user"`，前端组件无需关心该字段。
+  - **后续演进路径**：若后续产品规格要求真实用户认证，需单独立项为"用户认证规格"，届时 `FeedbackApiService` 将从鉴权逻辑（如认证上下文、Vuex store 或 Composition API）中读取真实用户标识，前端无需修改反馈提交的业务逻辑。
 - **前后端一体化架构（重要设计原则）**：本系统前后端作为单一产品一体开发和部署，前后端是内部模块的相互调用关系，不是外部系统集成。API 类型定义以后端规格文档（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`）中的 OpenAPI 契约为权威来源，通过 `openapi-typescript` 自动生成前端 TypeScript 类型，并结合代码审查和集成测试保证字段映射的正确性。详见下方「Contract Synchronization」小节。
 - **开发环境代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求。代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源。
 - **MVP 部署策略（单节点同源部署）**：MVP 阶段前后端部署在同一节点上，前端静态资源由后端 FastAPI 应用托管（通过 `StaticFiles` 中间件或 Nginx 反向代理），前端请求后端 API 为同源请求，无需配置 CORS。具体部署方式：
@@ -331,13 +333,27 @@ npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o fr
 | 开发时 | `npm run generate:types` | 后端契约变更后手动执行 |
 | CI 流水线 | `npm run generate:types && git diff --exit-code` | 校验生成文件与提交文件一致，不一致则 CI 失败 |
 
+**契约维护职责**
+
+| 角色 | 职责 | 产出物 |
+|------|------|--------|
+| 后端规格（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`） | 在 `design.md` 中定义 API 契约（端点、请求/响应 schema、错误码）后，同步维护对应的 `.openapi.yaml` 文件 | `docs/contracts/*.openapi.yaml` |
+| 前端规格（`mvp-admin-frontend`） | 从 `.openapi.yaml` 文件自动生成前端类型，消费生成类型实现 API service 层 | `frontend/src/api/generated/*.ts`、`frontend/src/api/*.ts` |
+
 **契约变更响应流程**
 
-1. 后端修改 `docs/contracts/*.openapi.yaml` 并提交。
-2. 前端开发者拉取最新代码后执行 `npm run generate:types`。
-3. 若生成的类型导致编译错误，更新对应的 API service 层（`cases.ts`、`recommendations.ts`、`feedback.ts`）以适配新契约。
-4. 运行集成测试验证字段映射正确性。
-5. 提交更新后的生成文件和 service 代码。
+1. **后端规格修改 API 设计**：后端规格在 `design.md` 中修改 API 契约（字段、枚举、错误码）后，必须同步更新 `docs/contracts/*.openapi.yaml` 文件。
+2. **通知前端规格**：后端规格提交契约变更后，需在 PR 或协作渠道中通知前端规格（标注影响的端点和字段）。
+3. **前端重新生成类型**：前端开发者拉取最新代码后执行 `npm run generate:types`。
+4. **适配新契约**：若生成的类型导致编译错误，更新对应的 API service 层（`cases.ts`、`recommendations.ts`、`feedback.ts`）以适配新契约。
+5. **集成测试验证**：运行集成测试验证字段映射正确性（特别是枚举值、必填字段、嵌套对象）。
+6. **提交变更**：提交更新后的生成文件和 service 代码。
+
+**契约一致性保障**
+
+- **实施前校验**：在 tasks.md 中增加"契约一致性校验"任务，实施阶段需验证 `.openapi.yaml` 文件与后端规格 `design.md` 的字段、枚举、错误码是否一致。
+- **CI 自动校验**：CI 流水线执行 `npm run generate:types && git diff --exit-code` 检查生成文件是否与提交文件一致，不一致则 CI 失败（说明开发者修改了契约但未重新生成类型）。
+- **降级方案**：若 `.openapi.yaml` 文件暂时不完整或与后端规格不一致，可在实施阶段手动编写前端类型定义（`frontend/src/api/types/*.ts`），并在 tasks.md 中标记为技术债务，待契约文件完善后迁移到自动生成。
 
 #### ApiClient
 
@@ -386,7 +402,26 @@ interface ApiClient {
 - `CaseForm` 将 `context`、`solution_steps`、`outcome` 作为结构化输入区域处理，提交前转换为上游请求结构。
 - 编辑模式禁止向 `UpdateCaseRequest` 发送 `case_id` 和 `created_at`。
 - 列表和详情展示不映射 embedding、相似度、推荐运行或反馈字段。
-- **Keyset 分页策略**：后端使用 Keyset 分页（`cursor_created_at`、`cursor_case_id`、`limit`），前端维护当前页最后一条记录的 `created_at` 和 `case_id` 作为下一页 cursor。UI 使用"加载更多"按钮触发下一页加载（MVP 优先保证可控性和测试覆盖），不实现"上一页"功能，不提供页码跳转。根据 `next_cursor_created_at` 是否为 null 判断 `has_next_page` 并控制按钮可见性。空列表时不展示加载控件。
+- **Keyset 分页策略**：后端使用 Keyset 分页（`cursor_created_at`、`cursor_case_id`、`limit`），前端维护当前页最后一条记录的 `created_at` 和 `case_id` 作为下一页 cursor。UI 使用"加载更多"按钮触发下一页加载（MVP 优先保证可控性和测试覆盖），不实现"上一页"功能，不提供页码跳转。根据 `next_cursor_created_at` 是否为 null 判断 `has_next_page` 并控制按钮可见性。
+
+**"加载更多"按钮状态机**
+
+| 状态 | 触发条件 | 按钮行为 | 用户可见文案 | 说明 |
+|------|---------|---------|-------------|------|
+| `hidden` | 首次加载为空列表（`items: []` 且 `next_cursor_created_at: null`）或 `has_next_page: false` | 按钮隐藏 | - | 无更多数据时不展示按钮 |
+| `idle` | 有下一页（`has_next_page: true`）且未加载中 | 按钮可点击 | "加载更多" | 用户可点击触发下一页加载 |
+| `loading` | 用户点击"加载更多"后，正在请求下一页 | 按钮禁用，显示 loading 图标 | "加载中..." | 防止重复点击，`useCases` 维护 `isLoadingMore` 状态 |
+| `error` | 加载下一页失败（网络错误、后端 500） | 按钮可点击 | "重试" | 点击后重新请求当前 cursor，错误提示在按钮上方展示 |
+
+**防重复请求策略**：
+- `useCases` composable 维护 `isLoadingMore: boolean` 状态。
+- 加载中时（`isLoadingMore: true`），忽略新的"加载更多"请求。
+- 加载完成或失败后，重置 `isLoadingMore: false`。
+
+**错误展示位置**：
+- 加载失败时在列表底部（按钮上方）展示错误提示（使用 `ErrorNotice` 组件）。
+- 错误提示不影响已加载的列表数据可见性。
+- 用户可点击"重试"按钮或刷新页面恢复。
 
 #### CaseForm
 

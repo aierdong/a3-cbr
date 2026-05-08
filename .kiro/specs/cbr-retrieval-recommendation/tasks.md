@@ -25,6 +25,7 @@
   - 响应契约包含推荐运行标识、**`contract_version`（与 `recommendation_runs.contract_version` 一致）**、推荐项标识、应用后的过滤条件、有效权重、候选数量、分值明细、解释状态和来源引用；**GET** `/api/recommendations/runs/{run_id}` 的 **`RecommendationRunResponse`** 运行级元数据须包含同名 **`contract_version`**。
   - 完成后 API、服务、测试和下游反馈可复用同一套稳定 schema。
   - _Requirements: 1.1, 1.2, 1.5, 3.2, 4.1, 4.2, 5.4, 6.2_
+  - _Boundary: RetrievalSchemas_
 
 - [ ] 2. 实现查询、向量候选消费和候选准备
 
@@ -39,9 +40,10 @@
 - [ ] 2.2 (P) 实现向量搜索端口
   - 调用上游向量搜索能力，提交标准化用户问题、Top-K 和规范化过滤条件，不直接生成案例 embedding 或查询 pgvector。
   - 将问题语义向量候选映射为推荐候选原语，保留案例标识、向量标识、问题语义相似度、距离、索引版本和过滤元数据。
+  - 强制校验批次级 `search_ref` 与 `index_version`，以及候选级 `case_id`、`vector_id`、`similarity_score`、`index_status` 最小字段；任一字段缺失或不可解析按 `invalid_response` 失败路径处理，不编造候选。
   - 对齐依赖契约快照：固定最小必需字段校验与错误语义映射（`timeout`、`unavailable`、`invalid_response`），并记录契约版本信息。
   - 完成后空候选、可检索候选和向量搜索失败均能被稳定区分。
-  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
   - _Boundary: VectorSearchPort_
 
 - [ ] 2.3 (P) 实现推荐候选案例快照读取
@@ -74,10 +76,11 @@
 - [ ] 3.3 实现分值加权聚合
   - 实现 `ScoreAggregator`：对候选集执行 min-max 归一化、缺失分项重加权（`w'_k = w_k / sum(w_j, j in A)`）和加权求和。
   - 将向量相似度、语义分、结构化局部相似度、业务参数分和有效权重聚合为最终排序分值。
+  - 当无法得到可信聚合分（如 `aggregation_unavailable` 或进入定义的降级排序路径）时，将候选 `final_score` 置为 `0`，并在 `score_breakdown` 中显式标记“未聚合/默认值”语义，避免将 `0` 误解为真实聚合结果。
   - `ScoreAggregator` 只处理向量搜索已返回候选集，不从全量 SQL casebase 独立加载案例或发起检索。
   - 保证聚合器内部对象不进入数据库和 API 响应。
   - 完成后聚合成功时按最终聚合分排序，聚合失败时按故障矩阵降级：语义分优先；语义分缺失时业务分；仍不可用时向量顺序。
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
+  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
   - _Boundary: ScoreAggregator_
   - _Depends: 3.1, 3.2_
 
@@ -153,9 +156,10 @@
 - [ ] 5.2 编写评分、聚合、解释和降级测试
   - 覆盖 reranker 成功排序、reranker 失败降级、结构化局部评分 skipped、业务评分、分值聚合成功、分值聚合失败降级、解释成功、解释失败降级和候选信息缺失。
   - 增加故障矩阵组合测试：`reranker + aggregation` 同时失败时按业务分优先降级，业务分不可用时回退向量顺序，并断言 `degraded_reason=reranker_and_aggregation_failed`。
+  - 断言聚合不可用或降级排序路径下，候选 `final_score=0` 且 `score_breakdown` 包含“未聚合/默认值”标记；不得将 `0` 当作真实聚合分输出。
   - 断言降级响应不伪造语义分或聚合分，解释不会新增、删除或重排候选。
   - 完成后分值聚合、远程重排、业务评分、结构化评分和推荐解释边界均有独立测试，并能证明聚合器不从全量 casebase 独立检索。
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 4.4, 4.5, 6.1, 6.2, 6.3, 6.4, 6.5_
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.1, 6.2, 6.3, 6.4, 6.5_
   - _Boundary: StructuredSimilarityScorer, BusinessScoreCalculator, ScoreAggregator, RerankerClient, RecommendationExplainer_
 
 - [ ] 5.3 编写依赖契约快照与兼容回归测试
