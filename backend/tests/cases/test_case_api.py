@@ -262,3 +262,143 @@ class TestCaseSchemasValidation:
         assert ProblemType.CUSTOMER_COMPLAINT == "customer_complaint"
         assert ProblemType.SERVICE_QUALITY == "service_quality"
         assert ProblemType.OPERATIONS == "operations"
+
+
+class TestGetCaseAPI:
+    """测试 GET /api/a3-cases/{case_id} 获取案例详情接口。"""
+
+    async def test_get_case_request_structure(self):
+        """详情接口验证 schemas 完整性。"""
+        from app.cases.schemas import CaseDetailResponse, StoreInfoSummary
+
+        # 验证 CaseDetailResponse 包含所有必填字段
+        now = datetime.now(timezone.utc)
+        response = CaseDetailResponse(
+            case_id="case_001",
+            problem_description="测试问题描述",
+            store_id="store_001",
+            problem_type="customer_complaint",
+            context={"scene": "测试场景"},
+            root_cause="测试根因",
+            solution_steps=[{"order": 1, "content": "步骤1"}],
+            outcome={"result": "improved", "notes": "备注"},
+            status="draft",
+            created_at=now,
+            updated_at=now,
+            store=StoreInfoSummary(
+                store_id="store_001",
+                store_name="测试门店",
+                brand_id="brand_001",
+                brand_name="测试品牌",
+                business_type="火锅",
+                store_scale="大型",
+                franchise_type="加盟",
+                city="北京",
+                city_tier="一线",
+                updated_at=now,
+            ),
+        )
+        assert response.case_id == "case_001"
+        assert response.problem_description == "测试问题描述"
+        # 验证不包含向量、推荐分值或反馈字段
+        assert not hasattr(response, "embedding")
+        assert not hasattr(response, "summary")
+        assert not hasattr(response, "similarity_score")
+        assert not hasattr(response, "feedback_score")
+
+    async def test_case_detail_response_excludes_derived_fields(self):
+        """详情响应不返回向量、推荐分值或反馈信息。"""
+        from app.cases.schemas import CaseDetailResponse
+
+        # CaseDetailResponse 不应有派生字段
+        fields = CaseDetailResponse.model_fields.keys()
+        derived_fields = {
+            "embedding",
+            "summary",
+            "recommendation_reason",
+            "similarity_score",
+            "feedback",
+        }
+        for field in derived_fields:
+            assert field not in fields, f"CaseDetailResponse should not have {field}"
+
+
+class TestListCasesAPI:
+    """测试 GET /api/a3-cases 查询案例列表接口。"""
+
+    async def test_list_cases_request_structure(self):
+        """列表查询参数验证。"""
+        from app.cases.schemas import CaseListQuery
+
+        # 无过滤条件查询
+        query = CaseListQuery()
+        assert query.limit == 20
+        assert query.include_archived is False
+        assert query.cursor_created_at is None
+        assert query.cursor_case_id is None
+
+    async def test_list_cases_with_filters(self):
+        """列表查询支持门店信息维度过滤。"""
+        from app.cases.schemas import CaseListQuery, ProblemType, CaseStatus
+
+        query = CaseListQuery(
+            brand_id="brand_001",
+            store_id="store_001",
+            business_type="火锅",
+            store_scale="大型",
+            franchise_type="加盟",
+            city="北京",
+            city_tier="一线",
+            problem_type=ProblemType.CUSTOMER_COMPLAINT,
+            status=CaseStatus.ACTIVE,
+            created_after=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created_before=datetime(2024, 12, 31, tzinfo=timezone.utc),
+        )
+        assert query.brand_id == "brand_001"
+        assert query.problem_type == ProblemType.CUSTOMER_COMPLAINT
+
+    async def test_list_cases_cursor_validation(self):
+        """cursor_created_at 和 cursor_case_id 必须成对提供。"""
+        from pydantic import ValidationError
+        from app.cases.schemas import CaseListQuery
+
+        # 单独提供 cursor_created_at 会被拒绝
+        with pytest.raises(ValidationError):
+            CaseListQuery(cursor_created_at=datetime.now(timezone.utc))
+
+        # 单独提供 cursor_case_id 会被拒绝
+        with pytest.raises(ValidationError):
+            CaseListQuery(cursor_case_id="case_001")
+
+        # 两者都提供可以通过
+        query = CaseListQuery(
+            cursor_created_at=datetime.now(timezone.utc),
+            cursor_case_id="case_001",
+        )
+        assert query.cursor_created_at is not None
+        assert query.cursor_case_id is not None
+
+    async def test_list_cases_response_structure(self):
+        """列表响应结构验证。"""
+        from app.cases.schemas import PaginatedCaseListResponse
+
+        response = PaginatedCaseListResponse(
+            items=[],
+            limit=20,
+            next_cursor_created_at=None,
+            next_cursor_case_id=None,
+            has_more=False,
+            sort="created_at desc, case_id desc",
+        )
+        assert response.items == []
+        assert response.has_more is False
+        assert response.sort == "created_at desc, case_id desc"
+
+    async def test_case_list_item_excludes_derived_fields(self):
+        """列表项不返回向量、推荐分值或反馈信息。"""
+        from app.cases.schemas import CaseListItem
+
+        fields = CaseListItem.model_fields.keys()
+        derived_fields = {"embedding", "summary", "recommendation_score", "feedback"}
+        for field in derived_fields:
+            assert field not in fields, f"CaseListItem should not have {field}"

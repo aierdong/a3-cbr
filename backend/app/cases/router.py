@@ -18,9 +18,11 @@ from app.cases.schemas import (
     CascadeDeleteRequest,
     CascadeDeleteResponse,
     CaseDetailResponse,
+    CaseListQuery,
     CreateCaseRequest,
     DeleteCaseRequest,
     DeleteCaseResponse,
+    PaginatedCaseListResponse,
     UpdateCaseRequest,
 )
 from app.cases.service import (
@@ -304,6 +306,93 @@ async def cascade_delete_case(
         return await coordinator.delete_case_cascade(request)
     except Exception as e:
         logger.error(f"Unexpected error during cascade delete: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=create_error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="An internal error occurred",
+            ).model_dump(),
+        )
+
+
+@router.get(
+    "/{case_id}",
+    response_model=CaseDetailResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "案例未找到"},
+        500: {"model": ErrorResponse, "description": "系统错误"},
+    },
+    summary="获取 A3 案例详情",
+    description="返回案例完整基础字段并处理不存在案例。",
+)
+async def get_case(
+    case_id: str,
+    service: Annotated[CaseService, Depends(get_case_service)],
+) -> CaseDetailResponse:
+    """获取案例详情。
+
+    Args:
+        case_id: 案例标识
+        service: 案例服务实例
+
+    Returns:
+        CaseDetailResponse: 案例详情
+
+    Raises:
+        HTTPException: 案例未找到或系统错误
+    """
+    try:
+        return await service.get_case(case_id)
+    except CaseNotFoundError:
+        logger.warning(f"Case not found: {case_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_error_response(
+                code=ErrorCode.CASE_NOT_FOUND,
+                message=f"case_id '{case_id}' not found",
+            ).model_dump(),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error during get case: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=create_error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="An internal error occurred",
+            ).model_dump(),
+        )
+
+
+@router.get(
+    "",
+    response_model=PaginatedCaseListResponse,
+    responses={
+        422: {"model": ErrorResponse, "description": "校验失败"},
+        500: {"model": ErrorResponse, "description": "系统错误"},
+    },
+    summary="查询 A3 案例列表",
+    description="支持门店信息维度过滤、分页和稳定排序。列表项只返回摘要字段，不返回向量、推荐分值或反馈信息。",
+)
+async def list_cases(
+    query: CaseListQuery,
+    service: Annotated[CaseService, Depends(get_case_service)],
+) -> PaginatedCaseListResponse:
+    """查询案例列表。
+
+    Args:
+        query: 列表查询参数
+        service: 案例服务实例
+
+    Returns:
+        PaginatedCaseListResponse: 分页案例列表响应
+
+    Raises:
+        HTTPException: 校验失败或系统错误
+    """
+    try:
+        return await service.list_cases(query)
+    except Exception as e:
+        logger.error(f"Unexpected error during list cases: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=create_error_response(
