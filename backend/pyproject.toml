@@ -42,7 +42,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "D"]
-ignore = ["D100", "D104"]
+ignore = ["D100", "D104", "D203", "D403", "D415"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
