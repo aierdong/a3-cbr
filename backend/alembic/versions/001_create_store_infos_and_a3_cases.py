@@ -79,6 +79,7 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             nullable=False,
             server_default=sa.func.now(),
+            onupdate=sa.func.now(),
         ),
     )
 
