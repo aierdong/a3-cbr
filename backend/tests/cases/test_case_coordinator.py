@@ -284,6 +284,32 @@ class TestCaseDeleteCoordinatorDeleteEnrichmentCascade:
             assert mock_vector.called
             assert mock_feedback.called
 
+    @pytest.mark.asyncio
+    async def test_delete_enrichment_cascade_vector_failure_continues_to_feedback(self):
+        """从案例增强节点发起时，向量删除失败继续尝试反馈删除。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+
+        mock_case_service = AsyncMock()
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch.object(
+            coordinator, "_call_vector_delete", new_callable=AsyncMock
+        ) as mock_vector, patch.object(
+            coordinator, "_call_feedback_delete", new_callable=AsyncMock
+        ) as mock_feedback:
+            mock_vector.side_effect = Exception("Vector service unavailable")
+            mock_feedback.return_value = (True, 1)
+
+            result = await coordinator.delete_enrichment_cascade(
+                enrichment_id="case_001_enrichment", requested_by="user_001"
+            )
+
+            assert result.success is True
+            assert result.vector_deleted is False
+            assert result.feedback_deleted is True
+            assert len(result.partial_failures) == 1
+            assert result.partial_failures[0].service == "case-vector-indexing"
+
 
 class TestCaseDeleteCoordinatorDeleteVectorCascade:
     """测试 delete_vector_cascade 方法。"""
@@ -309,6 +335,143 @@ class TestCaseDeleteCoordinatorDeleteVectorCascade:
             assert result.vector_deleted is True
             # 反馈删除被调用
             assert mock_feedback.called
+
+    @pytest.mark.asyncio
+    async def test_delete_vector_cascade_feedback_failure_records_partial_failure(self):
+        """从向量索引节点发起时，反馈删除失败记录 partial_failure。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+
+        mock_case_service = AsyncMock()
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch.object(
+            coordinator, "_call_feedback_delete", new_callable=AsyncMock
+        ) as mock_feedback:
+            mock_feedback.side_effect = Exception("Feedback service unavailable")
+
+            result = await coordinator.delete_vector_cascade(
+                vector_id="case_001_vector", requested_by="user_001"
+            )
+
+            assert result.success is True
+            assert result.vector_deleted is True
+            assert result.feedback_deleted is False
+            assert len(result.partial_failures) == 1
+            assert result.partial_failures[0].service == "recommendation-feedback"
+
+
+class TestCaseDeleteCoordinatorDownstreamAPI:
+    """测试下游服务 API 调用和降级行为。"""
+
+    @pytest.mark.asyncio
+    async def test_enrichment_delete_handles_404_as_success(self):
+        """下游服务返回 404 视为成功（资源不存在）。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+        from httpx import Response
+
+        mock_case_service = AsyncMock()
+        mock_case_service.delete_case.return_value = MagicMock(
+            success=True, deleted_count=1, deleted_at=make_utc_now()
+        )
+
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch(
+            "httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+        ) as mock_post:
+            # Mock enrichment service returns 404
+            mock_post.return_value = Response(404)
+
+            request = CascadeDeleteRequest(case_id="case_001", requested_by="user_001")
+            result = await coordinator.delete_case_cascade(request)
+
+            assert result.success is True
+            assert result.enrichment_deleted is True
+            assert result.enrichment_deleted_count == 0
+
+    @pytest.mark.asyncio
+    async def test_enrichment_delete_handles_500_as_partial_failure(self):
+        """下游服务返回 500 记录 partial_failure。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+
+        mock_case_service = AsyncMock()
+        mock_case_service.delete_case.return_value = MagicMock(
+            success=True, deleted_count=1, deleted_at=make_utc_now()
+        )
+
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch.object(
+            coordinator, "_call_enrichment_delete", new_callable=AsyncMock
+        ) as mock_enrichment, patch.object(
+            coordinator, "_call_vector_delete", new_callable=AsyncMock
+        ) as mock_vector, patch.object(
+            coordinator, "_call_feedback_delete", new_callable=AsyncMock
+        ) as mock_feedback:
+            mock_enrichment.side_effect = Exception("Enrichment delete failed: 500")
+            mock_vector.return_value = (True, 1)
+            mock_feedback.return_value = (True, 1)
+
+            request = CascadeDeleteRequest(case_id="case_001", requested_by="user_001")
+            result = await coordinator.delete_case_cascade(request)
+
+            assert result.success is True
+            assert result.enrichment_deleted is False
+            assert len(result.partial_failures) == 1
+            assert result.partial_failures[0].service == "llm-case-enrichment"
+
+    @pytest.mark.asyncio
+    async def test_vector_delete_handles_timeout_as_skipped(self):
+        """向量服务超时视为可跳过。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+        from httpx import TimeoutException
+
+        mock_case_service = AsyncMock()
+        mock_case_service.delete_case.return_value = MagicMock(
+            success=True, deleted_count=1, deleted_at=make_utc_now()
+        )
+
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch(
+            "httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+        ) as mock_post:
+            mock_post.side_effect = TimeoutException("Connection timeout")
+
+            request = CascadeDeleteRequest(case_id="case_001", requested_by="user_001")
+            result = await coordinator.delete_case_cascade(request)
+
+            assert result.success is True
+            assert result.vector_deleted is True  # 视为已删除
+            assert result.vector_deleted_count == 0
+
+    @pytest.mark.asyncio
+    async def test_feedback_delete_handles_connect_error_as_skipped(self):
+        """反馈服务连接错误视为可跳过。"""
+        from app.cases.coordinator import CaseDeleteCoordinator
+        from httpx import ConnectError
+
+        mock_case_service = AsyncMock()
+        mock_case_service.delete_case.return_value = MagicMock(
+            success=True, deleted_count=1, deleted_at=make_utc_now()
+        )
+
+        coordinator = CaseDeleteCoordinator(mock_case_service)
+
+        with patch(
+            "httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+        ) as mock_post:
+            mock_post.side_effect = ConnectError("Service unavailable")
+
+            request = CascadeDeleteRequest(case_id="case_001", requested_by="user_001")
+            result = await coordinator.delete_case_cascade(request)
+
+            assert result.success is True
+            assert result.feedback_deleted is True  # 视为已删除
+            assert result.feedback_deleted_count == 0
 
 
 class TestCaseDeleteCoordinatorIdempotency:

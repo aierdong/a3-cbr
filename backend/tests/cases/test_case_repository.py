@@ -430,13 +430,13 @@ class TestCaseRepositoryGetById:
         self, db_session: AsyncSession
     ) -> None:
         """按 ID 查询时包含关联的门店信息。"""
-        store_record = create_test_store(
+        create_test_store(
             db_session,
             store_id="store_for_get_info",
             brand_name="测试品牌名称",
             city="上海",
         )
-        case = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_for_get_info",
             store_id="store_for_get_info",
@@ -461,7 +461,7 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """无案例时返回空列表和分页信息。"""
-        store = create_test_store(db_session, store_id="store_for_empty_list")
+        create_test_store(db_session, store_id="store_for_empty_list")
         await db_session.flush()
 
         repo = CaseRepository(db_session)
@@ -480,12 +480,12 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """列表查询返回案例及其关联门店信息。"""
-        store = create_test_store(
+        create_test_store(
             db_session,
             store_id="store_for_list",
             brand_name="列表品牌",
         )
-        case = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_for_list",
             store_id="store_for_list",
@@ -506,15 +506,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按 brand_id 过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_brand_1", brand_id="brand_filter_1")
-        store2 = create_test_store(db_session, store_id="store_brand_2", brand_id="brand_filter_2")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_brand_1", brand_id="brand_filter_1")
+        create_test_store(db_session, store_id="store_brand_2", brand_id="brand_filter_2")
+        create_test_case(
             db_session,
             case_id="case_brand_1",
             store_id="store_brand_1",
             brand_id="brand_filter_1",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_brand_2",
             store_id="store_brand_2",
@@ -534,14 +534,14 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按 store_id 过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_filter_1")
-        store2 = create_test_store(db_session, store_id="store_filter_2")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_filter_1")
+        create_test_store(db_session, store_id="store_filter_2")
+        create_test_case(
             db_session,
             case_id="case_store_filter_1",
             store_id="store_filter_1",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_store_filter_2",
             store_id="store_filter_2",
@@ -560,15 +560,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按业态过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_biz_1", business_type="火锅")
-        store2 = create_test_store(db_session, store_id="store_biz_2", business_type="小吃")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_biz_1", business_type="火锅")
+        create_test_store(db_session, store_id="store_biz_2", business_type="小吃")
+        create_test_case(
             db_session,
             case_id="case_biz_1",
             store_id="store_biz_1",
             business_type="火锅",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_biz_2",
             store_id="store_biz_2",
@@ -588,15 +588,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按门店规模过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_scale_1", store_scale="large")
-        store2 = create_test_store(db_session, store_id="store_scale_2", store_scale="small")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_scale_1", store_scale="large")
+        create_test_store(db_session, store_id="store_scale_2", store_scale="small")
+        create_test_case(
             db_session,
             case_id="case_scale_1",
             store_id="store_scale_1",
             store_scale="large",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_scale_2",
             store_id="store_scale_2",
@@ -616,15 +616,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按加盟类型过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_fran_1", franchise_type="加盟")
-        store2 = create_test_store(db_session, store_id="store_fran_2", franchise_type="直营")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_fran_1", franchise_type="加盟")
+        create_test_store(db_session, store_id="store_fran_2", franchise_type="直营")
+        create_test_case(
             db_session,
             case_id="case_fran_1",
             store_id="store_fran_1",
             franchise_type="加盟",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_fran_2",
             store_id="store_fran_2",
@@ -644,15 +644,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按城市过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_city_1", city="北京")
-        store2 = create_test_store(db_session, store_id="store_city_2", city="上海")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_city_1", city="北京")
+        create_test_store(db_session, store_id="store_city_2", city="上海")
+        create_test_case(
             db_session,
             case_id="case_city_1",
             store_id="store_city_1",
             city="北京",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_city_2",
             store_id="store_city_2",
@@ -672,15 +672,15 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按城市规模过滤列表。"""
-        store1 = create_test_store(db_session, store_id="store_tier_1", city_tier="一线")
-        store2 = create_test_store(db_session, store_id="store_tier_2", city_tier="二线")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_tier_1", city_tier="一线")
+        create_test_store(db_session, store_id="store_tier_2", city_tier="二线")
+        create_test_case(
             db_session,
             case_id="case_tier_1",
             store_id="store_tier_1",
             city_tier="一线",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_tier_2",
             store_id="store_tier_2",
@@ -700,14 +700,14 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按问题类型过滤列表。"""
-        store = create_test_store(db_session, store_id="store_prob")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_prob")
+        create_test_case(
             db_session,
             case_id="case_prob_1",
             store_id="store_prob",
             problem_type="customer_complaint",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_prob_2",
             store_id="store_prob",
@@ -729,14 +729,14 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """按状态过滤列表。"""
-        store = create_test_store(db_session, store_id="store_status")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_status")
+        create_test_case(
             db_session,
             case_id="case_status_1",
             store_id="store_status",
             status="draft",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_status_2",
             store_id="store_status",
@@ -757,20 +757,20 @@ class TestCaseRepositoryList:
     ) -> None:
         """按创建时间范围过滤列表。"""
         base_time = make_utc_now()
-        store = create_test_store(db_session, store_id="store_time_range")
-        case_old = create_test_case(
+        create_test_store(db_session, store_id="store_time_range")
+        create_test_case(
             db_session,
             case_id="case_time_old",
             store_id="store_time_range",
             created_at=base_time - timedelta(days=10),
         )
-        case_mid = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_time_mid",
             store_id="store_time_range",
             created_at=base_time - timedelta(days=5),
         )
-        case_new = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_time_new",
             store_id="store_time_range",
@@ -797,14 +797,14 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """默认不包含归档状态的案例。"""
-        store = create_test_store(db_session, store_id="store_no_archive")
-        case_draft = create_test_case(
+        create_test_store(db_session, store_id="store_no_archive")
+        create_test_case(
             db_session,
             case_id="case_no_archive_draft",
             store_id="store_no_archive",
             status="draft",
         )
-        case_archived = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_no_archive_archived",
             store_id="store_no_archive",
@@ -825,14 +825,14 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """include_archived=True 时包含归档案例。"""
-        store = create_test_store(db_session, store_id="store_with_archive")
-        case_draft = create_test_case(
+        create_test_store(db_session, store_id="store_with_archive")
+        create_test_case(
             db_session,
             case_id="case_with_archive_draft",
             store_id="store_with_archive",
             status="draft",
         )
-        case_archived = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_with_archive_archived",
             store_id="store_with_archive",
@@ -856,14 +856,14 @@ class TestCaseRepositoryList:
     ) -> None:
         """列表使用稳定排序 created_at desc, case_id desc。"""
         base_time = make_utc_now()
-        store = create_test_store(db_session, store_id="store_sort")
-        case1 = create_test_case(
+        create_test_store(db_session, store_id="store_sort")
+        create_test_case(
             db_session,
             case_id="case_sort_a",
             store_id="store_sort",
             created_at=base_time - timedelta(hours=1),
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_sort_b",
             store_id="store_sort",
@@ -887,16 +887,14 @@ class TestCaseRepositoryList:
     ) -> None:
         """keyset 分页正确工作。"""
         base_time = make_utc_now()
-        store = create_test_store(db_session, store_id="store_page")
-        cases = []
+        create_test_store(db_session, store_id="store_page")
         for i in range(5):
-            case = create_test_case(
+            create_test_case(
                 db_session,
                 case_id=f"case_page_{i}",
                 store_id="store_page",
                 created_at=base_time - timedelta(hours=i),
             )
-            cases.append(case)
         await db_session.flush()
 
         repo = CaseRepository(db_session)
@@ -929,8 +927,8 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """末页没有下一页游标。"""
-        store = create_test_store(db_session, store_id="store_last_page")
-        case = create_test_case(
+        create_test_store(db_session, store_id="store_last_page")
+        create_test_case(
             db_session,
             case_id="case_last_page",
             store_id="store_last_page",
@@ -951,21 +949,21 @@ class TestCaseRepositoryList:
         self, db_session: AsyncSession
     ) -> None:
         """同时使用多个过滤条件。"""
-        store1 = create_test_store(
+        create_test_store(
             db_session,
             store_id="store_multi_1",
             brand_id="brand_multi",
             city="北京",
             city_tier="一线",
         )
-        store2 = create_test_store(
+        create_test_store(
             db_session,
             store_id="store_multi_2",
             brand_id="brand_multi",
             city="上海",
             city_tier="二线",
         )
-        case1 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_multi_1",
             store_id="store_multi_1",
@@ -973,7 +971,7 @@ class TestCaseRepositoryList:
             city="北京",
             city_tier="一线",
         )
-        case2 = create_test_case(
+        create_test_case(
             db_session,
             case_id="case_multi_2",
             store_id="store_multi_2",

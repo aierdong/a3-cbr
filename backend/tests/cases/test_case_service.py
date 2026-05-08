@@ -3,28 +3,23 @@
 测试 CaseService 的业务规则、状态流转和事务编排能力。
 """
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.cases.models import CaseStatus
 from app.cases.repository import (
     A3CaseRecord,
-    A3CaseUpdateData,
-    CaseListQueryRepo,
     KeysetPage,
     StoreInfoRecord,
 )
 from app.cases.schemas import (
-    CaseDetailResponse,
     CaseListQuery,
     CaseStatus as SchemaCaseStatus,
     CreateCaseRequest,
-    DeleteCaseResponse,
     PaginatedCaseListResponse,
     UpdateCaseRequest,
 )
-from app.cases.validators import CaseValidator, FieldError
+from app.cases.validators import FieldError
 
 
 def make_utc_now() -> datetime:
@@ -292,7 +287,6 @@ class TestCaseServiceUpdate:
     async def test_update_case_rejects_nonexistent_case(self):
         """编辑不存在的案例返回 CASE_NOT_FOUND。"""
         from app.cases.service import CaseService
-        from app.core.errors import ErrorCode
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
@@ -332,7 +326,8 @@ class TestCaseServiceUpdate:
         with pytest.raises(Exception) as exc_info:
             await service.update_case("case_archived", request)
         # 应该抛出状态冲突异常
-        assert "archived" in str(exc_info.value).lower() or "conflict" in str(exc_info.value).lower()
+        error_msg = str(exc_info.value).lower()
+        assert "archived" in error_msg or "conflict" in error_msg
 
     @pytest.mark.asyncio
     async def test_update_case_rejects_immutable_fields(self):
@@ -358,10 +353,11 @@ class TestCaseServiceUpdate:
         # UpdateCaseRequest 的 case_id 和 created_at 字段定义为 None
         # 尝试修改 status 为非法的 draft->archived
         request = UpdateCaseRequest(status=SchemaCaseStatus.ARCHIVED)
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception) as exc:
             await service.update_case("case_immutable", request)
         # draft -> archived 是不允许的状态转换
-        assert "draft" in str(exc_info.value).lower() or "archived" in str(exc_info.value).lower() or "transition" in str(exc_info.value).lower()
+        error_msg = str(exc.value).lower()
+        assert "draft" in error_msg or "archived" in error_msg or "transition" in error_msg
 
     @pytest.mark.asyncio
     async def test_update_case_preserves_original_on_failure(self):
@@ -510,7 +506,8 @@ class TestCaseServiceStatusTransitions:
         with pytest.raises(Exception) as exc_info:
             await service.update_case("case_d2ar", request)
         # 应该拒绝 draft -> archived
-        assert "draft" in str(exc_info.value).lower() or "transition" in str(exc_info.value).lower() or "conflict" in str(exc_info.value).lower()
+        error_msg = str(exc_info.value).lower()
+        assert "draft" in error_msg or "transition" in error_msg or "conflict" in error_msg
 
     @pytest.mark.asyncio
     async def test_archived_to_any_not_allowed(self):
@@ -533,9 +530,10 @@ class TestCaseServiceStatusTransitions:
 
         # 即使不改 status，仅改其他字段也会被拒绝
         request = UpdateCaseRequest(problem_description="尝试修改")
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception) as exc:
             await service.update_case("case_archived_any", request)
-        assert "archived" in str(exc_info.value).lower() or "conflict" in str(exc_info.value).lower()
+        error_msg = str(exc.value).lower()
+        assert "archived" in error_msg or "conflict" in error_msg
 
 
 class TestCaseServiceDelete:
@@ -698,7 +696,6 @@ class TestCaseServiceErrorMapping:
     async def test_store_not_found_error_code(self):
         """store_id 不存在返回 STORE_NOT_FOUND 错误码。"""
         from app.cases.service import CaseService
-        from app.core.errors import ErrorCode
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
