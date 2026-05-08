@@ -93,9 +93,11 @@ Otherwise, load all necessary context:
 
 **Check 5: Orphaned Tasks**
 - For each task in tasks.md:
-  - Check if it has `_Requirements:` annotation
+  - **Only check sub-tasks** (tasks with format `X.Y`, e.g., 1.1, 2.3, 5.2)
+  - **Skip parent tasks** (tasks with format `X.`, e.g., 1., 2., 3.) as they are organizational headers
+  - Check if the sub-task has `_Requirements:` annotation
   - If missing: Mark as "orphaned task"
-- Report: List of tasks without requirement traceability
+- Report: List of sub-tasks without requirement traceability
 
 **Check 6: Revalidation Triggers Coverage**
 - For each trigger in design.md Revalidation Triggers section:
