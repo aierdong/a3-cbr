@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -106,6 +107,9 @@ class A3Case(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # 关联门店信息（只读，不执行写入）
+    store = relationship("StoreInfo", lazy="joined")
 
     __table_args__ = (
         Index("ix_a3_cases_store_id", "store_id"),
