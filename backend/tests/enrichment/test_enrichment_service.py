@@ -739,6 +739,149 @@ class TestDeleteEnrichmentData:
 
 
 # ===========================================================================
+# 重复增强与派生内容独立性测试
+# ===========================================================================
+
+
+class TestReEnrichmentAndIsolation:
+    """测试重复增强流程和派生内容独立性。
+
+    Requirements: 4.6, 2.5, 3.4
+    """
+
+    @pytest.mark.asyncio
+    async def test_re_enrichment_calls_complete_run_with_new_result(self):
+        """重复增强应调用 complete_run 写入新结果（仓储层负责删除旧记录）。
+
+        验证：service 正确构造 result_create 并传递给 repository.complete_run。
+        Repository.complete_run 在事务内原子性地删除旧结果再写入新结果。
+        Requirement: 4.6
+        """
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_enrichment_injection.return_value = (False, "")
+        prompt_catalog.build_enrichment_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        validator = MagicMock()
+        validator.validate_enrichment_output.return_value = _make_validated_output()
+
+        repository = AsyncMock()
+        repository.complete_run.return_value = MagicMock()
+        repository.get_current_result.return_value = _make_result_orm()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+        snapshot = _make_snapshot()
+
+        # 第一次增强
+        await service.execute_enrichment(snapshot, "run_001")
+        assert repository.complete_run.call_count == 1
+
+        # 第二次增强（同一 case_id）
+        await service.execute_enrichment(snapshot, "run_002")
+        assert repository.complete_run.call_count == 2
+
+        # 验证两次调用都传递了正确的 result_create
+        for call in repository.complete_run.call_args_list:
+            result_create = call[0][1]
+            assert result_create.case_id == "case_001"
+            assert result_create.status == EnrichmentStatus.VALID
+            assert result_create.problem_summary == "问题摘要"
+            assert result_create.solution_summary == "方案摘要"
+
+    @pytest.mark.asyncio
+    async def test_enrichment_does_not_write_back_to_case_base_fields(self):
+        """增强结果应仅保存在 CaseEnrichmentResult 中，不修改案例基础字段。
+
+        验证：service 调用 complete_run 时传递的 result_create 只包含
+        派生结果字段（enrichment_id, case_id, status, problem_summary,
+        solution_summary, structured_suggestions, tag_suggestions,
+        source_references, output_version），不包含案例基础字段。
+        Requirement: 2.5, 3.4
+        """
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_enrichment_injection.return_value = (False, "")
+        prompt_catalog.build_enrichment_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        validator = MagicMock()
+        validator.validate_enrichment_output.return_value = _make_validated_output()
+
+        repository = AsyncMock()
+        repository.complete_run.return_value = MagicMock()
+        repository.get_current_result.return_value = _make_result_orm()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        await service.execute_enrichment(_make_snapshot(), "run_001")
+
+        # 验证 result_create 不包含案例基础字段
+        result_create = repository.complete_run.call_args[0][1]
+        result_dict = result_create.model_dump()
+
+        # 应包含派生结果字段
+        assert "enrichment_id" in result_dict
+        assert "case_id" in result_dict
+        assert "problem_summary" in result_dict
+        assert "solution_summary" in result_dict
+        assert "structured_suggestions" in result_dict
+        assert "tag_suggestions" in result_dict
+        assert "source_references" in result_dict
+        assert "output_version" in result_dict
+
+        # 不应包含案例基础管理字段
+        assert "store_id" not in result_dict
+        assert "brand_id" not in result_dict
+        assert "store_name" not in result_dict
+        assert "business_type" not in result_dict
+        assert "franchise_type" not in result_dict
+        assert "city" not in result_dict
+
+    @pytest.mark.asyncio
+    async def test_successful_enrichment_output_version_is_set(self):
+        """成功增强应设置 output_version。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_enrichment_injection.return_value = (False, "")
+        prompt_catalog.build_enrichment_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        validator = MagicMock()
+        validator.validate_enrichment_output.return_value = _make_validated_output()
+
+        repository = AsyncMock()
+        repository.complete_run.return_value = MagicMock()
+        repository.get_current_result.return_value = _make_result_orm()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        await service.execute_enrichment(_make_snapshot(), "run_001")
+
+        result_create = repository.complete_run.call_args[0][1]
+        assert result_create.output_version == "1.0"
+        assert result_create.case_updated_at is not None
+
+
+# ===========================================================================
 # _map_llm_error_stage 测试
 # ===========================================================================
 
