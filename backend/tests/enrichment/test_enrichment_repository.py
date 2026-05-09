@@ -52,7 +52,7 @@ def _make_run_create(
         case_id=case_id,
         task_type=TaskType.CASE_ENRICHMENT,
         status=status,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         request_purpose=RequestPurpose.CASE_ENRICHMENT,
         case_updated_at=_utc_now(),
     )
@@ -107,7 +107,7 @@ class TestCreateRun:
         assert record.case_id == "case_001"
         assert record.task_type == TaskType.CASE_ENRICHMENT
         assert record.status == RunStatus.RUNNING
-        assert record.model_id == "deepseek-v4-pro"
+        assert record.model_id == "deepseek-v4-flash"
         assert record.request_purpose == RequestPurpose.CASE_ENRICHMENT
 
         # 验证可从数据库重新查询

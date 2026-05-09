@@ -69,7 +69,7 @@ def _make_run_orm(
     run.case_id = case_id
     run.task_type = TaskType.CASE_ENRICHMENT
     run.status = status
-    run.model_id = "deepseek-v4-pro"
+    run.model_id = "deepseek-v4-flash"
     run.request_purpose = RequestPurpose.CASE_ENRICHMENT
     run.case_updated_at = _make_utc_now()
     run.error_code = overrides.get("error_code")
@@ -179,7 +179,7 @@ class TestRunEnrichment:
         assert call_args.status == RunStatus.RUNNING
         assert call_args.case_id == "case_001"
         assert call_args.task_type == TaskType.CASE_ENRICHMENT
-        assert call_args.model_id == "deepseek-v4-pro"
+        assert call_args.model_id == "deepseek-v4-flash"
         assert call_args.request_purpose == RequestPurpose.CASE_ENRICHMENT
 
     @pytest.mark.asyncio
@@ -444,7 +444,7 @@ class TestRunEnrichment:
         assert response.run_id is not None
         assert response.case_id == "case_001"
         assert response.task_type == TaskType.CASE_ENRICHMENT
-        assert response.model_id == "deepseek-v4-pro"
+        assert response.model_id == "deepseek-v4-flash"
         assert response.request_purpose == RequestPurpose.CASE_ENRICHMENT
         assert response.retry_count >= 0
 

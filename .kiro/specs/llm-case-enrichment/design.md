@@ -4,7 +4,7 @@
 
 `llm-case-enrichment` 叠在 `a3-case-management` 之上，单独提供 AI 派生能力：为门店、督导和后台管理者生成案例问题摘要、方案摘要、结构化字段建议、标签建议，以及相似案例推荐理由文案。它只读取案例基础契约约定的字段，不改动案例 CRUD、基础字段或状态语义。
 
-实现按 Python + FastAPI 后端扩展，通过 `deepseek-v4-pro` 或兼容的云端 LLM 接入点生成内容。所有 LLM 输出必须先过结构化 schema 校验，再进入向量索引或推荐展示链路。
+实现按 Python + FastAPI 后端扩展，通过 `deepseek-v4-flash` 或兼容的云端 LLM 接入点生成内容。所有 LLM 输出必须先过结构化 schema 校验，再进入向量索引或推荐展示链路。
 
 **并发假设**：本系统设计**不实现应用层并发控制机制**（如乐观锁、悲观锁、分布式锁），假设业务流程确保单一案例的增强操作顺序执行（如多用户同时修改同一案例、同一增强结果、同一配置的场景不在设计范围内）。数据库层的 `UNIQUE(case_id)` 约束（见 §6 "Physical Data Model"）用于保证数据完整性，防止代码逻辑错误（如重复调用增强接口）导致同一案例产生多条派生结果，**该约束是数据完整性保障，不是并发控制手段**。
 
@@ -47,7 +47,7 @@
 
 - `a3-case-management` 的详情读取能力与基础字段契约：`case_id`、A3 基础字段、状态、过滤字段、`updated_at`。**字段名、JSON 形状、`CaseInputSnapshot` 与 `CaseDetailResponse` 的映射**以 `docs/contract-a3-case-detail-for-enrichment.md` 为准（跨规格引用，作为字段语义说明文档）。**增强触发条件**见该文档 §6。
 - Python + FastAPI、Pydantic、SQLAlchemy、Alembic、PostgreSQL，与上游后端栈一致。
-- 云端 LLM：MVP 默认 `deepseek-v4-pro`，经 OpenAI 兼容或等价 HTTP 客户端接入。
+- 云端 LLM：MVP 默认 `deepseek-v4-flash`，经 OpenAI 兼容或等价 HTTP 客户端接入。
 - **下游消费约定**：下游只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。本规格不实现自动过期检测或自动触发机制。
 
 ### Cross-Spec Transaction: "提交且摘要"
@@ -183,7 +183,7 @@ flowchart TB
 | Validation         | Pydantic                    | LLM 输出、请求响应与错误结构校验 | 对外发布结果须过 schema           |
 | Data / Storage     | PostgreSQL                  | 派生结果、运行状态与错误  | 不存向量                      |
 | ORM / Migration    | SQLAlchemy + Alembic        | 派生结果表与运行记录表迁移      | 与案例表以 `case_id` 关联        |
-| External AI        | `deepseek-v4-pro`           | 摘要、结构化建议、推荐文案生成    | 经配置开启生产调用                 |
+| External AI        | `deepseek-v4-flash`           | 摘要、结构化建议、推荐文案生成    | 经配置开启生产调用                 |
 | Testing            | pytest + FastAPI TestClient | 单元、API、失败与安全边界测试   | LLM 侧用 mock 或 fake client |
 
 
@@ -339,7 +339,7 @@ sequenceDiagram
 | EnrichmentService         | Domain Service    | 编排案例摘要、结构化建议、标签建议与删除                        | 1.3, 2.5, 3.4, 4.3, 4.6           | LLMClient (shared) P0                              | Service        |
 | RecommendationCopyService | Domain Service    | 对已排序候选生成推荐文案，不改排序                        | 5.1, 5.4, 5.5                     | LLMClient (shared) P0, OutputValidator P0          | Service        |
 | PromptCatalog             | AI Boundary       | 任务 Prompt、输出格式与注入防护约束                    | 2.1, 3.1, 6.2                     | Config P0                                          | Service        |
-| LLMClient                 | External Adapter  | 调用 `deepseek-v4-pro` 或兼容模型并统一错误形态；共享基础设施 | 6.3, 6.4, 6.5                     | External LLM P0                                    | Service        |
+| LLMClient                 | External Adapter  | 调用 `deepseek-v4-flash` 或兼容模型并统一错误形态；共享基础设施 | 6.3, 6.4, 6.5                     | External LLM P0                                    | Service        |
 | OutputValidator           | Validation        | 解析并校验 LLM 结构化输出                          | 3.3, 4.1, 4.2, 5.2                | EnrichmentSchemas P0                               | Service        |
 | EnrichmentRepository      | Data Access       | 持久化派生结果、运行记录、状态、错误与删除                       | 2.4, 4.3, 4.4, 4.5, 4.6, 6.3      | PostgreSQL P0                                      | Service, State |
 | EnrichmentJobRunner       | Runtime           | 运行生命周期管理：创建运行记录、加载快照、委托 Service 执行、重试入口与状态流转 | 1.4, 6.4                          | CaseSnapshotProvider P0, EnrichmentService P0, EnrichmentRepository P0 | Batch          |
@@ -864,7 +864,7 @@ erDiagram
 | `case_id`            | string   | yes      | 上游案例标识                                                             |
 | `task_type`          | enum     | yes      | `case_enrichment`                                                  |
 | `status`             | enum     | yes      | `running`, `succeeded`, `failed`, `validation_failed`, `retryable` |
-| `model_id`           | string   | yes      | 默认 `deepseek-v4-pro`                                               |
+| `model_id`           | string   | yes      | 默认 `deepseek-v4-flash`                                               |
 | `request_purpose`    | string   | yes      | 请求目的，如 `case_enrichment`、`recommendation_copy`                     |
 | `case_updated_at`    | datetime | yes      | 输入版本                                                               |
 | `error_code`         | string   | no       | 失败错误码                                                              |

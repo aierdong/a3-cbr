@@ -123,7 +123,7 @@ def load_app_config() -> AppConfig:
     enrichment_llm = EnrichmentLLMConfig(
         api_key=_env("ENRICHMENT_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
         model_id=_env("ENRICHMENT_LLM_MODEL_ID", "deepseek-v4-flash"),
-        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com"),
+        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com/v2"),
         timeout_ms=_int_env("ENRICHMENT_LLM_TIMEOUT_MS", 30000),
         max_retries=_int_env("ENRICHMENT_LLM_MAX_RETRIES", 2),
         privacy_acknowledged=_bool_env("ENRICHMENT_LLM_PRIVACY_ACKNOWLEDGED", False),
@@ -132,7 +132,7 @@ def load_app_config() -> AppConfig:
     normalizer_llm = NormalizerLLMConfig(
         api_key=_env("NORMALIZER_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
         model_id=_env("NORMALIZER_LLM_MODEL_ID", "deepseek-v4-flash"),
-        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com"),
+        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com/v2"),
         timeout_ms=_int_env("NORMALIZER_LLM_TIMEOUT_MS", 30000),
         max_retries=_int_env("NORMALIZER_LLM_MAX_RETRIES", 2),
     )

@@ -31,7 +31,7 @@ MVP 核心目标包括:
 - **PostgreSQL + Pgvector**：存储案例、向量和反馈
 - **Embedding 模型**：采用 BGE-M3（模型id: bge-large-zh）
 - **Reranker 模型**: 采用 Qwen3-Reranker-8B （模型id: qwen3-reranker-8b）
-- **LLM**：用于摘要、结构化、推荐文案生成，采用 deepseek-v4-pro 模型
+- **LLM**：用于摘要、结构化、推荐文案生成，采用 deepseek-v4-flash 模型
 - **后端**：Python + FastAPI
 - **前端**：Vue
 

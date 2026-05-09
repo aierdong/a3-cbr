@@ -537,7 +537,7 @@ class TestExecuteEnrichment:
 
         llm_call_args = llm_client.complete_json.call_args[0][0]
         assert llm_call_args.request_purpose == RequestPurpose.CASE_ENRICHMENT
-        assert llm_call_args.model_id == "deepseek-v4-pro"
+        assert llm_call_args.model_id == "deepseek-v4-flash"
 
     @pytest.mark.asyncio
     async def test_result_missing_after_complete_raises(self):
@@ -585,7 +585,7 @@ class TestExecuteEnrichment:
             '"source_references": [], '
             '"missing_information": [{"field": "problem_description", '
             '"reason": "问题描述过于简略", "blocking_level": "required"}]}',
-            model_id="deepseek-v4-pro",
+            model_id="deepseek-v4-flash",
         )
 
         validated = CaseEnrichmentOutput(

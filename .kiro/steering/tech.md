@@ -19,7 +19,7 @@ MVP 作为独立产品研发，通过 API 与现有慧运营能力集成；复�
 - **Database**：PostgreSQL + pgvector，pgvector 版本要求 `0.8.2+`。
 - **Embedding**：云端 BGE-M3，模型接入点 `bge-large-zh`。
 - **Reranker**：云端 Qwen3-Reranker-8B，模型接入点 `qwen3-reranker-8b`。
-- **LLM**：DeepSeek 兼容 OpenAI API 的接入方式，MVP 文档中指定 `deepseek-v4-pro`。
+- **LLM**：DeepSeek 兼容 OpenAI API 的接入方式，MVP 文档中指定 `deepseek-v4-flash`。
 
 ## Key Technical Decisions
 

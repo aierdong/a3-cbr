@@ -23,7 +23,7 @@ from typing import Optional
 class NormalizerLLMConfig(BaseModel):
     """LLM normalizer 配置（查询标准化专用）"""
     api_key: str = Field(..., description="APIKEY，如 'sk-xxxx'")
-    model_id: str = Field(..., description="模型 ID，如 'deepseek-v4-pro'")
+    model_id: str = Field(..., description="模型 ID，如 'deepseek-v4-flash'")
     base_url: str = Field(..., description="API 基础 URL")
     timeout: int = Field(30, description="超时时间（秒）")
     max_retries: int = Field(3, description="最大重试次数")
@@ -231,7 +231,7 @@ def test_llm_client_receives_correct_config():
     """验证 LLMClient 接收到正确的配置命名空间"""
     normalizer_client = LLMClient(settings.retrieval.normalizer_llm)
     
-    assert normalizer_client.model_id == "deepseek-v4-pro"
+    assert normalizer_client.model_id == "deepseek-v4-flash"
     assert normalizer_client.timeout == 30
     
     # 修改 reranker 配置不应影响已创建的 normalizer 客户端

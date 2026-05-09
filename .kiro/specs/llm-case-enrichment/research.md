@@ -6,7 +6,7 @@
 - **Discovery Scope**: Extension / Complex Integration
 - **Key Findings**:
   - `a3-case-management` 已稳定基础案例契约。本规格以 `case_id`、基础字段、状态、过滤字段和更新时间为输入，不修改案例基础表及 CRUD 契约。
-  - `docs/product-overview.md` 给出产品权威目标；`docs/mvp-product.md` 指定 MVP 阶段 LLM 使用 `deepseek-v4-pro`，用于摘要、结构化和推荐文案生成；LLM 不承担主检索职责。
+  - `docs/product-overview.md` 给出产品权威目标；`docs/mvp-product.md` 指定 MVP 阶段 LLM 使用 `deepseek-v4-flash`，用于摘要、结构化和推荐文案生成；LLM 不承担主检索职责。
   - 相邻规格边界清晰：`case-vector-indexing` 负责 embedding 和 pgvector，`cbr-retrieval-recommendation` 负责过滤、召回、重排和 Top-K 组装。本规格仅提供可校验的派生文本与推荐文案生成能力。
 
 ## Research Log
@@ -31,7 +31,7 @@
 - **Sources Consulted**: `docs/product-overview.md`、`.kiro/steering/roadmap.md`
 - **Findings**:
   - MVP 核心闭环涵盖案例入库、结构化、向量检索、推荐解释和反馈。
-  - LLM 负责摘要、结构化提取和推荐结果生成，模型选用 `deepseek-v4-pro`。
+  - LLM 负责摘要、结构化提取和推荐结果生成，模型选用 `deepseek-v4-flash`。
   - roadmap 明确 LLM 输出必须经过结构化校验，并需覆盖隐私保护、供应商数据保留和提示词注入防护。
 - **Implications**:
   - 设计应将 Prompt 组装、LLM 调用、输出校验和派生结果状态管理作为一条受控流水线。

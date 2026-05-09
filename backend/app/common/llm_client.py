@@ -65,11 +65,15 @@ class LLMClientError(Exception):
 
 
 def _normalize_openai_base_url(raw_base: str) -> str:
-    """将配置的 ``base_url`` 规范为 OpenAI SDK 所需前缀（含 /v1、/v2 等）。"""
+    """将配置的 ``base_url`` 规范为 OpenAI SDK 所需前缀（含 /v1、/v2 等）。
+    deepseek 不需要 /v1
+    """
     base = raw_base.rstrip("/")
-    if _BASE_HAS_VER_SUFFIX.search(base):
-        return base
-    return f"{base}/v1"
+    # if _BASE_HAS_VER_SUFFIX.search(base):
+    #     return base
+    # return f"{base}/v1"
+    # deepseek 不需要 /v1
+    return base
 
 
 def _map_openai_exception(exc: BaseException) -> LLMClientError:

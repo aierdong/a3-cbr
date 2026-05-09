@@ -325,7 +325,7 @@ components:
           $ref: '#/components/schemas/EnrichmentRunStatus'
         model_id:
           type: string
-          example: deepseek-v4-pro
+          example: deepseek-v4-flash
         request_purpose:
           type: string
           enum: [case_enrichment, recommendation_copy]

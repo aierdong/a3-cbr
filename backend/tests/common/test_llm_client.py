@@ -36,7 +36,7 @@ from app.enrichment.schemas import (
 def _enrichment_config(**overrides) -> EnrichmentLLMConfig:
     defaults = {
         "api_key": "deepseek",
-        "model_id": "deepseek-v4-pro",
+        "model_id": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com",
         "timeout_ms": 10000,
         "max_retries": 2,
@@ -49,7 +49,7 @@ def _enrichment_config(**overrides) -> EnrichmentLLMConfig:
 def _normalizer_config(**overrides) -> NormalizerLLMConfig:
     defaults = {
         "api_key": "deepseek",
-        "model_id": "deepseek-v4-pro",
+        "model_id": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com",
         "timeout_ms": 10000,
         "max_retries": 2,
@@ -85,7 +85,7 @@ def _reranker_config(**overrides) -> RerankerConfig:
 def _completion_request(**overrides) -> LLMCompletionRequest:
     defaults = {
         "prompt": "请分析以下案例...",
-        "model_id": "deepseek-v4-pro",
+        "model_id": "deepseek-v4-flash",
         "task_type": TaskType.CASE_ENRICHMENT,
         "request_purpose": RequestPurpose.CASE_ENRICHMENT,
     }
@@ -95,7 +95,7 @@ def _completion_request(**overrides) -> LLMCompletionRequest:
 
 def _stub_chat_completion(
     content: str = '{"summary": "test"}',
-    model: str = "deepseek-v4-pro",
+    model: str = "deepseek-v4-flash",
     prompt_tokens: int = 100,
     completion_tokens: int = 50,
 ) -> SimpleNamespace:
@@ -123,7 +123,7 @@ def _mock_llm_async_client(completion: SimpleNamespace) -> MagicMock:
 
 
 def _request429() -> httpx.Request:
-    return httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+    return httpx.Request("POST", "https://api.deepseek.com/chat/completions")
 
 
 def _resp(code: int) -> httpx.Response:
@@ -150,7 +150,7 @@ class TestSuccessfulCompletion:
         result = await client.complete_json(_completion_request())
 
         assert result.content == '{"summary": "hello"}'
-        assert result.model_id == "deepseek-v4-pro"
+        assert result.model_id == "deepseek-v4-flash"
         assert result.usage is not None
         assert result.usage.prompt_tokens == 120
         assert result.usage.completion_tokens == 80
@@ -160,11 +160,11 @@ class TestSuccessfulCompletion:
     @pytest.mark.asyncio
     async def test_uses_model_from_response_over_request(self):
         """响应中的 model 优先于请求中的 model_id。"""
-        comp = _stub_chat_completion(model="deepseek-v4-pro-0324")
+        comp = _stub_chat_completion(model="deepseek-v4-flash-0324")
         client = LLMClient(_enrichment_config(), _async_client=_mock_llm_async_client(comp))
         result = await client.complete_json(_completion_request())
 
-        assert result.model_id == "deepseek-v4-pro-0324"
+        assert result.model_id == "deepseek-v4-flash-0324"
 
     @pytest.mark.asyncio
     async def test_works_with_normalizer_config(self):
@@ -361,7 +361,7 @@ class TestErrorMapping:
     @pytest.mark.asyncio
     async def test_connection_error_maps_to_provider_error(self):
         """APIConnectionError 映射为 LLM_PROVIDER_ERROR，可重试。"""
-        req = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+        req = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
 
         async def raise_conn(**kwargs):
             raise openai.APIConnectionError(message="connection failed", request=req)
@@ -388,7 +388,7 @@ class TestInvalidResponse:
     @pytest.mark.asyncio
     async def test_no_choices_raises_invalid_response(self):
         """响应缺少 choices 时抛出 LLM_INVALID_RESPONSE。"""
-        bad = SimpleNamespace(choices=[], model="deepseek-v4-pro")
+        bad = SimpleNamespace(choices=[], model="deepseek-v4-flash")
         mock = MagicMock()
         mock.chat.completions.create = AsyncMock(return_value=bad)
 
@@ -401,7 +401,7 @@ class TestInvalidResponse:
     @pytest.mark.asyncio
     async def test_empty_choices_raises_invalid_response(self):
         """choices 为空列表时抛出 LLM_INVALID_RESPONSE。"""
-        bad = SimpleNamespace(choices=[], model="deepseek-v4-pro")
+        bad = SimpleNamespace(choices=[], model="deepseek-v4-flash")
         mock = MagicMock()
         mock.chat.completions.create = AsyncMock(return_value=bad)
 
@@ -421,7 +421,7 @@ class TestInvalidResponse:
                     finish_reason="stop",
                 ),
             ],
-            model="deepseek-v4-pro",
+            model="deepseek-v4-flash",
         )
         mock = MagicMock()
         mock.chat.completions.create = AsyncMock(return_value=bad)
@@ -602,25 +602,6 @@ class TestLLMClientError:
         )
         assert err.retryable is False
         assert err.status_code is None
-
-
-# ---------------------------------------------------------------------------
-# Tests: Base URL normalization
-# ---------------------------------------------------------------------------
-
-
-class TestURLNormalization:
-    """OpenAI SDK base_url 规范化。"""
-
-    def test_appends_v1_when_no_version_suffix(self):
-        """未带版本后缀时追加 ``/v1``。"""
-        client = LLMClient(_enrichment_config(base_url="https://api.deepseek.com/"))
-        assert client._openai_base_url == "https://api.deepseek.com/v1"
-
-    def test_preserves_existing_version_suffix(self):
-        """已有 ``/v2`` 等后缀时保持不变。"""
-        emb = EmbeddingClient(_embedding_config())
-        assert emb._openai_base_url == "https://qianfan.baidubce.com/v2"
 
 
 # ---------------------------------------------------------------------------

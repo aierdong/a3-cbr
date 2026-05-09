@@ -45,7 +45,7 @@
 - [x] 2.3 (P) 实现共享 LLM 客户端基础设施
   - 在 `backend/app/common/llm_client.py` 中实现共享 `LLMClient` 类，支持配置命名空间（通过构造函数接收 `Union[EnrichmentLLMConfig, NormalizerLLMConfig]` 等配置对象）。
   - 提供 HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
-  - 接入 `deepseek-v4-pro` 或兼容模型配置，统一处理超时、限流、供应商错误和不可解析响应。
+  - 接入 `deepseek-v4-flash` 或兼容模型配置，统一处理超时、限流、供应商错误和不可解析响应。
   - 记录供应商、模型、`request_purpose`、任务类型、状态和错误类型，不记录完整案例正文。
   - 完成后 LLM 调用可通过 fake client 或 mock client 在测试中稳定替换；共享客户端可被本规格和 `cbr-retrieval-recommendation` 规格共同使用。
   - _Requirements: 4.2, 6.3, 6.4, 6.5_

@@ -52,7 +52,7 @@ def _utc_now() -> datetime:
 def _make_enrichment_config(**overrides) -> EnrichmentLLMConfig:
     data = dict(
         api_key="deepseek",
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         timeout_ms=30000,
         max_retries=2,
@@ -123,7 +123,7 @@ def _make_run_response(
         case_id=case_id,
         task_type=TaskType.CASE_ENRICHMENT,
         status=status,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         request_purpose=request_purpose,
         case_updated_at=now,
         error_code=error_code,
@@ -707,7 +707,7 @@ class TestRequestPurposeAudit:
                 ),
             ],
             schema_validation_status=EnrichmentStatus.VALID,
-            model_id="deepseek-v4-pro",
+            model_id="deepseek-v4-flash",
             request_purpose=RequestPurpose.RECOMMENDATION_COPY,
             token_usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
             created_at=_utc_now(),
@@ -733,7 +733,7 @@ class TestRequestPurposeAudit:
             assert response.status_code == 200
             data = response.json()
             assert data["request_purpose"] == "recommendation_copy"
-            assert data["model_id"] == "deepseek-v4-pro"
+            assert data["model_id"] == "deepseek-v4-flash"
         finally:
             app.dependency_overrides.clear()
 
@@ -762,7 +762,7 @@ class TestPrivacyAndSecurity:
 
             request = LLMCompletionRequest(
                 prompt="test prompt",
-                model_id="deepseek-v4-pro",
+                model_id="deepseek-v4-flash",
                 task_type="case_enrichment",
                 request_purpose="case_enrichment",
             )
@@ -829,7 +829,7 @@ class TestPrivacyAndSecurity:
 
         request = LLMCompletionRequest(
             prompt="这是一段很长的敏感案例内容，包含客户个人信息和商业机密",
-            model_id="deepseek-v4-pro",
+            model_id="deepseek-v4-flash",
             task_type="case_enrichment",
             request_purpose="case_enrichment",
         )
@@ -873,7 +873,7 @@ class TestPrivacyAndSecurity:
                 from app.enrichment.schemas import LLMCompletionRequest
                 request = LLMCompletionRequest(
                     prompt="test",
-                    model_id="deepseek-v4-pro",
+                    model_id="deepseek-v4-flash",
                     task_type="case_enrichment",
                     request_purpose="case_enrichment",
                 )
@@ -904,7 +904,7 @@ class TestPrivacyAndSecurity:
                 from app.enrichment.schemas import LLMCompletionRequest
                 request = LLMCompletionRequest(
                     prompt="test",
-                    model_id="deepseek-v4-pro",
+                    model_id="deepseek-v4-flash",
                     task_type="case_enrichment",
                     request_purpose="case_enrichment",
                 )
@@ -1058,7 +1058,7 @@ class TestMultiModelConfigLoading:
         # 通过重新创建验证独立性
         enrichment_modified = EnrichmentLLMConfig(
             api_key="deepseek",
-            model_id="deepseek-v4-pro",
+            model_id="deepseek-v4-flash",
             base_url="https://api.deepseek.com",
             timeout_ms=99999,
             max_retries=5,
@@ -1080,7 +1080,7 @@ class TestMultiModelConfigLoading:
         client = LLMClient(config)
 
         assert client._model_id == "enrichment-model"
-        assert client._base_url == "https://enrichment.api.com"
+        assert client._client.base_url == "https://enrichment.api.com"
         assert client._timeout_s == 25.0
 
     def test_llm_client_receives_normalizer_config(self):
@@ -1093,7 +1093,7 @@ class TestMultiModelConfigLoading:
         client = LLMClient(config)
 
         assert client._model_id == "normalizer-model"
-        assert client._base_url == "https://normalizer.api.com"
+        assert client._client.base_url == "https://normalizer.api.com"
         assert client._timeout_s == 15.0
 
     def test_llm_client_privacy_acknowledged_defaults_true_for_normalizer(self):

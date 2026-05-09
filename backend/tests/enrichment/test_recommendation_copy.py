@@ -91,7 +91,7 @@ def _make_llm_result(
         )
     data = dict(
         content=content,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         usage=LLMTokenUsage(
             prompt_tokens=500,
             completion_tokens=200,
@@ -145,7 +145,7 @@ def _make_copy_run_orm(**overrides) -> MagicMock:
                 "source_references": ["solution_steps"],
             },
         ],
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         request_purpose=RequestPurpose.RECOMMENDATION_COPY,
         token_usage={
             "prompt_tokens": 500,
@@ -228,7 +228,7 @@ class TestGenerateCopy:
         assert len(response.items) == 2
         assert response.items[0].case_id == "case_001"
         assert response.items[1].case_id == "case_002"
-        assert response.model_id == "deepseek-v4-pro"
+        assert response.model_id == "deepseek-v4-flash"
         assert response.request_purpose == RequestPurpose.RECOMMENDATION_COPY
         assert response.token_usage is not None
 
@@ -531,7 +531,7 @@ class TestGenerateCopy:
 
         assert run_data.status == EnrichmentStatus.VALID
         assert run_data.candidate_case_ids == ["case_001", "case_002"]
-        assert run_data.model_id == "deepseek-v4-pro"
+        assert run_data.model_id == "deepseek-v4-flash"
         assert run_data.request_purpose == RequestPurpose.RECOMMENDATION_COPY
         assert run_data.schema_validation_status == EnrichmentStatus.VALID
         assert len(run_data.items) == 2
@@ -610,7 +610,7 @@ class TestGenerateCopy:
 
         llm_call_args = llm_client.complete_json.call_args[0][0]
         assert llm_call_args.prompt == "built prompt"
-        assert llm_call_args.model_id == "deepseek-v4-pro"
+        assert llm_call_args.model_id == "deepseek-v4-flash"
         assert llm_call_args.task_type == TaskType.CASE_ENRICHMENT
         assert llm_call_args.request_purpose == RequestPurpose.RECOMMENDATION_COPY
 

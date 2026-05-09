@@ -84,7 +84,7 @@ def _make_copy_response(**overrides):
         status=EnrichmentStatus.VALID,
         items=_make_validated_items(),
         schema_validation_status=EnrichmentStatus.VALID,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         request_purpose=RequestPurpose.RECOMMENDATION_COPY,
         token_usage={
             "prompt_tokens": 500,
