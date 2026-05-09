@@ -366,7 +366,7 @@ class CaseInputSnapshot(BaseModel):
     """案例输入快照。
 
     CaseSnapshotProvider 与 EnrichmentService 之间的契约。
-    包含 LLM 增强所需的案例基础字段。
+    包含 LLM 增强所需的案例基础字段和门店镜像过滤维度。
     """
 
     case_id: str = Field(..., description="案例标识")
@@ -379,6 +379,14 @@ class CaseInputSnapshot(BaseModel):
     status: str = Field(..., description="案例状态")
     updated_at: datetime = Field(..., description="案例更新时间")
     store_id: str = Field(..., description="关联门店 ID")
+    store_name: str = Field(..., description="门店名称")
+    brand_id: str = Field(..., description="品牌标识")
+    brand_name: str = Field(..., description="品牌名称")
+    business_type: str = Field(..., description="业态")
+    store_scale: str = Field(..., description="门店规模")
+    franchise_type: str = Field(..., description="加盟类型")
+    city: str = Field(..., description="城市")
+    city_tier: str = Field(..., description="城市层级")
 
     model_config = ConfigDict(extra="forbid")
 
