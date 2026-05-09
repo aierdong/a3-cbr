@@ -1,0 +1,7 @@
+# 清理服务配置
+# 与 docs/cascade-deletion-design.md §4.2 对齐
+
+enrichment_cleanup:
+  enabled: true
+  interval_seconds: 86400  # 每日执行
+  batch_size: 1000

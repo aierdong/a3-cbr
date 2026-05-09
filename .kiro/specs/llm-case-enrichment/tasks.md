@@ -87,7 +87,7 @@
   - _Boundary: EnrichmentJobRunner_
   - _Depends: 2.6_
 
-- [ ] 2.8 实现孤立派生数据清理服务
+- [x] 2.8 实现孤立派生数据清理服务
   - 实现 `EnrichmentCleanupService`，定期扫描并清理孤立派生数据（`case_id` 在 `a3_cases` 中不存在的派生结果和运行记录）。
   - 创建配置文件 `backend/config/cleanup.yaml`，定义 `enrichment_cleanup` 配置段（`enabled`、`interval_seconds`、`batch_size`）。
   - 实现清理逻辑：通过 LEFT JOIN 查询孤立记录，调用 `EnrichmentRepository` 的内部删除方法批量清理（默认批次大小 1000）。
