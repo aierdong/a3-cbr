@@ -35,7 +35,7 @@
   - _Requirements: 1.1, 1.2, 6.1_
   - _Boundary: CaseSnapshotProvider_
 
-- [ ] 2.2 (P) 实现 Prompt 模板和安全约束
+- [x] 2.2 (P) 实现 Prompt 模板和安全约束
   - 为案例增强和推荐文案分别定义固定 Prompt 模板和结构化输出指令。
   - 在 Prompt 中声明忽略案例正文里的指令性内容，只抽取业务事实并禁止编造。
   - 完成后每类 LLM 任务都有明确输出 schema、来源引用和提示词注入防护约束。
