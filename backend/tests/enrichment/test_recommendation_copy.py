@@ -768,3 +768,347 @@ class TestGenerateCopy:
 
         assert exc_info.value.error_code == ErrorCode.LLM_PRIVACY_CONFIG_MISSING
         assert exc_info.value.retryable is False
+
+    @pytest.mark.asyncio
+    async def test_single_llm_call_with_many_candidates(self):
+        """三个及以上候选时仍只调用一次 LLM，验证单次调用策略的鲁棒性。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        # LLM 返回三个候选的文案
+        content = (
+            '{"items": ['
+            '{"case_id": "case_010", "reason": "理由10",'
+            ' "reference_points": ["点A"], "cautions": [],'
+            ' "source_references": ["problem_description"]},'
+            '{"case_id": "case_020", "reason": "理由20",'
+            ' "reference_points": ["点B"], "cautions": ["注意B"],'
+            ' "source_references": ["context"]},'
+            '{"case_id": "case_030", "reason": "理由30",'
+            ' "reference_points": ["点C"], "cautions": [],'
+            ' "source_references": ["outcome"]}'
+            ']}'
+        )
+        llm_client.complete_json.return_value = _make_llm_result(content=content)
+
+        validated_items = [
+            RecommendationCopyItem(
+                case_id="case_010",
+                reason="理由10",
+                reference_points=["点A"],
+                cautions=[],
+                source_references=[SourceField.PROBLEM_DESCRIPTION],
+            ),
+            RecommendationCopyItem(
+                case_id="case_020",
+                reason="理由20",
+                reference_points=["点B"],
+                cautions=["注意B"],
+                source_references=[SourceField.CONTEXT],
+            ),
+            RecommendationCopyItem(
+                case_id="case_030",
+                reason="理由30",
+                reference_points=["点C"],
+                cautions=[],
+                source_references=[SourceField.OUTCOME],
+            ),
+        ]
+        validator = MagicMock()
+        validator.validate_recommendation_copy.return_value = validated_items
+
+        repository = AsyncMock()
+        repository.create_recommendation_copy_run.return_value = _make_copy_run_orm(
+            candidate_case_ids=["case_010", "case_020", "case_030"],
+        )
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        request = RecommendationCopyRequest(
+            query_text="门店管理问题",
+            candidates=[
+                RecommendationCandidate(case_id="case_010"),
+                RecommendationCandidate(case_id="case_020"),
+                RecommendationCandidate(case_id="case_030"),
+            ],
+        )
+
+        response = await service.generate_copy(request)
+
+        # 验证只调用一次 LLM（单次调用策略）
+        llm_client.complete_json.assert_called_once()
+        # 验证全部候选文案均在响应中
+        assert len(response.items) == 3
+        assert [item.case_id for item in response.items] == [
+            "case_010",
+            "case_020",
+            "case_030",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_all_candidates_present_in_response(self):
+        """成功响应应包含全部候选的文案，不遗漏任何一个。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        validator = MagicMock()
+        validator.validate_recommendation_copy.return_value = _make_validated_items()
+
+        repository = AsyncMock()
+        repository.create_recommendation_copy_run.return_value = _make_copy_run_orm()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+        request = _make_request()
+
+        response = await service.generate_copy(request)
+
+        # 验证响应中 items 数量与请求中 candidates 数量一致
+        assert len(response.items) == len(request.candidates)
+        # 验证每个 item 都有完整的内容字段（不是空壳）
+        for item in response.items:
+            assert item.case_id
+            assert item.reason
+            assert isinstance(item.reference_points, list)
+            assert isinstance(item.cautions, list)
+            assert isinstance(item.source_references, list)
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_means_all_candidates_fail(self):
+        """单次 LLM 调用失败意味着全部候选均不可用（无部分成功）。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.side_effect = LLMClientError(
+            error_code=ErrorCode.LLM_TIMEOUT,
+            message="LLM 调用超时",
+            retryable=True,
+        )
+
+        repository = AsyncMock()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            repository=repository,
+        )
+
+        # 使用包含 3 个候选的请求
+        request = RecommendationCopyRequest(
+            query_text="门店管理问题",
+            candidates=[
+                RecommendationCandidate(case_id="case_A"),
+                RecommendationCandidate(case_id="case_B"),
+                RecommendationCandidate(case_id="case_C"),
+            ],
+        )
+
+        # 整体失败，不应返回任何部分结果
+        with pytest.raises(LLMClientError):
+            await service.generate_copy(request)
+
+        # 持久化失败记录时应包含全部候选 case_id
+        repository.create_recommendation_copy_run.assert_called_once()
+        run_data = repository.create_recommendation_copy_run.call_args[0][0]
+        assert run_data.candidate_case_ids == ["case_A", "case_B", "case_C"]
+        assert run_data.status == EnrichmentStatus.FAILED
+        assert run_data.items == []
+
+    @pytest.mark.asyncio
+    async def test_candidate_with_minimal_info_still_present(self):
+        """仅有 case_id 的候选（无摘要和源字段）不应被过滤，仍出现在响应中。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        content = (
+            '{"items": ['
+            '{"case_id": "case_full", "reason": "详细理由",'
+            ' "reference_points": ["参考1"], "cautions": ["注意1"],'
+            ' "source_references": ["problem_description"]},'
+            '{"case_id": "case_minimal", "reason": "基础理由",'
+            ' "reference_points": [], "cautions": [],'
+            ' "source_references": []}'
+            ']}'
+        )
+        llm_client.complete_json.return_value = _make_llm_result(content=content)
+
+        validated_items = [
+            RecommendationCopyItem(
+                case_id="case_full",
+                reason="详细理由",
+                reference_points=["参考1"],
+                cautions=["注意1"],
+                source_references=[SourceField.PROBLEM_DESCRIPTION],
+            ),
+            RecommendationCopyItem(
+                case_id="case_minimal",
+                reason="基础理由",
+                reference_points=[],
+                cautions=[],
+                source_references=[],
+            ),
+        ]
+        validator = MagicMock()
+        validator.validate_recommendation_copy.return_value = validated_items
+
+        repository = AsyncMock()
+        repository.create_recommendation_copy_run.return_value = _make_copy_run_orm(
+            candidate_case_ids=["case_full", "case_minimal"],
+        )
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        # 请求包含一个有完整信息的候选和一个仅有 case_id 的候选
+        request = RecommendationCopyRequest(
+            query_text="问题",
+            candidates=[
+                RecommendationCandidate(
+                    case_id="case_full",
+                    case_summary="完整摘要",
+                    source_fields={"problem_description": "描述"},
+                ),
+                RecommendationCandidate(case_id="case_minimal"),
+            ],
+        )
+
+        response = await service.generate_copy(request)
+
+        # 两个候选都应出现在响应中，minimal 候选不应被过滤
+        assert len(response.items) == 2
+        assert response.items[0].case_id == "case_full"
+        assert response.items[1].case_id == "case_minimal"
+
+    @pytest.mark.asyncio
+    async def test_no_filtering_no_adding_candidates(self):
+        """服务不应过滤或新增候选：输出 items 与输入 candidates 严格一一对应。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        # validator 返回的 items 严格对应输入候选
+        items = [
+            RecommendationCopyItem(
+                case_id="X",
+                reason="理由X",
+                reference_points=[],
+                cautions=[],
+                source_references=[],
+            ),
+            RecommendationCopyItem(
+                case_id="Y",
+                reason="理由Y",
+                reference_points=[],
+                cautions=[],
+                source_references=[],
+            ),
+            RecommendationCopyItem(
+                case_id="Z",
+                reason="理由Z",
+                reference_points=[],
+                cautions=[],
+                source_references=[],
+            ),
+            RecommendationCopyItem(
+                case_id="W",
+                reason="理由W",
+                reference_points=[],
+                cautions=[],
+                source_references=[],
+            ),
+        ]
+        validator = MagicMock()
+        validator.validate_recommendation_copy.return_value = items
+
+        repository = AsyncMock()
+        repository.create_recommendation_copy_run.return_value = _make_copy_run_orm(
+            candidate_case_ids=["X", "Y", "Z", "W"],
+        )
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        request = RecommendationCopyRequest(
+            query_text="问题",
+            candidates=[
+                RecommendationCandidate(case_id="X"),
+                RecommendationCandidate(case_id="Y"),
+                RecommendationCandidate(case_id="Z"),
+                RecommendationCandidate(case_id="W"),
+            ],
+        )
+
+        response = await service.generate_copy(request)
+
+        # 输出 items 数量必须与输入 candidates 一致
+        assert len(response.items) == len(request.candidates)
+        # 输出 case_id 列表必须与输入完全一致（不多不少）
+        input_ids = [c.case_id for c in request.candidates]
+        output_ids = [item.case_id for item in response.items]
+        assert output_ids == input_ids
+
+    @pytest.mark.asyncio
+    async def test_response_contains_all_content_fields(self):
+        """成功响应的每个 item 应包含完整的内容字段。"""
+        prompt_catalog = MagicMock()
+        prompt_catalog.check_recommendation_injection.return_value = (False, "")
+        prompt_catalog.build_recommendation_copy_prompt.return_value = "prompt"
+
+        llm_client = AsyncMock()
+        llm_client.complete_json.return_value = _make_llm_result()
+
+        validator = MagicMock()
+        validator.validate_recommendation_copy.return_value = _make_validated_items()
+
+        repository = AsyncMock()
+        repository.create_recommendation_copy_run.return_value = _make_copy_run_orm()
+
+        service = _create_service(
+            llm_client=llm_client,
+            prompt_catalog=prompt_catalog,
+            validator=validator,
+            repository=repository,
+        )
+
+        response = await service.generate_copy(_make_request())
+
+        # 每个 item 应包含全部内容字段
+        for item in response.items:
+            assert hasattr(item, "case_id")
+            assert hasattr(item, "reason")
+            assert hasattr(item, "reference_points")
+            assert hasattr(item, "cautions")
+            assert hasattr(item, "source_references")
+            # 确认字段有实际值（非 None）
+            assert item.case_id is not None
+            assert item.reason is not None

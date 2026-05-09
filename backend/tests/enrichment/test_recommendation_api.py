@@ -397,3 +397,130 @@ class TestRecommendationCopyFailure:
         detail = resp.json()["detail"]
         assert "code" in detail
         assert "message" in detail
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_with_many_candidates_returns_503(
+        self, client, mock_service,
+    ):
+        """LLM 失败时即使有多个候选也应返回 503（单次调用策略：全部失败）。"""
+        mock_service.generate_copy.side_effect = LLMClientError(
+            error_code=ErrorCode.LLM_TIMEOUT,
+            message="LLM 调用超时",
+            retryable=True,
+        )
+
+        request_data = {
+            "query_text": "门店管理问题",
+            "candidates": [
+                {"case_id": "case_001"},
+                {"case_id": "case_002"},
+                {"case_id": "case_003"},
+            ],
+        }
+
+        resp = await client.post(
+            "/api/recommendations/copy",
+            json=request_data,
+        )
+
+        assert resp.status_code == 503
+
+
+# ===========================================================================
+# 候选完整性场景
+# ===========================================================================
+
+
+class TestRecommendationCopyCompleteness:
+    """测试推荐文案 API 候选完整性。"""
+
+    @pytest.mark.asyncio
+    async def test_response_items_count_matches_candidates(
+        self, client, mock_service,
+    ):
+        """响应中 items 数量应与请求中 candidates 数量一致。"""
+        mock_service.generate_copy.return_value = _make_copy_response()
+
+        resp = await client.post(
+            "/api/recommendations/copy",
+            json=_make_recommendation_request(),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["items"]) == len(
+            _make_recommendation_request()["candidates"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_response_preserves_all_candidate_ids(
+        self, client, mock_service,
+    ):
+        """响应 items 应包含全部候选的 case_id，不遗漏。"""
+        ordered_items = [
+            RecommendationCopyItem(
+                case_id="case_X",
+                reason="理由X",
+                reference_points=["点X"],
+                cautions=[],
+                source_references=[SourceField.CONTEXT],
+            ),
+            RecommendationCopyItem(
+                case_id="case_Y",
+                reason="理由Y",
+                reference_points=["点Y"],
+                cautions=["注意Y"],
+                source_references=[SourceField.OUTCOME],
+            ),
+            RecommendationCopyItem(
+                case_id="case_Z",
+                reason="理由Z",
+                reference_points=["点Z"],
+                cautions=[],
+                source_references=[SourceField.ROOT_CAUSE],
+            ),
+        ]
+        mock_service.generate_copy.return_value = _make_copy_response(
+            items=ordered_items,
+        )
+
+        request_data = {
+            "query_text": "问题",
+            "candidates": [
+                {"case_id": "case_X"},
+                {"case_id": "case_Y"},
+                {"case_id": "case_Z"},
+            ],
+        }
+
+        resp = await client.post(
+            "/api/recommendations/copy",
+            json=request_data,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        item_ids = [item["case_id"] for item in data["items"]]
+        assert item_ids == ["case_X", "case_Y", "case_Z"]
+
+    @pytest.mark.asyncio
+    async def test_response_never_contains_new_candidates(
+        self, client, mock_service,
+    ):
+        """响应不应包含请求中没有的候选 case_id。"""
+        mock_service.generate_copy.return_value = _make_copy_response()
+
+        resp = await client.post(
+            "/api/recommendations/copy",
+            json=_make_recommendation_request(),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        request_ids = {
+            c["case_id"]
+            for c in _make_recommendation_request()["candidates"]
+        }
+        response_ids = {item["case_id"] for item in data["items"]}
+        # 响应中的 case_id 应是请求中 case_id 的子集（不应新增）
+        assert response_ids.issubset(request_ids)
