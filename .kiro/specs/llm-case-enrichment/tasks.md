@@ -69,7 +69,7 @@
   - _Requirements: 1.3, 2.4, 3.4, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 7.2, 7.3_
   - _Boundary: EnrichmentRepository_
 
-- [ ] 2.6 实现案例增强服务编排
+- [x] 2.6 实现案例增强服务编排
   - 编排案例快照读取、Prompt 构造、LLM 调用、输出校验、结果保存和失败记录。
   - 内容不足时返回缺失信息说明，不生成或发布编造摘要。
   - 校验通过后委托 `EnrichmentRepository.complete_run` 写入新的 `valid` 结果（Repository 层保证事务内原子性地删除旧记录）。
