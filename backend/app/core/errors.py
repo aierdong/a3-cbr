@@ -2,9 +2,19 @@
 
 定义 A3 案例管理系统的错误码和错误结构。
 """
-from typing import Optional
+from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING, Optional
+
+from fastapi import HTTPException, status
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from app.common.llm_client import LLMClientError
+    from app.enrichment.validators import OutputValidationException
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorDetail(BaseModel):
@@ -73,3 +83,114 @@ def create_error_response(
         fields=fields or [],
         meta=meta or {},
     )
+
+
+# 映射 OutputValidationException.error_code 到统一 ErrorCode
+_VALIDATION_TO_ERROR_CODE: dict[str, str] = {
+    "INJECTION_SUSPECTED": ErrorCode.INJECTION_SUSPECTED,
+    "LLM_INVALID_RESPONSE": ErrorCode.LLM_INVALID_RESPONSE,
+    "MISSING_FIELD": ErrorCode.LLM_INVALID_RESPONSE,
+    "INVALID_ENUM": ErrorCode.LLM_INVALID_RESPONSE,
+    "CONSTRAINT_VIOLATION": ErrorCode.LLM_INVALID_RESPONSE,
+    "CANDIDATE_MISMATCH": ErrorCode.LLM_INVALID_RESPONSE,
+}
+
+
+class ErrorMapper:
+    """将服务层异常映射为统一 HTTP 错误响应。
+
+    职责：
+    - LLMClientError -> HTTP 503 + 对应 ErrorCode
+    - OutputValidationException -> HTTP 503 + LLM_INVALID_RESPONSE（INJECTION_SUSPECTED 保留原码）
+    - 未知异常 -> HTTP 500 + INTERNAL_ERROR
+
+    供 enrichment router 端点复用，避免重复 try/except。
+    """
+
+    def to_http_exception(
+        self,
+        exc: Exception,
+    ) -> HTTPException:
+        """将异常映射为 HTTPException。
+
+        Args:
+            exc: 服务层抛出的异常。
+
+        Returns:
+            HTTPException: 包含统一错误响应结构的 HTTP 异常。
+        """
+        from app.common.llm_client import LLMClientError
+        from app.enrichment.validators import OutputValidationException
+
+        if isinstance(exc, LLMClientError):
+            return self._map_llm_client_error(exc)
+
+        if isinstance(exc, OutputValidationException):
+            return self._map_output_validation_error(exc)
+
+        return self._map_unexpected_error(exc)
+
+    @staticmethod
+    def _map_llm_client_error(exc: LLMClientError) -> HTTPException:
+        """LLMClientError -> HTTP 503。"""
+        meta: dict = {}
+        if exc.retryable:
+            meta["retryable"] = True
+
+        logger.warning(
+            "LLM 调用失败: error_code=%s, message=%s",
+            exc.error_code,
+            exc.message,
+        )
+
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=create_error_response(
+                code=exc.error_code,
+                message=exc.message,
+                meta=meta or None,
+            ).model_dump(),
+        )
+
+    @staticmethod
+    def _map_output_validation_error(
+        exc: OutputValidationException,
+    ) -> HTTPException:
+        """OutputValidationException -> HTTP 503。"""
+        mapped_code = _VALIDATION_TO_ERROR_CODE.get(
+            exc.error_code,
+            ErrorCode.LLM_INVALID_RESPONSE,
+        )
+
+        fields = [
+            ErrorDetail(field=err.field, message=err.message)
+            for err in exc.errors
+        ] if exc.errors else None
+
+        logger.warning(
+            "输出校验失败: error_code=%s, message=%s",
+            exc.error_code,
+            exc.message,
+        )
+
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=create_error_response(
+                code=mapped_code,
+                message=exc.message,
+                fields=fields,
+            ).model_dump(),
+        )
+
+    @staticmethod
+    def _map_unexpected_error(exc: Exception) -> HTTPException:
+        """未知异常 -> HTTP 500。"""
+        logger.error("意外异常: %s: %s", type(exc).__name__, exc)
+
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=create_error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="An unexpected error occurred",
+            ).model_dump(),
+        )

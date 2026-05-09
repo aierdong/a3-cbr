@@ -110,7 +110,7 @@
   - _Boundary: RecommendationCopyService_
   - _Depends: 2.2, 2.3, 2.4_
 
-- [ ] 3.2 实现推荐文案失败处理
+- [x] 3.2 实现推荐文案失败处理
   - LLM 调用失败或校验失败时，返回 HTTP 503。
   - 完成后推荐文案接口失败不会产生排序副作用。
   - _Requirements: 5.3, 5.4, 5.5, 6.4_
