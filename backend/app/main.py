@@ -41,15 +41,19 @@ async def start_cleanup_service():
 
     加载清理配置，创建 EnrichmentCleanupService 实例，
     使用 asyncio.create_task 启动周期性清理后台任务。
+    启动失败时记录错误日志，不阻塞应用启动。
     """
     global cleanup_service
-    config = load_cleanup_config()
-    cleanup_service = EnrichmentCleanupService(
-        db_session_factory=async_session_maker,
-        config=config,
-    )
-    cleanup_service.start()
-    logger.info("增强清理服务已启动")
+    try:
+        config = load_cleanup_config()
+        cleanup_service = EnrichmentCleanupService(
+            db_session_factory=async_session_maker,
+            config=config,
+        )
+        cleanup_service.start()
+        logger.info("增强清理服务已启动")
+    except Exception:
+        logger.exception("增强清理服务启动失败，不影响应用正常运行")
 
 
 @app.on_event("shutdown")

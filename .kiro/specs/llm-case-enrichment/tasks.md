@@ -211,7 +211,7 @@
   - _Boundary: EnrichmentRouter, LLMClient, ErrorMapper_
   - _Depends: 4.3_
 
-- [ ] 5.5 编写清理服务测试
+- [x] 5.5 编写清理服务测试
   - 验证 `EnrichmentCleanupService` 在应用启动时自动注册（通过 `@app.on_event("startup")` 钩子）。
   - 创建孤立派生数据（案例已删除但派生数据仍存在），手动触发清理任务，验证孤立数据被正确清理（派生结果和运行记录均被删除）。
   - 验证清理任务的周期性执行（通过配置文件 `backend/config/cleanup.yaml` 的 `enrichment_cleanup.interval_seconds` 控制）。
