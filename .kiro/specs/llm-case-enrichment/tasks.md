@@ -196,7 +196,7 @@
   - _Boundary: RecommendationCopyService_
   - _Depends: 3.2_
 
-- [ ] 5.4 编写 API 与安全隐私集成测试
+- [x] 5.4 编写 API 与安全隐私集成测试
   - 覆盖增强运行创建（立即返回 HTTP 200 + `running`）、状态查询、删除派生数据、重试、推荐文案和统一错误响应。
   - **覆盖删除幂等性**：对从未生成过派生数据的案例调用删除接口返回 HTTP 200 + `deleted_count: 0`；对已删除派生数据的案例再次调用删除接口返回 HTTP 200 + `deleted_count: 0`；删除后查询派生结果和运行记录确认已不存在。
   - **覆盖级联删除集成测试**（与 `docs/cascade-deletion-design.md` §6.2 对齐）：
