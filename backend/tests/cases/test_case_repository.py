@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.models import A3Case, StoreInfo
 from app.cases.repository import (
-    A3CaseRecord,
+    A3CaseCreateData,
     A3CaseUpdateData,
     CaseListQueryRepo,
     CaseRepository,
@@ -52,44 +52,71 @@ def create_test_store(
     return store
 
 
-def create_test_case(
+def _pending_store(session: AsyncSession, store_id: str) -> StoreInfo | None:
+    """尚未 flush 的门店实例（AsyncSession.get 此时仍为空）。"""
+    for obj in session.sync_session.new:
+        if isinstance(obj, StoreInfo) and obj.store_id == store_id:
+            return obj
+    return None
+
+
+def _pending_case(session: AsyncSession, case_id: str) -> A3Case | None:
+    """尚未 flush 的案例实例。"""
+    for obj in session.sync_session.new:
+        if isinstance(obj, A3Case) and obj.case_id == case_id:
+            return obj
+    return None
+
+
+async def create_test_case(
     session: AsyncSession,
     case_id: str | None = None,
     store_id: str = "store_001",
     status: str = "draft",
     created_at: datetime | None = None,
+    problem_description: str = "测试问题描述",
     problem_type: str = "customer_complaint",
     brand_id: str = "brand_001",
+    brand_name: str = "测试品牌",
     business_type: str = "火锅",
     store_scale: str = "large",
     franchise_type: str = "加盟",
     city: str = "北京",
     city_tier: str = "一线",
 ) -> A3Case:
-    """创建测试案例。"""
+    """创建测试案例。门店或案例已存在时跳过插入并返回已有案例。"""
     if case_id is None:
         case_id = f"case_{uuid.uuid4().hex[:12]}"
     if created_at is None:
         created_at = make_utc_now()
 
-    # 确保关联的 store 存在
-    store = StoreInfo(
-        store_id=store_id,
-        store_name=f"门店_{store_id}",
-        brand_id=brand_id,
-        brand_name="测试品牌",
-        business_type=business_type,
-        store_scale=store_scale,
-        franchise_type=franchise_type,
-        city=city,
-        city_tier=city_tier,
-        updated_at=make_utc_now(),
-    )
-    session.add(store)
+    existing_case = _pending_case(session, case_id)
+    if existing_case is None:
+        existing_case = await session.get(A3Case, case_id)
+    if existing_case is not None:
+        return existing_case
+
+    existing_store = _pending_store(session, store_id)
+    if existing_store is None:
+        existing_store = await session.get(StoreInfo, store_id)
+    if existing_store is None:
+        store = StoreInfo(
+            store_id=store_id,
+            store_name=f"门店_{store_id}",
+            brand_id=brand_id,
+            brand_name=brand_name,
+            business_type=business_type,
+            store_scale=store_scale,
+            franchise_type=franchise_type,
+            city=city,
+            city_tier=city_tier,
+            updated_at=make_utc_now(),
+        )
+        session.add(store)
 
     case = A3Case(
         case_id=case_id,
-        problem_description="测试问题描述",
+        problem_description=problem_description,
         store_id=store_id,
         problem_type=problem_type,
         context='{"scene": "test_scene"}',
@@ -117,7 +144,7 @@ class TestCaseRepositoryCreate:
 
         repo = CaseRepository(db_session)
         record = await repo.create(
-            A3CaseRecord(
+            A3CaseCreateData(
                 problem_description="新问题",
                 store_id="store_for_create",
                 problem_type="customer_complaint",
@@ -146,7 +173,7 @@ class TestCaseRepositoryCreate:
 
         with pytest.raises(ValueError) as exc_info:
             await repo.create(
-                A3CaseRecord(
+                A3CaseCreateData(
                     problem_description="新问题",
                     store_id="nonexistent_store",
                     problem_type="customer_complaint",
@@ -167,7 +194,7 @@ class TestCaseRepositoryCreate:
 
         repo = CaseRepository(db_session)
         record1 = await repo.create(
-            A3CaseRecord(
+            A3CaseCreateData(
                 problem_description="问题1",
                 store_id="store_for_unique",
                 problem_type="service_quality",
@@ -178,7 +205,7 @@ class TestCaseRepositoryCreate:
             )
         )
         record2 = await repo.create(
-            A3CaseRecord(
+            A3CaseCreateData(
                 problem_description="问题2",
                 store_id="store_for_unique",
                 problem_type="service_quality",
@@ -201,7 +228,7 @@ class TestCaseRepositoryCreate:
         before = make_utc_now()
         repo = CaseRepository(db_session)
         record = await repo.create(
-            A3CaseRecord(
+            A3CaseCreateData(
                 problem_description="时间测试",
                 store_id="store_for_time",
                 problem_type="operations",
@@ -225,7 +252,11 @@ class TestCaseRepositoryUpdate:
     ) -> None:
         """更新案例成功并返回新记录。"""
         create_test_store(db_session, store_id="store_for_update")
-        case = create_test_case(db_session, case_id="case_for_update", store_id="store_for_update")
+        case = await create_test_case(
+            db_session,
+            case_id="case_for_update",
+            store_id="store_for_update",
+        )
         await db_session.flush()
 
         repo = CaseRepository(db_session)
@@ -265,7 +296,7 @@ class TestCaseRepositoryUpdate:
     ) -> None:
         """更新案例时修改状态。"""
         create_test_store(db_session, store_id="store_for_status_update")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_status_update",
             store_id="store_for_status_update",
@@ -288,7 +319,7 @@ class TestCaseRepositoryUpdate:
         """更新案例时更换为有效的 store_id。"""
         create_test_store(db_session, store_id="store_update_v1")
         create_test_store(db_session, store_id="store_update_v2")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_store_update",
             store_id="store_update_v1",
@@ -310,7 +341,7 @@ class TestCaseRepositoryUpdate:
     ) -> None:
         """更新案例时更换为无效的 store_id 失败。"""
         create_test_store(db_session, store_id="store_for_update_invalid")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_update_invalid",
             store_id="store_for_update_invalid",
@@ -334,7 +365,7 @@ class TestCaseRepositoryDelete:
     ) -> None:
         """删除存在的案例返回 True。"""
         create_test_store(db_session, store_id="store_for_delete")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_delete",
             store_id="store_for_delete",
@@ -366,7 +397,7 @@ class TestCaseRepositoryDelete:
     ) -> None:
         """删除案例后列表查询不再返回该案例。"""
         create_test_store(db_session, store_id="store_for_delete_list")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_delete_list",
             store_id="store_for_delete_list",
@@ -398,7 +429,7 @@ class TestCaseRepositoryGetById:
     ) -> None:
         """按 ID 查询存在的案例返回记录。"""
         create_test_store(db_session, store_id="store_for_get")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_get",
             store_id="store_for_get",
@@ -436,7 +467,7 @@ class TestCaseRepositoryGetById:
             brand_name="测试品牌名称",
             city="上海",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_get_info",
             store_id="store_for_get_info",
@@ -485,7 +516,7 @@ class TestCaseRepositoryList:
             store_id="store_for_list",
             brand_name="列表品牌",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_for_list",
             store_id="store_for_list",
@@ -508,13 +539,13 @@ class TestCaseRepositoryList:
         """按 brand_id 过滤列表。"""
         create_test_store(db_session, store_id="store_brand_1", brand_id="brand_filter_1")
         create_test_store(db_session, store_id="store_brand_2", brand_id="brand_filter_2")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_brand_1",
             store_id="store_brand_1",
             brand_id="brand_filter_1",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_brand_2",
             store_id="store_brand_2",
@@ -536,12 +567,12 @@ class TestCaseRepositoryList:
         """按 store_id 过滤列表。"""
         create_test_store(db_session, store_id="store_filter_1")
         create_test_store(db_session, store_id="store_filter_2")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_store_filter_1",
             store_id="store_filter_1",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_store_filter_2",
             store_id="store_filter_2",
@@ -562,13 +593,13 @@ class TestCaseRepositoryList:
         """按业态过滤列表。"""
         create_test_store(db_session, store_id="store_biz_1", business_type="火锅")
         create_test_store(db_session, store_id="store_biz_2", business_type="小吃")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_biz_1",
             store_id="store_biz_1",
             business_type="火锅",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_biz_2",
             store_id="store_biz_2",
@@ -590,13 +621,13 @@ class TestCaseRepositoryList:
         """按门店规模过滤列表。"""
         create_test_store(db_session, store_id="store_scale_1", store_scale="large")
         create_test_store(db_session, store_id="store_scale_2", store_scale="small")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_scale_1",
             store_id="store_scale_1",
             store_scale="large",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_scale_2",
             store_id="store_scale_2",
@@ -618,13 +649,13 @@ class TestCaseRepositoryList:
         """按加盟类型过滤列表。"""
         create_test_store(db_session, store_id="store_fran_1", franchise_type="加盟")
         create_test_store(db_session, store_id="store_fran_2", franchise_type="直营")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_fran_1",
             store_id="store_fran_1",
             franchise_type="加盟",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_fran_2",
             store_id="store_fran_2",
@@ -646,13 +677,13 @@ class TestCaseRepositoryList:
         """按城市过滤列表。"""
         create_test_store(db_session, store_id="store_city_1", city="北京")
         create_test_store(db_session, store_id="store_city_2", city="上海")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_city_1",
             store_id="store_city_1",
             city="北京",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_city_2",
             store_id="store_city_2",
@@ -674,13 +705,13 @@ class TestCaseRepositoryList:
         """按城市规模过滤列表。"""
         create_test_store(db_session, store_id="store_tier_1", city_tier="一线")
         create_test_store(db_session, store_id="store_tier_2", city_tier="二线")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_tier_1",
             store_id="store_tier_1",
             city_tier="一线",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_tier_2",
             store_id="store_tier_2",
@@ -701,13 +732,13 @@ class TestCaseRepositoryList:
     ) -> None:
         """按问题类型过滤列表。"""
         create_test_store(db_session, store_id="store_prob")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_prob_1",
             store_id="store_prob",
             problem_type="customer_complaint",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_prob_2",
             store_id="store_prob",
@@ -730,13 +761,13 @@ class TestCaseRepositoryList:
     ) -> None:
         """按状态过滤列表。"""
         create_test_store(db_session, store_id="store_status")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_status_1",
             store_id="store_status",
             status="draft",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_status_2",
             store_id="store_status",
@@ -758,19 +789,19 @@ class TestCaseRepositoryList:
         """按创建时间范围过滤列表。"""
         base_time = make_utc_now()
         create_test_store(db_session, store_id="store_time_range")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_time_old",
             store_id="store_time_range",
             created_at=base_time - timedelta(days=10),
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_time_mid",
             store_id="store_time_range",
             created_at=base_time - timedelta(days=5),
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_time_new",
             store_id="store_time_range",
@@ -798,13 +829,13 @@ class TestCaseRepositoryList:
     ) -> None:
         """默认不包含归档状态的案例。"""
         create_test_store(db_session, store_id="store_no_archive")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_no_archive_draft",
             store_id="store_no_archive",
             status="draft",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_no_archive_archived",
             store_id="store_no_archive",
@@ -826,13 +857,13 @@ class TestCaseRepositoryList:
     ) -> None:
         """include_archived=True 时包含归档案例。"""
         create_test_store(db_session, store_id="store_with_archive")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_with_archive_draft",
             store_id="store_with_archive",
             status="draft",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_with_archive_archived",
             store_id="store_with_archive",
@@ -857,13 +888,13 @@ class TestCaseRepositoryList:
         """列表使用稳定排序 created_at desc, case_id desc。"""
         base_time = make_utc_now()
         create_test_store(db_session, store_id="store_sort")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_sort_a",
             store_id="store_sort",
             created_at=base_time - timedelta(hours=1),
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_sort_b",
             store_id="store_sort",
@@ -889,7 +920,7 @@ class TestCaseRepositoryList:
         base_time = make_utc_now()
         create_test_store(db_session, store_id="store_page")
         for i in range(5):
-            create_test_case(
+            await create_test_case(
                 db_session,
                 case_id=f"case_page_{i}",
                 store_id="store_page",
@@ -928,7 +959,7 @@ class TestCaseRepositoryList:
     ) -> None:
         """末页没有下一页游标。"""
         create_test_store(db_session, store_id="store_last_page")
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_last_page",
             store_id="store_last_page",
@@ -963,7 +994,7 @@ class TestCaseRepositoryList:
             city="上海",
             city_tier="二线",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_multi_1",
             store_id="store_multi_1",
@@ -971,7 +1002,7 @@ class TestCaseRepositoryList:
             city="北京",
             city_tier="一线",
         )
-        create_test_case(
+        await create_test_case(
             db_session,
             case_id="case_multi_2",
             store_id="store_multi_2",

@@ -8,35 +8,50 @@ from typing import AsyncGenerator
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.session import Base, async_session_maker, engine
+from app.core.config import settings
+from app.db.session import Base
 from app.main import app
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """创建事件循环 fixture（session 级别）。."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator:
     """数据库会话 fixture。.
 
-    每个测试函数使用独立的数据库会话。
+    每个测试函数使用独立的数据库引擎和会话，避免事件循环关闭问题。
     """
-    async with engine.begin() as conn:
-        # 创建所有表（测试用）
+    # 为每个测试创建独立的引擎
+    test_engine = create_async_engine(
+        settings.database_url,
+        echo=settings.app_debug,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+
+    # 创建所有表
+    async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with async_session_maker() as session:
+    # 创建会话
+    test_session_maker = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    async with test_session_maker() as session:
         yield session
 
-    async with engine.begin() as conn:
-        # 清理所有表
+    # 清理所有表
+    async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+    # 关闭引擎
+    await test_engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")
