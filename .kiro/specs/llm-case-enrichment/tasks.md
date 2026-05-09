@@ -149,7 +149,7 @@
   - _Boundary: EnrichmentRouter, EnrichmentRepository, EnrichmentCleanupService_
   - _Depends: 4.1, 4.2, 2.8_
 
-- [ ] 4.4 验证与上游和下游边界分离
+- [x] 4.4 验证与上游和下游边界分离
   - 检查代码路径不会修改 `a3_cases` 基础字段，也不会生成 embedding、向量索引、相似度或排序决策。
   - 确认 `status=valid` 的派生结果可被下游消费，`status=failed` 的结果不会被误当成可用内容。
   - 完成后本规格边界与案例管理、向量索引和 CBR 推荐保持一致。
