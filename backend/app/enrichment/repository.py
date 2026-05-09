@@ -160,6 +160,44 @@ class EnrichmentRepository:
             raise ValueError(f"运行记录不存在: {run_id}")
         return run_record
 
+    async def mark_retryable(
+        self,
+        run_id: str,
+        error: EnrichmentErrorData,
+    ) -> CaseEnrichmentRun:
+        """标记增强运行为可重试。
+
+        用于供应商或临时失败（如超时、限流），允许用户通过
+        retry_run 创建新的运行记录重新执行。
+
+        Args:
+            run_id: 运行标识。
+            error: 错误数据。
+
+        Returns:
+            更新后的运行记录 ORM 对象。
+
+        Raises:
+            ValueError: 运行记录不存在时抛出。
+        """
+        now = datetime.now(timezone.utc)
+        await self._db.execute(
+            update(CaseEnrichmentRun)
+            .where(CaseEnrichmentRun.run_id == run_id)
+            .values(
+                status=RunStatus.RETRYABLE,
+                error_code=error.error_code,
+                error_stage=error.error_stage,
+                finished_at=now,
+            ),
+        )
+        await self._db.flush()
+
+        run_record = await self.get_run(run_id)
+        if run_record is None:
+            raise ValueError(f"运行记录不存在: {run_id}")
+        return run_record
+
     # ------------------------------------------------------------------
     # 查询操作
     # ------------------------------------------------------------------

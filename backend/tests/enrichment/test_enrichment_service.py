@@ -260,8 +260,8 @@ class TestExecuteEnrichment:
         llm_client.complete_json.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_llm_timeout_fails_run(self):
-        """LLM 超时应标记运行失败（error_stage=llm_call）。"""
+    async def test_llm_timeout_marks_retryable(self):
+        """LLM 超时（可重试）应标记运行为 retryable（error_stage=llm_call）。"""
         prompt_catalog = MagicMock()
         prompt_catalog.check_enrichment_injection.return_value = (False, "")
         prompt_catalog.build_enrichment_prompt.return_value = "prompt"
@@ -284,14 +284,15 @@ class TestExecuteEnrichment:
         with pytest.raises(LLMClientError):
             await service.execute_enrichment(_make_snapshot(), "run_004")
 
-        repository.fail_run.assert_called_once()
-        error_data = repository.fail_run.call_args[0][1]
+        repository.mark_retryable.assert_called_once()
+        repository.fail_run.assert_not_called()
+        error_data = repository.mark_retryable.call_args[0][1]
         assert error_data.error_code == ErrorCode.LLM_TIMEOUT
         assert error_data.error_stage == ErrorStage.LLM_CALL
 
     @pytest.mark.asyncio
-    async def test_llm_rate_limited_fails_run(self):
-        """LLM 限流应标记运行失败。"""
+    async def test_llm_rate_limited_marks_retryable(self):
+        """LLM 限流（可重试）应标记运行为 retryable。"""
         prompt_catalog = MagicMock()
         prompt_catalog.check_enrichment_injection.return_value = (False, "")
         prompt_catalog.build_enrichment_prompt.return_value = "prompt"
@@ -314,13 +315,14 @@ class TestExecuteEnrichment:
         with pytest.raises(LLMClientError):
             await service.execute_enrichment(_make_snapshot(), "run_005")
 
-        error_data = repository.fail_run.call_args[0][1]
+        repository.mark_retryable.assert_called_once()
+        error_data = repository.mark_retryable.call_args[0][1]
         assert error_data.error_code == ErrorCode.LLM_RATE_LIMITED
         assert error_data.error_stage == ErrorStage.LLM_CALL
 
     @pytest.mark.asyncio
-    async def test_llm_provider_error_fails_run(self):
-        """LLM 供应商故障应标记运行失败。"""
+    async def test_llm_provider_error_marks_retryable(self):
+        """LLM 供应商故障（可重试）应标记运行为 retryable。"""
         prompt_catalog = MagicMock()
         prompt_catalog.check_enrichment_injection.return_value = (False, "")
         prompt_catalog.build_enrichment_prompt.return_value = "prompt"
@@ -343,7 +345,8 @@ class TestExecuteEnrichment:
         with pytest.raises(LLMClientError):
             await service.execute_enrichment(_make_snapshot(), "run_006")
 
-        error_data = repository.fail_run.call_args[0][1]
+        repository.mark_retryable.assert_called_once()
+        error_data = repository.mark_retryable.call_args[0][1]
         assert error_data.error_code == ErrorCode.LLM_PROVIDER_ERROR
         assert error_data.error_stage == ErrorStage.LLM_CALL
 

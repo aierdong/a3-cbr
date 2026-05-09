@@ -153,18 +153,25 @@ class EnrichmentService:
             llm_result = await self._llm_client.complete_json(llm_request)
         except LLMClientError as exc:
             logger.warning(
-                "LLM 调用失败: case_id=%s, run_id=%s, error_code=%s, message=%s",
+                "LLM 调用失败: case_id=%s, run_id=%s, error_code=%s, retryable=%s",
                 case_id,
                 run_id,
                 exc.error_code,
-                exc.message,
+                exc.retryable,
             )
             error_stage = self._map_llm_error_stage(exc.error_code)
-            await self._fail_run(
-                run_id,
-                error_code=exc.error_code,
-                error_stage=error_stage,
-            )
+            if exc.retryable:
+                await self._mark_retryable(
+                    run_id,
+                    error_code=exc.error_code,
+                    error_stage=error_stage,
+                )
+            else:
+                await self._fail_run(
+                    run_id,
+                    error_code=exc.error_code,
+                    error_stage=error_stage,
+                )
             raise
 
         # -----------------------------------------------------------
@@ -291,6 +298,25 @@ class EnrichmentService:
             error_stage=error_stage,
         )
         await self._repository.fail_run(run_id, error)
+
+    async def _mark_retryable(
+        self,
+        run_id: str,
+        error_code: str,
+        error_stage: ErrorStage,
+    ) -> None:
+        """标记运行为可重试（供应商或临时失败）。
+
+        Args:
+            run_id: 运行标识。
+            error_code: 错误码。
+            error_stage: 错误阶段。
+        """
+        error = EnrichmentErrorData(
+            error_code=error_code,
+            error_stage=error_stage,
+        )
+        await self._repository.mark_retryable(run_id, error)
 
     @staticmethod
     def _map_llm_error_stage(error_code: str) -> ErrorStage:
