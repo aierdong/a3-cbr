@@ -1,9 +1,18 @@
 """A3 案例管理后端应用入口。"""
+import logging
+
 from fastapi import FastAPI
 
 from app.cases.router import router as case_router
 from app.core.config import settings
+from app.db.session import async_session_maker
+from app.enrichment.cleanup import EnrichmentCleanupService, load_cleanup_config
 from app.enrichment.router import router as enrichment_router
+
+logger = logging.getLogger(__name__)
+
+# 清理服务实例（模块级别，供 startup/shutdown 钩子使用）
+cleanup_service: EnrichmentCleanupService | None = None
 
 
 def create_app() -> FastAPI:
@@ -24,6 +33,34 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.on_event("startup")
+async def start_cleanup_service():
+    """启动增强清理服务后台任务。
+
+    加载清理配置，创建 EnrichmentCleanupService 实例，
+    使用 asyncio.create_task 启动周期性清理后台任务。
+    """
+    global cleanup_service
+    config = load_cleanup_config()
+    cleanup_service = EnrichmentCleanupService(
+        db_session_factory=async_session_maker,
+        config=config,
+    )
+    cleanup_service.start()
+    logger.info("增强清理服务已启动")
+
+
+@app.on_event("shutdown")
+async def stop_cleanup_service():
+    """停止增强清理服务。
+
+    优雅停止清理服务后台任务。
+    """
+    if cleanup_service is not None:
+        await cleanup_service.stop()
+        logger.info("增强清理服务已停止")
 
 
 @app.get("/health")

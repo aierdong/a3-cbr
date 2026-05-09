@@ -137,7 +137,7 @@
   - _Boundary: EnrichmentRouter_
   - _Depends: 3.2_
 
-- [ ] 4.3 接入应用入口和数据库会话
+- [x] 4.3 接入应用入口和数据库会话
   - 将 enrichment 路由和清理服务注册到后端应用入口（`backend/app/main.py`）。
   - 在 `@app.on_event("startup")` 钩子中注册 `EnrichmentCleanupService`，使用 `asyncio.create_task(cleanup_service.run_periodic())` 启动后台任务。
   - 在 `@app.on_event("shutdown")` 钩子中调用 `cleanup_service.stop()` 优雅停止清理服务。
