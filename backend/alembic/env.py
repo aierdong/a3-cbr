@@ -9,6 +9,7 @@ from app.db.base import Base
 
 # 需要导入所有模型，以便 Alembic 能检测到它们
 from app.cases import models  # noqa: F401
+from app.enrichment import models as enrichment_models  # noqa: F401
 
 # Alembic Config 对象
 config = context.config
