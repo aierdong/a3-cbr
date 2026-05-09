@@ -100,7 +100,7 @@
 
 - [ ] 3. 实现推荐文案生成能力
 
-- [ ] 3.1 实现推荐候选文案服务
+- [x] 3.1 实现推荐候选文案服务
   - 接收当前问题、已排序候选案例和候选来源信息，将所有候选合入同一 prompt 一次性调用 LLM 生成全部候选的推荐理由、参考解决点和注意事项。
   - 候选数量由上游 `cbr-retrieval-recommendation` 通过 `max_recommendation_candidates` 配置控制。`max_recommendation_candidates` 是系统配置项，不是用户输入，本服务不对其进行校验或防御性检查。
   - 保留输入候选顺序和 `case_id` 引用，不新增候选、不过滤候选、不改变相似度或排序。

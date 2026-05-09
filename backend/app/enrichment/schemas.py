@@ -452,6 +452,24 @@ class DeleteEnrichmentResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RecommendationCopyRunCreate(BaseModel):
+    """创建推荐文案运行记录的内部 Schema。"""
+
+    copy_run_id: str = Field(..., max_length=64, description="LLM 文案调用审计标识")
+    query_text_hash: str = Field(..., max_length=128, description="当前问题文本哈希")
+    status: EnrichmentStatus = Field(..., description="生成状态")
+    candidate_case_ids: list[str] = Field(..., description="输入候选顺序")
+    items: list[dict[str, Any]] = Field(..., description="推荐文案结果")
+    model_id: str = Field(..., max_length=128, description="模型标识")
+    request_purpose: RequestPurpose = Field(..., description="请求目的")
+    token_usage: Optional[dict[str, Any]] = Field(None, description="成本与用量审计")
+    schema_validation_status: EnrichmentStatus = Field(
+        ..., description="输出 schema 校验状态",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class LLMCompletionRequest(BaseModel):
     """LLM 调用请求。"""
 

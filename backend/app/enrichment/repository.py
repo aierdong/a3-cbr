@@ -10,13 +10,18 @@ from typing import Optional
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enrichment.models import CaseEnrichmentResult, CaseEnrichmentRun
+from app.enrichment.models import (
+    CaseEnrichmentResult,
+    CaseEnrichmentRun,
+    RecommendationCopyRun,
+)
 from app.enrichment.schemas import (
     CaseEnrichmentResultCreate,
     DeleteEnrichmentResult,
     EnrichmentErrorData,
     EnrichmentRunCreate,
     EnrichmentStatus,
+    RecommendationCopyRunCreate,
     RunStatus,
 )
 
@@ -241,6 +246,37 @@ class EnrichmentRepository:
     # ------------------------------------------------------------------
     # 删除操作
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # 推荐文案运行记录操作
+    # ------------------------------------------------------------------
+
+    async def create_recommendation_copy_run(
+        self,
+        run: RecommendationCopyRunCreate,
+    ) -> RecommendationCopyRun:
+        """创建推荐文案运行记录。
+
+        Args:
+            run: 推荐文案运行创建数据。
+
+        Returns:
+            创建的推荐文案运行记录 ORM 对象。
+        """
+        record = RecommendationCopyRun(
+            copy_run_id=run.copy_run_id,
+            query_text_hash=run.query_text_hash,
+            status=run.status,
+            candidate_case_ids=run.candidate_case_ids,
+            items=run.items,
+            model_id=run.model_id,
+            request_purpose=run.request_purpose,
+            token_usage=run.token_usage,
+            schema_validation_status=run.schema_validation_status,
+        )
+        self._db.add(record)
+        await self._db.flush()
+        return record
 
     async def delete_enrichment_data(
         self,
