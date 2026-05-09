@@ -57,7 +57,7 @@
 - [ ] 3. 实现分值聚合、重排和解释
 
 - [ ] 3.1 (P) 实现远程 reranker 适配
-  - 接入默认 model `qwen3-reranker-8b`（可配置 provider/base_url），通过**共享 `LLMClient`**（位于 `backend/app/common/llm_client.py`）或独立 HTTP 客户端执行重排调用，传入 `RerankerConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
+  - 接入默认 model `qwen3-reranker-8b`（可配置 api_key/base_url），通过**共享 `LLMClient`**（位于 `backend/app/common/llm_client.py`）或独立 HTTP 客户端执行重排调用，传入 `RerankerConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
   - 提交标准化查询和候选问题画像文档并接收每个候选的纯语义相关性分值。
   - 统一处理超时、限流、供应商失败、配置缺失和不可解析响应。
   - 完成后成功响应返回可排序语义分值，失败响应返回稳定错误和耗时元数据。

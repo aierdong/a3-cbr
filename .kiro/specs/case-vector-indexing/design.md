@@ -49,13 +49,13 @@
 - `llm-case-enrichment` 的当前可消费派生结果：`enrichment_id`、`case_updated_at`、`status`、`problem_summary`、结构化建议、适用场景建议和标签建议。`solution_summary` 可供下游展示或精排使用，但不进入本规格主召回向量。
 - Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、pytest，与上游后端规格保持一致。
 - PostgreSQL + pgvector `0.8.2+`，默认向量维度 1024，默认 HNSW cosine 索引。
-- 云端 embedding 服务，默认模型 ID `bge-large-zh`，通过独立的 `provider/model/base_url` 配置项指定。
+- 云端 embedding 服务，默认模型 ID `bge-large-zh`，通过独立的 `api_key/model/base_url` 配置项指定。
 
 ### Manual Revalidation Triggers
 
 - 当调用方已知 `a3-case-management` 的案例字段、状态语义、过滤字段、详情响应或 `updated_at` 语义发生变化时，应手动调用刷新或删除接口。
 - 当调用方已知 `llm-case-enrichment` 的派生结果状态、字段名称、发布条件或输出版本发生变化时，应手动调用刷新接口。
-- embedding 的 `provider/model/base_url`、默认向量维度、供应商隐私配置或响应格式发生变化。
+- embedding 的 `api_key/model/base_url`、默认向量维度、供应商隐私配置或响应格式发生变化。
 - pgvector 最低版本、索引策略、距离度量或过滤字段索引策略发生变化。
 - 下游 `cbr-retrieval-recommendation` 需要改变向量搜索的请求或响应契约。
 
@@ -150,7 +150,7 @@ flowchart TB
 | Validation         | Pydantic                                                          | 请求响应、配置、状态和错误结构校验   | 禁止不匹配向量维度发布              |
 | Data / Storage     | PostgreSQL + pgvector `0.8.2+`                                    | 保存向量、状态、过滤字段和运行记录   | MVP 单库部署                 |
 | ORM / Migration    | SQLAlchemy + Alembic                                              | 新增向量表、任务表和索引迁移      | 启动或迁移时检查 pgvector 版本     |
-| External AI        | Remote embedding model `bge-large-zh` (`provider/model/base_url`) | 生成案例和查询 embedding   | 默认维度 1024，可配置但必须校验       |
+| External AI        | Remote embedding model `bge-large-zh` (`api_key/model/base_url`) | 生成案例和查询 embedding   | 默认维度 1024，可配置但必须校验       |
 | Testing            | pytest + FastAPI TestClient                                       | 单元、API、索引、失败和搜索集成测试 | embedding 使用 fake client |
 
 
@@ -316,7 +316,7 @@ stateDiagram-v2
 | VectorSchemas           | API/Data Contract | 定义请求响应、状态、过滤和错误 schema       | 3.3, 5.3, 5.4                | Pydantic P0                                   | API, State     |
 | CaseIndexSourceProvider | Integration       | 读取案例和 LLM 派生输入快照             | 1.1, 1.3, 3.5                | CaseService P0, EnrichmentRepository P1       | Service        |
 | EmbeddingInputComposer  | Domain Service    | 组合输入文本和来源分段               | 1.1, 1.2, 1.4, 1.5, 6.1      | SourceProvider P0                             | Service        |
-| EmbeddingClient         | External Adapter  | 调用云端 embedding 并校验响应         | 2.1, 2.2, 2.4, 2.5, 6.4      | Remote provider/model/base_url P0             | Service        |
+| EmbeddingClient         | External Adapter  | 调用云端 embedding 并校验响应         | 2.1, 2.2, 2.4, 2.5, 6.4      | Remote api_key/model/base_url P0             | Service        |
 | VectorIndexService      | Domain Service    | 编排手动刷新、发布、删除和状态         | 3.1, 3.2, 3.4, 4.1, 4.2, 4.4 | Repository P0, Client P0                      | Service        |
 | VectorSearchService     | Domain Service    | 生成用户问题查询向量并返回 Top-K 问题语义候选原语 | 5.1, 5.2, 5.4, 5.5           | EmbeddingClient P0, Repository P0             | API, Service   |
 | VectorRepository        | Data Access       | 保存成功向量、任务审计并执行 pgvector 搜索    | 3.1, 4.2, 4.5, 5.2           | PostgreSQL pgvector P0                        | Service, State |
@@ -488,7 +488,7 @@ class EmbeddingClient:
     def embed_for_query(self, request: EmbeddingRequest) -> EmbeddingResult: ...
 ```
 
-- Default config: `provider`、`model_id="bge-large-zh"`、`base_url`、`dimension=1024`、隐私确认；仅用于 Embedding，不复用 LLM 或 Reranker 配置。
+- Default config: `api_key`、`model_id="bge-large-zh"`、`base_url`、`dimension=1024`、隐私确认；仅用于 Embedding，不复用 LLM 或 Reranker 配置。
 - **索引路径与搜索路径的超时/重试分离**：`EmbeddingConfig` 区分 `index_timeout`（默认 30 秒）/ `index_max_retries`（默认 2 次）和 `search_timeout`（默认 5 秒）/ `search_max_retries`（默认 0 次，即不重试）。`embed_for_index` 使用索引路径配置，适用于刷新任务中对延迟容忍度较高的场景；`embed_for_query` 使用搜索路径配置，适用于候选搜索中对延迟敏感的场景——embedding 调用失败直接返回 503，避免下游推荐服务阻塞。两个方法共享同一供应商和模型配置，仅超时和重试策略不同。
 - Errors: `EMBEDDING_TIMEOUT`、`EMBEDDING_RATE_LIMITED`、`EMBEDDING_PROVIDER_ERROR`、`EMBEDDING_INVALID_RESPONSE`、`EMBEDDING_DIMENSION_MISMATCH`、`EMBEDDING_CONFIG_MISSING`。
 - Logging: 记录供应商、模型、任务类型、状态、错误码和输入哈希，不记录完整输入文本或向量数组。

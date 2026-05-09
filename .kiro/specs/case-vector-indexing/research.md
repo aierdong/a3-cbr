@@ -71,7 +71,7 @@
   - BGE-M3 model documentation and model card summaries
 - **Findings**:
   - BGE-M3 dense embedding 常见输出维度为 1024，支持多语言和长文本输入。
-  - 项目约束使用远程模型 `bge-large-zh` 及独立 provider/base_url，因此实现不能绑定本地 FlagEmbedding 或本地推理。
+  - 项目约束使用远程模型 `bge-large-zh` 及独立 api_key/base_url，因此实现不能绑定本地 FlagEmbedding 或本地推理。
   - 供应商 API 的认证、超时、限流和隐私配置会影响生产可用性。
 - **Implications**:
   - 设计将维度作为配置和运行校验项，默认值 1024，避免供应商变更时产生静默错误。

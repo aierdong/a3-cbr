@@ -22,7 +22,7 @@ from typing import Optional
 
 class NormalizerLLMConfig(BaseModel):
     """LLM normalizer 配置（查询标准化专用）"""
-    provider: str = Field(..., description="供应商，如 'deepseek'")
+    api_key: str = Field(..., description="APIKEY，如 'sk-xxxx'")
     model_id: str = Field(..., description="模型 ID，如 'deepseek-v4-pro'")
     base_url: str = Field(..., description="API 基础 URL")
     timeout: int = Field(30, description="超时时间（秒）")
@@ -32,7 +32,7 @@ class NormalizerLLMConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     """Embedding 配置（向量生成专用）"""
-    provider: str = Field(..., description="供应商")
+    api_key: str = Field(..., description="APIKEY")
     model_id: str = Field(..., description="模型 ID，如 'bge-large-zh'")
     base_url: str = Field(..., description="API 基础 URL")
     timeout: int = Field(60, description="超时时间（秒）")
@@ -43,7 +43,7 @@ class EmbeddingConfig(BaseModel):
 
 class RerankerConfig(BaseModel):
     """Reranker 配置（语义精排专用）"""
-    provider: str = Field(..., description="供应商")
+    api_key: str = Field(..., description="APIKEY")
     model_id: str = Field("qwen3-reranker-8b", description="模型 ID")
     base_url: str = Field(..., description="API 基础 URL")
     timeout: int = Field(45, description="超时时间（秒）")
@@ -93,26 +93,26 @@ settings = Settings()
 
 ```bash
 # LLM Normalizer 配置
-RETRIEVAL__NORMALIZER_LLM__PROVIDER=deepseek
-RETRIEVAL__NORMALIZER_LLM__MODEL_ID=deepseek-v4-pro
-RETRIEVAL__NORMALIZER_LLM__BASE_URL=https://api.deepseek.com/v1
+RETRIEVAL__NORMALIZER_LLM__APIKEY=sk-xxx
+RETRIEVAL__NORMALIZER_LLM__MODEL_ID=deepseek-v4-flash
+RETRIEVAL__NORMALIZER_LLM__BASE_URL=https://api.deepseek.com
 RETRIEVAL__NORMALIZER_LLM__TIMEOUT=30
 RETRIEVAL__NORMALIZER_LLM__MAX_RETRIES=3
 RETRIEVAL__NORMALIZER_LLM__PRIVACY_ACKNOWLEDGED=true
 
 # Embedding 配置
-RETRIEVAL__EMBEDDING__PROVIDER=aliyun
+RETRIEVAL__EMBEDDING__APIKEY=bce-v3/ALTAK-KZke********/f1d6ee*************
 RETRIEVAL__EMBEDDING__MODEL_ID=bge-large-zh
-RETRIEVAL__EMBEDDING__BASE_URL=https://dashscope.aliyuncs.com/api/v1
+RETRIEVAL__EMBEDDING__BASE_URL=https://qianfan.baidubce.com/v2
 RETRIEVAL__EMBEDDING__TIMEOUT=60
 RETRIEVAL__EMBEDDING__MAX_RETRIES=3
 RETRIEVAL__EMBEDDING__BATCH_SIZE=32
 RETRIEVAL__EMBEDDING__PRIVACY_ACKNOWLEDGED=true
 
 # Reranker 配置
-RETRIEVAL__RERANKER__PROVIDER=aliyun
+RETRIEVAL__RERANKER__APIKEY=bce-v3/ALTAK-KZke********/f1d6ee*************
 RETRIEVAL__RERANKER__MODEL_ID=qwen3-reranker-8b
-RETRIEVAL__RERANKER__BASE_URL=https://dashscope.aliyuncs.com/api/v1
+RETRIEVAL__RERANKER__BASE_URL=https://qianfan.baidubce.com/v2
 RETRIEVAL__RERANKER__TIMEOUT=45
 RETRIEVAL__RERANKER__MAX_RETRIES=2
 RETRIEVAL__RERANKER__MAX_CANDIDATES=100
@@ -178,7 +178,7 @@ class LLMClient:
             config: 独立的配置对象（NormalizerLLMConfig/EmbeddingConfig/RerankerConfig）
         """
         self.config = config
-        self.provider = config.provider
+        self.api_key = config.api_key
         self.model_id = config.model_id
         self.base_url = config.base_url
         self.timeout = config.timeout
@@ -242,7 +242,7 @@ def test_llm_client_receives_correct_config():
 ## 实施检查清单
 
 - [ ] 在 `config.py` 中定义三个独立配置类
-- [ ] 配置类包含所有必需字段（provider/model_id/base_url/timeout/retry）
+- [ ] 配置类包含所有必需字段（api_key/model_id/base_url/timeout/retry）
 - [ ] 环境变量使用嵌套分隔符（`__`）区分命名空间
 - [ ] 依赖注入时显式传递配置对象
 - [ ] 共享 `LLMClient` 通过配置对象实现隔离
@@ -256,7 +256,7 @@ def test_llm_client_receives_correct_config():
 ```python
 # 错误示例
 class AIConfig(BaseModel):
-    provider: str
+    api_key: str
     model_id: str
     # ...
 

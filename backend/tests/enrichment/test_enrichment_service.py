@@ -75,9 +75,9 @@ def _make_snapshot(**overrides) -> CaseInputSnapshot:
 
 def _make_config(**overrides) -> EnrichmentLLMConfig:
     data = dict(
-        provider="deepseek",
-        model_id="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/v1",
+        api_key="deepseek",
+        model_id="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
         timeout_ms=30000,
         max_retries=2,
         privacy_acknowledged=True,
@@ -94,7 +94,7 @@ def _make_llm_result() -> LLMCompletionResult:
         '"confidence_notes": "基于案例内容分析"}, "tag_suggestions": ["服务", "投诉"], '
         '"source_references": ["problem_description", "root_cause"], '
         '"missing_information": []}',
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
     )
 
 

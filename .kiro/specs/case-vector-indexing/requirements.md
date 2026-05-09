@@ -32,8 +32,8 @@
 
 #### Acceptance Criteria
 
-2.1 When embedding 输入文本准备完成, the 案例向量索引服务 shall 调用配置的云端 embedding 服务（provider/model/base_url）生成向量。
-2.2 The 案例向量索引服务 shall 记录 `embedding_model_id`、向量维度和调用状态；provider/base_url 仅作为运行时配置，不作为持久化字段。
+2.1 When embedding 输入文本准备完成, the 案例向量索引服务 shall 调用配置的云端 embedding 服务（api_key/model/base_url）生成向量。
+2.2 The 案例向量索引服务 shall 记录 `embedding_model_id`、向量维度和调用状态；api_key/base_url 仅作为运行时配置，不作为持久化字段。
 2.3 If embedding 调用超时、限流或供应商失败, then the 案例向量索引服务 shall 记录失败阶段、错误类型和是否可重试，而不阻塞案例基础查看。
 2.4 If embedding 响应缺失向量、维度不匹配或格式不可解析, then the 案例向量索引服务 shall 不发布该向量，并记录校验失败原因。
 2.5 The 案例向量索引服务 shall 支持通过配置替换云端 embedding 供应商，且默认 model 保持为 `bge-large-zh`。

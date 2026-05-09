@@ -51,9 +51,9 @@ def _utc_now() -> datetime:
 
 def _make_enrichment_config(**overrides) -> EnrichmentLLMConfig:
     data = dict(
-        provider="deepseek",
+        api_key="deepseek",
         model_id="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/v1",
+        base_url="https://api.deepseek.com",
         timeout_ms=30000,
         max_retries=2,
         privacy_acknowledged=True,
@@ -64,9 +64,9 @@ def _make_enrichment_config(**overrides) -> EnrichmentLLMConfig:
 
 def _make_normalizer_config(**overrides) -> NormalizerLLMConfig:
     data = dict(
-        provider="deepseek",
+        api_key="deepseek",
         model_id="deepseek-normalizer-v1",
-        base_url="https://api.deepseek.com/v1",
+        base_url="https://api.deepseek.com",
         timeout_ms=20000,
         max_retries=1,
     )
@@ -76,7 +76,7 @@ def _make_normalizer_config(**overrides) -> NormalizerLLMConfig:
 
 def _make_embedding_config(**overrides) -> EmbeddingConfig:
     data = dict(
-        provider="bge-m3",
+        api_key="bge-m3",
         model_id="bge-m3",
         base_url="http://localhost:8080",
         timeout_ms=60000,
@@ -88,7 +88,7 @@ def _make_embedding_config(**overrides) -> EmbeddingConfig:
 
 def _make_reranker_config(**overrides) -> RerankerConfig:
     data = dict(
-        provider="bge-reranker",
+        api_key="bge-reranker",
         model_id="bge-reranker-v2-m3",
         base_url="http://localhost:8081",
         timeout_ms=45000,
@@ -1019,10 +1019,10 @@ class TestMultiModelConfigLoading:
         embedding = _make_embedding_config()
         reranker = _make_reranker_config()
 
-        assert enrichment.provider == "deepseek"
-        assert normalizer.provider == "deepseek"
-        assert embedding.provider == "bge-m3"
-        assert reranker.provider == "bge-reranker"
+        assert enrichment.api_key == "deepseek"
+        assert normalizer.api_key == "deepseek"
+        assert embedding.api_key == "bge-m3"
+        assert reranker.api_key == "bge-reranker"
 
         # 验证 id 不同（独立实例）
         assert id(enrichment) != id(normalizer)
@@ -1057,9 +1057,9 @@ class TestMultiModelConfigLoading:
 
         # 通过重新创建验证独立性
         enrichment_modified = EnrichmentLLMConfig(
-            provider="deepseek",
+            api_key="deepseek",
             model_id="deepseek-v4-pro",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             timeout_ms=99999,
             max_retries=5,
             privacy_acknowledged=True,
@@ -1074,26 +1074,26 @@ class TestMultiModelConfigLoading:
         """LLMClient 使用 EnrichmentLLMConfig 时应使用 enrichment 配置。"""
         config = _make_enrichment_config(
             model_id="enrichment-model",
-            base_url="https://enrichment.api.com/v1",
+            base_url="https://enrichment.api.com",
             timeout_ms=25000,
         )
         client = LLMClient(config)
 
         assert client._model_id == "enrichment-model"
-        assert client._base_url == "https://enrichment.api.com/v1"
+        assert client._base_url == "https://enrichment.api.com"
         assert client._timeout_s == 25.0
 
     def test_llm_client_receives_normalizer_config(self):
         """LLMClient 使用 NormalizerLLMConfig 时应使用 normalizer 配置。"""
         config = _make_normalizer_config(
             model_id="normalizer-model",
-            base_url="https://normalizer.api.com/v1",
+            base_url="https://normalizer.api.com",
             timeout_ms=15000,
         )
         client = LLMClient(config)
 
         assert client._model_id == "normalizer-model"
-        assert client._base_url == "https://normalizer.api.com/v1"
+        assert client._base_url == "https://normalizer.api.com"
         assert client._timeout_s == 15.0
 
     def test_llm_client_privacy_acknowledged_defaults_true_for_normalizer(self):
@@ -1119,23 +1119,23 @@ class TestMultiModelConfigLoading:
         """load_app_config 应从环境变量正确加载 4 个配置对象。"""
         from app.core.config import load_app_config
 
-        monkeypatch.setenv("ENRICHMENT_LLM_PROVIDER", "test-enrichment")
+        monkeypatch.setenv("ENRICHMENT_LLM_APIKEY", "test-enrichment")
         monkeypatch.setenv("ENRICHMENT_LLM_MODEL_ID", "test-model-enrichment")
         monkeypatch.setenv("ENRICHMENT_LLM_BASE_URL", "http://test-enrichment:8000")
         monkeypatch.setenv("ENRICHMENT_LLM_TIMEOUT_MS", "10000")
         monkeypatch.setenv("ENRICHMENT_LLM_MAX_RETRIES", "1")
         monkeypatch.setenv("ENRICHMENT_LLM_PRIVACY_ACKNOWLEDGED", "true")
 
-        monkeypatch.setenv("NORMALIZER_LLM_PROVIDER", "test-normalizer")
+        monkeypatch.setenv("NORMALIZER_LLM_APIKEY", "test-normalizer")
         monkeypatch.setenv("NORMALIZER_LLM_MODEL_ID", "test-model-normalizer")
         monkeypatch.setenv("NORMALIZER_LLM_BASE_URL", "http://test-normalizer:8000")
         monkeypatch.setenv("NORMALIZER_LLM_TIMEOUT_MS", "20000")
 
-        monkeypatch.setenv("EMBEDDING_PROVIDER", "test-embedding")
+        monkeypatch.setenv("EMBEDDING_APIKEY", "test-embedding")
         monkeypatch.setenv("EMBEDDING_MODEL_ID", "test-embed-model")
         monkeypatch.setenv("EMBEDDING_BASE_URL", "http://test-embedding:8000")
 
-        monkeypatch.setenv("RERANKER_PROVIDER", "test-reranker")
+        monkeypatch.setenv("RERANKER_APIKEY", "test-reranker")
         monkeypatch.setenv("RERANKER_MODEL_ID", "test-rerank-model")
         monkeypatch.setenv("RERANKER_BASE_URL", "http://test-reranker:8000")
 
@@ -1144,19 +1144,19 @@ class TestMultiModelConfigLoading:
         config = load_app_config()
 
         # 验证 4 个配置对象独立加载
-        assert config.enrichment_llm.provider == "test-enrichment"
+        assert config.enrichment_llm.api_key == "test-enrichment"
         assert config.enrichment_llm.model_id == "test-model-enrichment"
         assert config.enrichment_llm.timeout_ms == 10000
         assert config.enrichment_llm.privacy_acknowledged is True
 
-        assert config.normalizer_llm.provider == "test-normalizer"
+        assert config.normalizer_llm.api_key == "test-normalizer"
         assert config.normalizer_llm.model_id == "test-model-normalizer"
         assert config.normalizer_llm.timeout_ms == 20000
 
-        assert config.embedding.provider == "test-embedding"
+        assert config.embedding.api_key == "test-embedding"
         assert config.embedding.model_id == "test-embed-model"
 
-        assert config.reranker.provider == "test-reranker"
+        assert config.reranker.api_key == "test-reranker"
         assert config.reranker.model_id == "test-rerank-model"
 
         assert config.max_recommendation_candidates == 5
@@ -1168,7 +1168,7 @@ class TestMultiModelConfigLoading:
     def test_enrichment_llm_config_has_default_timeout(self):
         """EnrichmentLLMConfig 应有默认超时配置。"""
         config = EnrichmentLLMConfig(
-            provider="test",
+            api_key="test",
             model_id="test",
             base_url="http://test",
         )
@@ -1179,10 +1179,10 @@ class TestMultiModelConfigLoading:
     def test_embedding_config_has_longer_default_timeout(self):
         """EmbeddingConfig 默认超时应比 LLM 配置长。"""
         llm_config = EnrichmentLLMConfig(
-            provider="test", model_id="test", base_url="http://test",
+            api_key="test", model_id="test", base_url="http://test",
         )
         embed_config = EmbeddingConfig(
-            provider="test", model_id="test", base_url="http://test",
+            api_key="test", model_id="test", base_url="http://test",
         )
         assert embed_config.timeout_ms > llm_config.timeout_ms
 
@@ -1193,7 +1193,7 @@ class TestMultiModelConfigLoading:
 
         assert embed.timeout_ms != rerank.timeout_ms
         assert embed.max_retries != rerank.max_retries
-        assert embed.provider != rerank.provider
+        assert embed.api_key != rerank.api_key
 
 
 # ===========================================================================

@@ -520,7 +520,7 @@ class CaseSnapshotProvider:
 **实现方式与职责边界**
 
 - **共享实现**：`LLMClient` 位于 `backend/app/common/llm_client.py`，供 `llm-case-enrichment` 和 `cbr-retrieval-recommendation` 共同使用。
-- **配置独立**：本规格使用独立的「LLM enrichment」配置段（`provider`、`model`、`base_url`、`timeout`、`privacy_acknowledged`），与 `cbr-retrieval-recommendation` 的「LLM normalizer」配置、embedding、reranker 配置彼此独立。配置通过依赖注入或配置命名空间传递给共享客户端（详见下文「多模型配置隔离策略」）。
+- **配置独立**：本规格使用独立的「LLM enrichment」配置段（`api_key`、`model`、`base_url`、`timeout`、`privacy_acknowledged`），与 `cbr-retrieval-recommendation` 的「LLM normalizer」配置、embedding、reranker 配置彼此独立。配置通过依赖注入或配置命名空间传递给共享客户端（详见下文「多模型配置隔离策略」）。
 - **共享客户端职责**：HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
 - **本规格职责**：定义案例增强和推荐文案的 prompt 模板、输入输出 schema、结果校验逻辑；生产环境须确认供应商数据保留策略；**建立多模型配置隔离基础设施**（作为首个使用 LLM 的规格）。
 
@@ -531,7 +531,7 @@ class LLMClient:
     def complete_json(self, request: LLMCompletionRequest) -> LLMCompletionResult: ...
 ```
 
-- 前置条件：LLM 配置中的 `provider`、`model`、`base_url`、`timeout`、`privacy_acknowledged` 已配置；生产环境须确认供应商数据保留策略。Embedding 与 Reranker 由各自独立配置管理，不复用 LLM 接入参数。
+- 前置条件：LLM 配置中的 `api_key`、`model`、`base_url`、`timeout`、`privacy_acknowledged` 已配置；生产环境须确认供应商数据保留策略。Embedding 与 Reranker 由各自独立配置管理，不复用 LLM 接入参数。
 - 错误：`LLM_TIMEOUT`、`LLM_RATE_LIMITED`、`LLM_PROVIDER_ERROR`、`LLM_PRIVACY_CONFIG_MISSING`、`LLM_INVALID_RESPONSE`。
 - 日志：记供应商、模型、任务类型、状态与错误类型；不记完整案例正文。
 - **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/common/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
@@ -551,7 +551,7 @@ class LLMClient:
 
    class EnrichmentLLMConfig(BaseModel):
        """LLM enrichment 专用配置（本规格使用）"""
-       provider: str
+       api_key: str
        model_id: str
        base_url: str
        timeout_ms: int = 30000
@@ -560,7 +560,7 @@ class LLMClient:
 
    class NormalizerLLMConfig(BaseModel):
        """LLM normalizer 专用配置（cbr-retrieval-recommendation 使用）"""
-       provider: str
+       api_key: str
        model_id: str
        base_url: str
        timeout_ms: int = 30000
@@ -568,7 +568,7 @@ class LLMClient:
 
    class EmbeddingConfig(BaseModel):
        """Embedding 专用配置（case-vector-indexing 使用）"""
-       provider: str
+       api_key: str
        model_id: str
        base_url: str
        timeout_ms: int = 60000
@@ -576,7 +576,7 @@ class LLMClient:
 
    class RerankerConfig(BaseModel):
        """Reranker 专用配置（cbr-retrieval-recommendation 使用）"""
-       provider: str
+       api_key: str
        model_id: str
        base_url: str
        timeout_ms: int = 45000
@@ -596,7 +596,7 @@ class LLMClient:
   ```
 
 2. **配置加载与依赖注入**：
-  - **配置来源**：从 `.env` 文件读取环境变量（如 `ENRICHMENT_LLM_PROVIDER`、`ENRICHMENT_LLM_MODEL_ID`、`ENRICHMENT_LLM_BASE_URL` 等）。
+  - **配置来源**：从 `.env` 文件读取环境变量（如 `ENRICHMENT_LLM_APIKEY`、`ENRICHMENT_LLM_MODEL_ID`、`ENRICHMENT_LLM_BASE_URL` 等）。
   - **配置加载**：在 `backend/app/core/config.py` 中定义 `load_app_config() -> AppConfig` 函数，从环境变量构造四个配置对象。通过 `@lru_cache()` 装饰的 `get_app_config()` 函数在应用启动时加载一次，作为全局单例。
   - **依赖注入链路**：`EnrichmentRouter` → `EnrichmentJobRunner` → `EnrichmentService` → `LLMClient`，配置通过构造函数传递。示例：
     ```python
@@ -636,7 +636,7 @@ class LLMClient:
         # Mock 配置
         mock_config = AppConfig(
             enrichment_llm=EnrichmentLLMConfig(
-                provider="mock",
+                api_key="mock",
                 model_id="mock-model",
                 base_url="http://mock",
                 privacy_acknowledged=True
@@ -658,7 +658,7 @@ class LLMClient:
        """共享 LLM 客户端，支持多配置命名空间"""
 
        def __init__(self, config: Union[EnrichmentLLMConfig, NormalizerLLMConfig]):
-           self.provider = config.provider
+           self.api_key = config.api_key
            self.model_id = config.model_id
            self.base_url = config.base_url
            self.timeout_ms = config.timeout_ms

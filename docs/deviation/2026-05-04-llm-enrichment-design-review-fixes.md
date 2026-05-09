@@ -29,7 +29,7 @@
 
 - **Baseline**: 设计文档定义了四个独立配置类，但缺少配置来源、实例化、依赖注入和测试验证点的具体实现指导。
 - **Current Status**:
-  - 补充配置来源：从 `.env` 文件读取环境变量（如 `ENRICHMENT_LLM_PROVIDER`、`ENRICHMENT_LLM_MODEL_ID` 等）。
+  - 补充配置来源：从 `.env` 文件读取环境变量（如 `ENRICHMENT_LLM_APIKEY`、`ENRICHMENT_LLM_MODEL_ID` 等）。
   - 补充配置加载：在 `backend/app/core/config.py` 中定义 `load_app_config() -> AppConfig` 函数，应用启动时调用一次并存储为全局单例。
   - 补充依赖注入示例：定义 `get_enrichment_llm_config()` 依赖函数，在 Router 中通过 `Depends()` 注入。
   - 补充配置隔离测试验证点：验证配置对象独立性（内存地址不同）、配置值互不干扰、共享 `LLMClient` 正确路由到对应配置。

@@ -42,9 +42,9 @@ from app.enrichment.validators import OutputValidationException, ValidationError
 
 def _make_config(**overrides) -> EnrichmentLLMConfig:
     data = dict(
-        provider="deepseek",
-        model_id="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/v1",
+        api_key="sk-xxx",
+        model_id="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
         timeout_ms=30000,
         max_retries=2,
         privacy_acknowledged=True,

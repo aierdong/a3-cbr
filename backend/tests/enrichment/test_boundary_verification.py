@@ -53,9 +53,9 @@ _ENRICHMENT_DIR = Path(__file__).resolve().parent.parent.parent / "app" / "enric
 
 def _make_config(**overrides) -> EnrichmentLLMConfig:
     data = dict(
-        provider="deepseek",
-        model_id="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/v1",
+        api_key="deepseek",
+        model_id="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
         timeout_ms=30000,
         max_retries=2,
         privacy_acknowledged=True,
@@ -108,7 +108,7 @@ def _make_llm_result(content: str | None = None) -> LLMCompletionResult:
         )
     return LLMCompletionResult(
         content=content,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         usage=LLMTokenUsage(
             prompt_tokens=100, completion_tokens=50, total_tokens=150
         ),
@@ -151,7 +151,7 @@ def _make_copy_llm_result() -> LLMCompletionResult:
     )
     return LLMCompletionResult(
         content=content,
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         usage=LLMTokenUsage(
             prompt_tokens=200, completion_tokens=100, total_tokens=300
         ),

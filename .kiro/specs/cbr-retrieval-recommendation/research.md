@@ -8,7 +8,7 @@
   - 上游规格已将案例基础字段、LLM 推荐文案与候选向量搜索原语拆分；本规格只负责编排检索与推荐，不反向承担上游数据生命周期。
   - 推荐目标为 Hybrid CBR：硬过滤剔除明显无关案例，问题语义向量做初筛，reranker 产出纯语义相似度，结构化派生字段与业务参数提供可解释的局部评分，再由自实现的 `ScoreAggregator` 聚合得到最终排序。
   - `ScoreAggregator` 作为候选集内的加权聚合组件，逻辑简单、完全可控、易于测试，无外部 CBR 框架依赖。
-  - 远程重排默认 model 为 `qwen3-reranker-8b`，应通过独立的 `provider/model/base_url` 配置与适配层记录分值、状态、耗时及降级原因。
+  - 远程重排默认 model 为 `qwen3-reranker-8b`，应通过独立的 `api_key/model/base_url` 配置与适配层记录分值、状态、耗时及降级原因。
 
 ## Research Log
 
@@ -67,7 +67,7 @@
 
 ### Qwen3-Reranker-8B 重排接入
 
-- **Context**: 本规格需以默认 model `qwen3-reranker-8b` 重排候选，并支持独立 provider/base_url。
+- **Context**: 本规格需以默认 model `qwen3-reranker-8b` 重排候选，并支持独立 api_key/base_url。
 - **Sources Consulted**: Qwen/Qwen3-Reranker-8B 模型卡；vLLM/DeepInfra/Fireworks 等相关 API 说明的检索结果。
 - **Findings**:
   - Qwen3-Reranker-8B 为 instruction-aware cross-encoder reranker，常见用法为输入 query 与 documents，输出相关性分值。

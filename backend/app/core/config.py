@@ -48,7 +48,7 @@ settings = Settings()
 class EnrichmentLLMConfig(BaseModel):
     """LLM enrichment 专用配置（本规格使用）。"""
 
-    provider: str
+    api_key: str
     model_id: str
     base_url: str
     timeout_ms: int = 30000
@@ -59,7 +59,7 @@ class EnrichmentLLMConfig(BaseModel):
 class NormalizerLLMConfig(BaseModel):
     """LLM normalizer 专用配置（cbr-retrieval-recommendation 使用）。"""
 
-    provider: str
+    api_key: str
     model_id: str
     base_url: str
     timeout_ms: int = 30000
@@ -69,7 +69,7 @@ class NormalizerLLMConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     """Embedding 专用配置（case-vector-indexing 使用）。"""
 
-    provider: str
+    api_key: str
     model_id: str
     base_url: str
     timeout_ms: int = 60000
@@ -79,7 +79,7 @@ class EmbeddingConfig(BaseModel):
 class RerankerConfig(BaseModel):
     """Reranker 专用配置（cbr-retrieval-recommendation 使用）。"""
 
-    provider: str
+    api_key: str
     model_id: str
     base_url: str
     timeout_ms: int = 45000
@@ -100,10 +100,10 @@ def load_app_config() -> AppConfig:
     """从环境变量构造 AppConfig。
 
     环境变量命名约定：
-        ENRICHMENT_LLM_PROVIDER, ENRICHMENT_LLM_MODEL_ID, ...
-        NORMALIZER_LLM_PROVIDER, NORMALIZER_LLM_MODEL_ID, ...
-        EMBEDDING_PROVIDER, EMBEDDING_MODEL_ID, ...
-        RERANKER_PROVIDER, RERANKER_MODEL_ID, ...
+        ENRICHMENT_LLM_APIKEY, ENRICHMENT_LLM_MODEL_ID, ...
+        NORMALIZER_LLM_APIKEY, NORMALIZER_LLM_MODEL_ID, ...
+        EMBEDDING_APIKEY, EMBEDDING_MODEL_ID, ...
+        RERANKER_APIKEY, RERANKER_MODEL_ID, ...
         MAX_RECOMMENDATION_CANDIDATES
     """
 
@@ -121,34 +121,34 @@ def load_app_config() -> AppConfig:
         return raw.lower() in ("true", "1", "yes")
 
     enrichment_llm = EnrichmentLLMConfig(
-        provider=_env("ENRICHMENT_LLM_PROVIDER", "deepseek"),
-        model_id=_env("ENRICHMENT_LLM_MODEL_ID", "deepseek-v4-pro"),
-        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        api_key=_env("ENRICHMENT_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
+        model_id=_env("ENRICHMENT_LLM_MODEL_ID", "deepseek-v4-flash"),
+        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com"),
         timeout_ms=_int_env("ENRICHMENT_LLM_TIMEOUT_MS", 30000),
         max_retries=_int_env("ENRICHMENT_LLM_MAX_RETRIES", 2),
         privacy_acknowledged=_bool_env("ENRICHMENT_LLM_PRIVACY_ACKNOWLEDGED", False),
     )
 
     normalizer_llm = NormalizerLLMConfig(
-        provider=_env("NORMALIZER_LLM_PROVIDER", "deepseek"),
-        model_id=_env("NORMALIZER_LLM_MODEL_ID", "deepseek-v4-pro"),
-        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        api_key=_env("NORMALIZER_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
+        model_id=_env("NORMALIZER_LLM_MODEL_ID", "deepseek-v4-flash"),
+        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com"),
         timeout_ms=_int_env("NORMALIZER_LLM_TIMEOUT_MS", 30000),
         max_retries=_int_env("NORMALIZER_LLM_MAX_RETRIES", 2),
     )
 
     embedding = EmbeddingConfig(
-        provider=_env("EMBEDDING_PROVIDER", "bge-m3"),
-        model_id=_env("EMBEDDING_MODEL_ID", "bge-m3"),
-        base_url=_env("EMBEDDING_BASE_URL", "http://localhost:8080"),
+        api_key=_env("EMBEDDING_APIKEY", "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0"),
+        model_id=_env("EMBEDDING_MODEL_ID", "bge-large-zh"),
+        base_url=_env("EMBEDDING_BASE_URL", "https://qianfan.baidubce.com/v2"),
         timeout_ms=_int_env("EMBEDDING_TIMEOUT_MS", 60000),
         max_retries=_int_env("EMBEDDING_MAX_RETRIES", 3),
     )
 
     reranker = RerankerConfig(
-        provider=_env("RERANKER_PROVIDER", "bge-reranker"),
-        model_id=_env("RERANKER_MODEL_ID", "bge-reranker-v2-m3"),
-        base_url=_env("RERANKER_BASE_URL", "http://localhost:8081"),
+        api_key=_env("RERANKER_APIKEY", "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0"),
+        model_id=_env("RERANKER_MODEL_ID", "qwen3-reranker-8b"),
+        base_url=_env("RERANKER_BASE_URL", "https://qianfan.baidubce.com/v2"),
         timeout_ms=_int_env("RERANKER_TIMEOUT_MS", 45000),
         max_retries=_int_env("RERANKER_MAX_RETRIES", 2),
     )

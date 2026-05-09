@@ -52,7 +52,7 @@
 - `case-vector-indexing` 的 `VectorSearchService` 或 `/api/vector-search`：标准化用户问题、过滤条件、Top-K 问题语义候选、向量分值和索引元数据。
 - `recommendation-feedback` 的删除接口（DELETE `/api/recommendation-feedback`）：删除推荐运行或推荐项快照时，**必须**同步调用该接口清理关联反馈记录，确保不产生悬空引用。
 - Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、pytest。
-- 自实现 `ScoreAggregator` 执行候选集内的归一化、重加权和加权聚合；远程 reranker 默认 model `qwen3-reranker-8b`，并使用独立 `provider/model/base_url`。
+- 自实现 `ScoreAggregator` 执行候选集内的归一化、重加权和加权聚合；远程 reranker 默认 model `qwen3-reranker-8b`，并使用独立 `api_key/model/base_url`。
 
 ### Dependency Contract Snapshot
 
@@ -96,7 +96,7 @@
 #### Query Normalizer LLM 调用（使用共享 LLM 客户端）
 
 - **实现方式**：`QueryNormalizer` 通过 `backend/app/common/llm_client.py` 提供的共享 `LLMClient` 类执行 LLM 外呼。
-- **配置独立**：仅绑定「LLM normalizer」配置段（`provider` / `model_id` / `base_url` / timeout / retry 等），与 `llm-case-enrichment` 的文案 LLM、embedding、reranker 三套配置彼此独立。**多模型配置隔离基础设施由 `llm-case-enrichment` 规格建立**（详见该规格的「多模型配置隔离策略」章节），本规格复用该基础设施并使用 `NormalizerLLMConfig` 配置类。
+- **配置独立**：仅绑定「LLM normalizer」配置段（`api_key` / `model_id` / `base_url` / timeout / retry 等），与 `llm-case-enrichment` 的文案 LLM、embedding、reranker 三套配置彼此独立。**多模型配置隔离基础设施由 `llm-case-enrichment` 规格建立**（详见该规格的「多模型配置隔离策略」章节），本规格复用该基础设施并使用 `NormalizerLLMConfig` 配置类。
 - **共享客户端职责**：HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
 - **本规格职责**：定义 LLM normalizer 的 prompt 模板、输入输出 schema、结果校验逻辑；单次外呼返回可被 Pydantic 校验的结构化结果，包含标准化检索文本与 `query_structured_suggestions`；失败语义对齐 Requirement `1.7` / Failure Mode Matrix 中 LLM normalizer 失败路径。
 - **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/common/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
@@ -113,8 +113,8 @@
 - 上游案例过滤字段、状态语义、详情响应、解决步骤或效果字段变化。
 - 向量搜索请求/响应、候选分值语义、索引状态、问题侧向量输入策略或过滤字段变化。
 - 推荐文案接口的请求/响应、候选顺序保证或失败语义变化。
-- 查询 LLM normalizer（`NormalizerLLMClient`）的请求/响应 schema、`provider/model_id/base_url`、超时、重试或供应商响应格式变化。
-- 聚合算法、reranker `provider/model/base_url`、分值范围或供应商响应格式变化。
+- 查询 LLM normalizer（`NormalizerLLMClient`）的请求/响应 schema、`api_key/model_id/base_url`、超时、重试或供应商响应格式变化。
+- 聚合算法、reranker `api_key/model/base_url`、分值范围或供应商响应格式变化。
 - 下游反馈规格需要改变 `recommendation_run_id` 或 `recommendation_item_id` 引用契约。
 - 下游反馈规格删除接口（DELETE `/api/recommendation-feedback`）的请求/响应契约或错误语义变化。
 
@@ -1152,7 +1152,7 @@ class RerankerClient:
     def rerank(self, request: RerankRequest) -> RerankResponse: ...
 ```
 
-- Default config: `provider`、`model_id="qwen3-reranker-8b"`、`base_url`、timeout、max_candidates、privacy_acknowledged；仅用于 Reranker，不复用 LLM 或 Embedding 配置。
+- Default config: `api_key`、`model_id="qwen3-reranker-8b"`、`base_url`、timeout、max_candidates、privacy_acknowledged；仅用于 Reranker，不复用 LLM 或 Embedding 配置。
 - Input: 标准化查询文本、可选 instruction、按向量候选顺序排列的候选问题画像文档和 `case_id`。
 - Output: one semantic relevance score per input candidate, normalized to `0..1` when provider supports it; raw score kept in metadata when needed.
 - Errors: `RERANKER_TIMEOUT`、`RERANKER_RATE_LIMITED`、`RERANKER_PROVIDER_ERROR`、`RERANKER_INVALID_RESPONSE`、`RERANKER_CONFIG_MISSING`。

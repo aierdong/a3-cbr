@@ -111,7 +111,7 @@ with RecommendationRunContext(repository, request) as run_id:
 1. **定义独立配置类**:
    ```python
    class NormalizerLLMConfig(BaseModel):
-       provider: str
+       api_key: str
        model_id: str
        base_url: str
        timeout: int

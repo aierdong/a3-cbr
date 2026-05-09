@@ -3,7 +3,7 @@
 - [ ] 1. 建立 LLM 增强基础设施
 
 - [x] 1.1 扩展运行配置和错误码
-  - **建立多模型配置基础设施**（作为首个使用 LLM 的规格）：在 `backend/app/core/config.py` 中定义 4 个独立配置类 `EnrichmentLLMConfig`（本规格使用）、`NormalizerLLMConfig`（供 `cbr-retrieval-recommendation` 使用）、`EmbeddingConfig`（供 `case-vector-indexing` 使用）、`RerankerConfig`（供 `cbr-retrieval-recommendation` 使用），每个配置类包含独立的 `provider`、`model_id`、`base_url`、`timeout_ms`、`max_retries` 等字段；`EnrichmentLLMConfig` 额外包含 `privacy_acknowledged` 字段。
+  - **建立多模型配置基础设施**（作为首个使用 LLM 的规格）：在 `backend/app/core/config.py` 中定义 4 个独立配置类 `EnrichmentLLMConfig`（本规格使用）、`NormalizerLLMConfig`（供 `cbr-retrieval-recommendation` 使用）、`EmbeddingConfig`（供 `case-vector-indexing` 使用）、`RerankerConfig`（供 `cbr-retrieval-recommendation` 使用），每个配置类包含独立的 `api_key`、`model_id`、`base_url`、`timeout_ms`、`max_retries` 等字段；`EnrichmentLLMConfig` 额外包含 `privacy_acknowledged` 字段。
   - 在应用启动时从环境变量加载 4 个配置对象，通过依赖注入传递给各自的客户端或服务。配置管理采用简单实用的方案，只需在启动时保证正确加载配置即可。
   - 增加 LLM 增强相关错误码，覆盖案例不可增强、输出校验失败、供应商失败和隐私配置缺失。
   - 仅向共享配置和错误映射追加本规格所需配置值与错误码，不拥有 `backend/app/core/config.py`、`backend/app/core/errors.py` 或 `ErrorMapper` 基础实现。
