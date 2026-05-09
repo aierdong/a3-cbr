@@ -51,7 +51,7 @@
   - _Requirements: 4.2, 6.3, 6.4, 6.5_
   - _Boundary: LLMClient (shared infrastructure)_
 
-- [ ] 2.4 (P) 实现 LLM 输出校验
+- [x] 2.4 (P) 实现 LLM 输出校验
   - 校验摘要、结构化建议、标签建议、来源引用、推荐文案和候选引用是否符合 schema。
   - 在摘要或推荐文案不可可靠生成时，强制输出 `missing_information[]`，并阻止“空理由但宣称成功”的结果发布。
   - 对标签建议执行去空、去重、数量限制和越界处理。
