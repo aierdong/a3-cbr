@@ -119,7 +119,7 @@
 
 - [ ] 4. 暴露 API 并接入应用
 
-- [ ] 4.1 实现案例增强 API
+- [x] 4.1 实现案例增强 API
   - 暴露创建增强运行、查询当前增强状态、删除派生数据和重试运行接口。
   - 创建增强运行和重试接口立即返回 HTTP 200 + `running` 状态，客户端无需等待或轮询。
   - **删除接口**（与 `docs/cascade-deletion-design.md` §2.2 对齐）：`POST /api/enrichment/delete`，接收 `DeleteEnrichmentRequest`（含 `case_id` 或 `enrichment_id`、`reason`、`requested_by`），在单个事务内删除派生结果和运行记录。至少提供 `case_id` 或 `enrichment_id` 之一。对不存在的派生数据返回 HTTP 200 + `deleted_count: 0`（幂等），参数校验失败返回 HTTP 422，删除失败返回 HTTP 500。

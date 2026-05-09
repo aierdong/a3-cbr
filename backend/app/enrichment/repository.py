@@ -7,7 +7,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enrichment.models import (
@@ -239,6 +239,29 @@ class EnrichmentRepository:
         """
         stmt = select(CaseEnrichmentRun).where(
             CaseEnrichmentRun.run_id == run_id,
+        )
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_latest_run(
+        self,
+        case_id: str,
+    ) -> Optional[CaseEnrichmentRun]:
+        """查询指定案例的最新增强运行记录。
+
+        按 started_at 降序返回第一条记录。
+
+        Args:
+            case_id: 案例标识。
+
+        Returns:
+            最新的运行记录 ORM 对象，不存在时返回 None。
+        """
+        stmt = (
+            select(CaseEnrichmentRun)
+            .where(CaseEnrichmentRun.case_id == case_id)
+            .order_by(desc(CaseEnrichmentRun.started_at))
+            .limit(1)
         )
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()

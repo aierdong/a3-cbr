@@ -3,6 +3,7 @@ from fastapi import FastAPI
 
 from app.cases.router import router as case_router
 from app.core.config import settings
+from app.enrichment.router import router as enrichment_router
 
 
 def create_app() -> FastAPI:
@@ -15,6 +16,9 @@ def create_app() -> FastAPI:
 
     # 注册案例路由
     app.include_router(case_router)
+
+    # 注册增强路由
+    app.include_router(enrichment_router)
 
     return app
 
