@@ -456,6 +456,26 @@ class OutputValidator:
                 message=f"推荐文案项[{index}]注入嫌疑: {reason}",
             )
 
+    @staticmethod
+    def is_result_publishable(output: CaseEnrichmentOutput) -> bool:
+        """判断增强结果是否可发布为 valid 状态。
+
+        当 missing_information 中存在 blocking_level=required 的条目时，
+        结果不得发布为 valid（不得发布伪成功结果）。
+
+        Args:
+            output: 已校验通过的增强输出
+
+        Returns:
+            True 表示可发布，False 表示存在阻断性缺失信息
+        """
+        from app.enrichment.schemas import BlockingLevel
+
+        return not any(
+            item.blocking_level == BlockingLevel.REQUIRED
+            for item in output.missing_information
+        )
+
     def _check_missing_information_consistency(
         self,
         output: CaseEnrichmentOutput,
@@ -463,10 +483,16 @@ class OutputValidator:
     ) -> None:
         """校验 missing_information 一致性。
 
-        若 problem_summary 或 solution_summary 为空，
-        但 missing_information 为空列表，则视为"空理由但宣称成功"，
-        阻止发布。
+        校验规则：
+        1. 若 problem_summary 或 solution_summary 为空，
+           但 missing_information 为空列表，则视为"空理由但宣称成功"，
+           阻止发布。
+        2. 若摘要存在但 missing_information 包含 blocking_level=required 的条目，
+           则视为"伪成功"——声称能生成但实际有阻断性缺失，
+           阻止发布。
         """
+        from app.enrichment.schemas import BlockingLevel
+
         summaries_missing = (
             output.problem_summary is None
             or output.solution_summary is None
@@ -490,6 +516,34 @@ class OutputValidator:
                         message=(
                             "problem_summary 或 solution_summary 为空时，"
                             "missing_information 不得为空"
+                        ),
+                        code=ValidationErrorCode.CONSTRAINT_VIOLATION,
+                    ),
+                ],
+            )
+
+        has_required_blocker = any(
+            item.blocking_level == BlockingLevel.REQUIRED
+            for item in output.missing_information
+        )
+        if has_required_blocker and not summaries_missing:
+            logger.warning(
+                "missing_information 含 required 级别条目但摘要已生成"
+                "（伪成功）: case_id=%s",
+                case_id,
+            )
+            raise OutputValidationException(
+                error_code=ValidationErrorCode.CONSTRAINT_VIOLATION,
+                message=(
+                    "missing_information 中存在 required 级别的缺失条目时，"
+                    "不得发布摘要（伪成功结果）"
+                ),
+                errors=[
+                    ValidationError(
+                        field="missing_information",
+                        message=(
+                            "blocking_level=required 的缺失条目存在时，"
+                            "problem_summary 和 solution_summary 必须为 null"
                         ),
                         code=ValidationErrorCode.CONSTRAINT_VIOLATION,
                     ),
