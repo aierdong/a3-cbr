@@ -42,7 +42,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 5.1, 6.2_
   - _Boundary: PromptCatalog_
 
-- [ ] 2.3 (P) 实现共享 LLM 客户端基础设施
+- [x] 2.3 (P) 实现共享 LLM 客户端基础设施
   - 在 `backend/app/common/llm_client.py` 中实现共享 `LLMClient` 类，支持配置命名空间（通过构造函数接收 `Union[EnrichmentLLMConfig, NormalizerLLMConfig]` 等配置对象）。
   - 提供 HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
   - 接入 `deepseek-v4-pro` 或兼容模型配置，统一处理超时、限流、供应商错误和不可解析响应。
