@@ -18,9 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 if TYPE_CHECKING:
     from app.enrichment.jobs import EnrichmentJobRunner
+    from app.enrichment.recommendation_copy import RecommendationCopyService
     from app.enrichment.service import EnrichmentService
 
-from app.core.errors import ErrorCode, ErrorResponse, create_error_response
+from app.core.errors import ErrorCode, ErrorResponse, ErrorMapper, create_error_response
 from app.db.session import AsyncSession, get_db
 from app.enrichment.schemas import (
     CaseEnrichmentResultResponse,
@@ -30,6 +31,8 @@ from app.enrichment.schemas import (
     DeleteEnrichmentResponse,
     EnrichmentRunResponse,
     MissingInformationItem,
+    RecommendationCopyRequest,
+    RecommendationCopyResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +124,43 @@ def get_enrichment_service(
     validator = OutputValidator()
 
     return EnrichmentService(
+        llm_client=llm_client,
+        prompt_catalog=prompt_catalog,
+        validator=validator,
+        repository=repository,
+        config=config.enrichment_llm,
+    )
+
+
+def get_recommendation_copy_service(
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """获取 RecommendationCopyService 实例。
+
+    构造推荐文案服务的依赖链:
+    Router -> RecommendationCopyService -> LLMClient/PromptCatalog/Validator/Repository。
+
+    Args:
+        session: 数据库会话
+
+    Returns:
+        RecommendationCopyService: 推荐文案服务实例
+    """
+    from app.common.llm_client import LLMClient
+    from app.core.config import get_app_config
+    from app.enrichment.prompts import PromptCatalog
+    from app.enrichment.recommendation_copy import RecommendationCopyService
+    from app.enrichment.repository import EnrichmentRepository
+    from app.enrichment.validators import OutputValidator
+
+    config = get_app_config()
+
+    repository = EnrichmentRepository(session)
+    llm_client = LLMClient(config.enrichment_llm)
+    prompt_catalog = PromptCatalog()
+    validator = OutputValidator()
+
+    return RecommendationCopyService(
         llm_client=llm_client,
         prompt_catalog=prompt_catalog,
         validator=validator,
@@ -335,6 +375,47 @@ async def retry_enrichment_run(
                     message=error_msg,
                 ).model_dump(),
             )
+
+
+@router.post(
+    "/api/recommendations/copy",
+    response_model=RecommendationCopyResponse,
+    responses={
+        503: {"model": ErrorResponse, "description": "LLM 调用或校验失败"},
+    },
+    summary="生成推荐文案",
+    description=(
+        "为已排序的推荐候选案例生成解释文案。"
+        "响应按输入候选顺序返回推荐理由、可参考解决点和注意事项。"
+        "不包含排序或相似度修改字段。"
+    ),
+)
+async def generate_recommendation_copy(
+    request: RecommendationCopyRequest,
+    service: Annotated[
+        "RecommendationCopyService", Depends(get_recommendation_copy_service)
+    ],
+) -> RecommendationCopyResponse:
+    """生成推荐文案。
+
+    委托 RecommendationCopyService 执行。
+    LLM 调用失败或校验失败时返回 HTTP 503。
+    响应按输入候选顺序返回解释文案，不包含排序或相似度修改字段。
+
+    Args:
+        request: 推荐文案请求，含当前问题和已排序候选列表
+        service: 推荐文案服务实例
+
+    Returns:
+        RecommendationCopyResponse: 推荐文案响应
+
+    Raises:
+        HTTPException: LLM 调用或校验失败时返回 503
+    """
+    try:
+        return await service.generate_copy(request)
+    except Exception as exc:
+        raise ErrorMapper().to_http_exception(exc)
 
 
 # ---------------------------------------------------------------------------
