@@ -2,6 +2,10 @@
 
 负责从环境变量读取数据库连接和应用运行配置。
 """
+import os
+from functools import lru_cache
+
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,3 +32,137 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# ---------------------------------------------------------------------------
+# 多模型配置基础设施
+# ---------------------------------------------------------------------------
+# 四个独立配置类，分别供不同下游规格使用：
+#   - EnrichmentLLMConfig: llm-case-enrichment
+#   - NormalizerLLMConfig: cbr-retrieval-recommendation
+#   - EmbeddingConfig:     case-vector-indexing
+#   - RerankerConfig:      cbr-retrieval-recommendation
+# ---------------------------------------------------------------------------
+
+
+class EnrichmentLLMConfig(BaseModel):
+    """LLM enrichment 专用配置（本规格使用）。"""
+
+    provider: str
+    model_id: str
+    base_url: str
+    timeout_ms: int = 30000
+    max_retries: int = 2
+    privacy_acknowledged: bool = False
+
+
+class NormalizerLLMConfig(BaseModel):
+    """LLM normalizer 专用配置（cbr-retrieval-recommendation 使用）。"""
+
+    provider: str
+    model_id: str
+    base_url: str
+    timeout_ms: int = 30000
+    max_retries: int = 2
+
+
+class EmbeddingConfig(BaseModel):
+    """Embedding 专用配置（case-vector-indexing 使用）。"""
+
+    provider: str
+    model_id: str
+    base_url: str
+    timeout_ms: int = 60000
+    max_retries: int = 3
+
+
+class RerankerConfig(BaseModel):
+    """Reranker 专用配置（cbr-retrieval-recommendation 使用）。"""
+
+    provider: str
+    model_id: str
+    base_url: str
+    timeout_ms: int = 45000
+    max_retries: int = 2
+
+
+class AppConfig(BaseModel):
+    """聚合四个模型配置 + 全局共享配置。"""
+
+    enrichment_llm: EnrichmentLLMConfig
+    normalizer_llm: NormalizerLLMConfig
+    embedding: EmbeddingConfig
+    reranker: RerankerConfig
+    max_recommendation_candidates: int = 10
+
+
+def load_app_config() -> AppConfig:
+    """从环境变量构造 AppConfig。
+
+    环境变量命名约定：
+        ENRICHMENT_LLM_PROVIDER, ENRICHMENT_LLM_MODEL_ID, ...
+        NORMALIZER_LLM_PROVIDER, NORMALIZER_LLM_MODEL_ID, ...
+        EMBEDDING_PROVIDER, EMBEDDING_MODEL_ID, ...
+        RERANKER_PROVIDER, RERANKER_MODEL_ID, ...
+        MAX_RECOMMENDATION_CANDIDATES
+    """
+
+    def _env(name: str, default: str = "") -> str:
+        return os.environ.get(name, default)
+
+    def _int_env(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        return int(raw) if raw is not None else default
+
+    def _bool_env(name: str, default: bool) -> bool:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        return raw.lower() in ("true", "1", "yes")
+
+    enrichment_llm = EnrichmentLLMConfig(
+        provider=_env("ENRICHMENT_LLM_PROVIDER", "deepseek"),
+        model_id=_env("ENRICHMENT_LLM_MODEL_ID", "deepseek-v4-pro"),
+        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        timeout_ms=_int_env("ENRICHMENT_LLM_TIMEOUT_MS", 30000),
+        max_retries=_int_env("ENRICHMENT_LLM_MAX_RETRIES", 2),
+        privacy_acknowledged=_bool_env("ENRICHMENT_LLM_PRIVACY_ACKNOWLEDGED", False),
+    )
+
+    normalizer_llm = NormalizerLLMConfig(
+        provider=_env("NORMALIZER_LLM_PROVIDER", "deepseek"),
+        model_id=_env("NORMALIZER_LLM_MODEL_ID", "deepseek-v4-pro"),
+        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        timeout_ms=_int_env("NORMALIZER_LLM_TIMEOUT_MS", 30000),
+        max_retries=_int_env("NORMALIZER_LLM_MAX_RETRIES", 2),
+    )
+
+    embedding = EmbeddingConfig(
+        provider=_env("EMBEDDING_PROVIDER", "bge-m3"),
+        model_id=_env("EMBEDDING_MODEL_ID", "bge-m3"),
+        base_url=_env("EMBEDDING_BASE_URL", "http://localhost:8080"),
+        timeout_ms=_int_env("EMBEDDING_TIMEOUT_MS", 60000),
+        max_retries=_int_env("EMBEDDING_MAX_RETRIES", 3),
+    )
+
+    reranker = RerankerConfig(
+        provider=_env("RERANKER_PROVIDER", "bge-reranker"),
+        model_id=_env("RERANKER_MODEL_ID", "bge-reranker-v2-m3"),
+        base_url=_env("RERANKER_BASE_URL", "http://localhost:8081"),
+        timeout_ms=_int_env("RERANKER_TIMEOUT_MS", 45000),
+        max_retries=_int_env("RERANKER_MAX_RETRIES", 2),
+    )
+
+    return AppConfig(
+        enrichment_llm=enrichment_llm,
+        normalizer_llm=normalizer_llm,
+        embedding=embedding,
+        reranker=reranker,
+        max_recommendation_candidates=_int_env("MAX_RECOMMENDATION_CANDIDATES", 10),
+    )
+
+
+@lru_cache()
+def get_app_config() -> AppConfig:
+    """全局单例配置，应用启动时加载一次。"""
+    return load_app_config()
