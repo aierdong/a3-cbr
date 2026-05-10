@@ -84,7 +84,7 @@
   - _Requirements: 2.3, 2.4, 4.3, 4.4, 6.2, 6.3_
   - _Boundary: VectorJobRunner, VectorIndexService_
 
-- [ ] 3.4 实现手动删除一致性
+- [x] 3.4 实现手动删除一致性
   - 当调用方明确请求删除时，物理删除向量记录。
   - 通过任务记录保留状态变化审计（记录 `old_vector_id` 和 `old_content_hash`），并确保搜索不会返回已删除案例。
   - **本规格只提供删除 API，不实现级联删除协调器**（协调器由 `a3-case-management` 的 `CaseDeleteCoordinator` 负责）。

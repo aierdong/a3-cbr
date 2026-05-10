@@ -12,7 +12,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import func, select
 
-from app.vector_indexing.models import CaseVector, EmbeddingJobStatus, VectorIndexJobType
+from app.vector_indexing.models import (
+    CaseVector,
+    EmbeddingJobStatus,
+    VectorIndexJob,
+    VectorIndexJobType,
+)
 
 
 def _utc_now() -> datetime:
@@ -151,9 +156,33 @@ async def test_create_and_update_job_persists_failure_fields(db_session):
     assert patched.error_stage == "embedding_call"
 
 
+def _remove_job_create(
+    *,
+    job_id: str,
+    case_id: str,
+    old_vid: str | None,
+    old_hash: str | None,
+):
+    from app.vector_indexing.repository_types import VectorIndexJobCreate
+
+    now = _utc_now()
+    return VectorIndexJobCreate(
+        job_id=job_id,
+        case_id=case_id,
+        job_type=VectorIndexJobType.REMOVE.value,
+        status=EmbeddingJobStatus.SUCCEEDED.value,
+        source_version={"delete_reason": "case_deleted", "requested_by": "system"},
+        retry_count=0,
+        old_vector_id=old_vid,
+        old_content_hash=old_hash,
+        started_at=now,
+        finished_at=now,
+    )
+
+
 @pytest.mark.asyncio
 async def test_delete_case_vector_removes_vector_and_jobs(db_session, dim):
-    """删除应按案例清理向量与同案例任务行。"""
+    """删除应按案例清理向量、历史任务并追加 remove 审计行。"""
     from app.vector_indexing.repository import VectorRepository
     from app.vector_indexing.repository_types import CaseVectorCreate, VectorIndexJobCreate
 
@@ -186,16 +215,43 @@ async def test_delete_case_vector_removes_vector_and_jobs(db_session, dim):
     )
     await db_session.commit()
 
-    dv, dj = await repo.delete_case_vector(case_id="case_del", vector_id=None)
+    first_remove_id = "job_rm_1"
+    dv, dj = await repo.delete_case_vector(
+        case_id="case_del",
+        vector_id=None,
+        remove_job=_remove_job_create(
+            job_id=first_remove_id,
+            case_id="case_del",
+            old_vid="vec_del",
+            old_hash="audit_hash_placeholder",
+        ),
+    )
     await db_session.commit()
 
     assert dv == ["vec_del"]
     assert "job_del" in dj
 
-    dv2, dj2 = await repo.delete_case_vector(case_id="case_del", vector_id=None)
+    res_one = await db_session.execute(
+        select(VectorIndexJob).where(VectorIndexJob.case_id == "case_del"),
+    )
+    rows_after_first = res_one.scalars().all()
+    assert len(rows_after_first) == 1
+    assert rows_after_first[0].job_type == VectorIndexJobType.REMOVE.value
+    assert rows_after_first[0].old_vector_id == "vec_del"
+
+    dv2, dj2 = await repo.delete_case_vector(
+        case_id="case_del",
+        vector_id=None,
+        remove_job=_remove_job_create(
+            job_id="job_rm_2",
+            case_id="case_del",
+            old_vid=None,
+            old_hash=None,
+        ),
+    )
     await db_session.commit()
     assert dv2 == []
-    assert dj2 == []
+    assert dj2 == [first_remove_id]
 
 
 @pytest.mark.asyncio

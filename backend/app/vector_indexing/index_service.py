@@ -18,7 +18,7 @@ from app.vector_indexing.embedding_input_models import (
     EmbeddingComposeNotIndexable,
     EmbeddingInput,
 )
-from app.vector_indexing.models import EmbeddingJobStatus, VectorIndexJobType
+from app.vector_indexing.models import CaseVector, EmbeddingJobStatus, VectorIndexJobType
 from app.vector_indexing.repository import VectorRepository
 from app.vector_indexing.repository_types import (
     CaseVectorCreate,
@@ -29,6 +29,8 @@ from app.vector_indexing.repository_types import (
 )
 from app.vector_indexing.schemas import (
     CaseVectorRecord,
+    DeleteVectorIndexRequest,
+    DeleteVectorIndexResponse,
     EmbeddingRequest,
     EmbeddingResult,
     RefreshVectorIndexRequest,
@@ -108,6 +110,23 @@ def _job_record_matches_source_version(
 
 def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _case_vector_audit_hash(vec: CaseVectorPersisted) -> str:
+    """对已索引向量做可追溯摘要哈希（不读取向量坐标明文载荷）。"""
+    ts = _normalize_utc(vec.case_updated_at).isoformat()
+    parts = "|".join(
+        (
+            vec.vector_id,
+            vec.case_id,
+            ts,
+            vec.enrichment_id or "",
+            vec.enrichment_status or "",
+            vec.embedding_model_id,
+            str(vec.embedding_dimension),
+        ),
+    )
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
 def _job_to_response(record: VectorIndexJobRecord) -> VectorIndexJobResponse:
@@ -419,6 +438,73 @@ class VectorIndexService:
             )
 
         return await self._persist_refreshed_vector(job_id, case_id, snap, sv, composed, emb_res)
+
+    async def delete_case_vector(
+        self,
+        request: DeleteVectorIndexRequest,
+    ) -> DeleteVectorIndexResponse:
+        """手动删除：清除向量与同案例历史任务，并写入 ``job_type=remove`` 审计行。
+
+        Args:
+            request: 含案例或向量标识、删除原因与请求者身份的删除请求。
+
+        Returns:
+            幂等删除结果（``deleted_count`` 为本事务内删除的向量行数）。
+
+        Raises:
+            ValueError: ``case_id`` 与 ``vector_id`` 指向的案例不一致。
+        """
+        vector_row = None
+        if request.vector_id is not None:
+            vector_row = await self._db.get(CaseVector, request.vector_id)
+            if vector_row is None:
+                now = _utc_now()
+                return DeleteVectorIndexResponse(success=True, deleted_count=0, deleted_at=now)
+            if request.case_id is not None and request.case_id != vector_row.case_id:
+                raise ValueError("vector_id 所属案例与 case_id 不一致")
+
+        if request.case_id is not None:
+            resolved_case_id = request.case_id
+        elif vector_row is not None:
+            resolved_case_id = vector_row.case_id
+        else:
+            raise ValueError("case_id 与 vector_id 至少填写其一")
+
+        cur_vec = await self._repo.get_current_vector(resolved_case_id)
+        old_vid = cur_vec.vector_id if cur_vec is not None else None
+        old_hash = _case_vector_audit_hash(cur_vec) if cur_vec is not None else None
+
+        now = _utc_now()
+        job_id = uuid4().hex
+        meta = {
+            "delete_reason": request.reason.value,
+            "requested_by": request.requested_by,
+        }
+        remove_payload = VectorIndexJobCreate(
+            job_id=job_id,
+            case_id=resolved_case_id,
+            job_type=VectorIndexJobType.REMOVE.value,
+            status=EmbeddingJobStatus.SUCCEEDED.value,
+            source_version=meta,
+            retry_count=0,
+            old_vector_id=old_vid,
+            old_content_hash=old_hash,
+            started_at=now,
+            finished_at=now,
+        )
+
+        deleted_vec_ids, _removed_hist = await self._repo.delete_case_vector(
+            request.case_id,
+            request.vector_id,
+            remove_payload,
+        )
+        await self._db.flush()
+
+        return DeleteVectorIndexResponse(
+            success=True,
+            deleted_count=len(deleted_vec_ids),
+            deleted_at=now,
+        )
 
     async def retry_job(self, job_id: str) -> VectorIndexJobResponse:
         """委托已注册的 ``VectorJobRunner`` 执行手动重试。"""

@@ -292,21 +292,26 @@ class VectorRepository:
         self,
         case_id: str | None,
         vector_id: str | None,
+        remove_job: VectorIndexJobCreate,
     ) -> tuple[list[str], list[str]]:
-        """删除向量行及其同一案例下的任务记录（幂等）。
+        """在同一事务内删除向量与同案例历史任务，并写入 remove 审计任务。
 
         Args:
             case_id: 按案例删除时可填。
             vector_id: 按向量主键删除时可填。
+            remove_job: ``job_type=remove`` 的最终审计行（通常 ``status=succeeded``）。
 
         Returns:
-            (已删除 vector_id 列表, 已删除 job_id 列表)。
+            (已删除 vector_id 列表, 本次清除的历史 ``job_id`` 列表)。
 
         Raises:
-            ValueError: 两个标识均未提供。
+            ValueError: 两个标识均未提供；``remove_job`` 类型非法；
+                ``remove_job.case_id`` 与解析案例不一致；或 ``case_id`` 与向量行不匹配。
         """
         if case_id is None and vector_id is None:
             raise ValueError("case_id 与 vector_id 至少填写其一")
+        if remove_job.job_type != VectorIndexJobType.REMOVE.value:
+            raise ValueError("remove_job.job_type 必须为 remove")
 
         resolved_case: str | None = None
         target_vector_pk: str | None = None
@@ -317,6 +322,8 @@ class VectorRepository:
                 return ([], [])
             resolved_case = hit.case_id
             target_vector_pk = vector_id
+            if case_id is not None and case_id != resolved_case:
+                raise ValueError("vector_id 所属案例与 case_id 不一致")
         else:
             assert case_id is not None
             resolved_case = case_id
@@ -324,6 +331,10 @@ class VectorRepository:
             cv = q.scalar_one_or_none()
             if cv is not None:
                 target_vector_pk = cv.vector_id
+
+        assert resolved_case is not None
+        if remove_job.case_id != resolved_case:
+            raise ValueError("remove_job.case_id 与解析得到的案例标识不一致")
 
         job_sel = await self._db.execute(
             select(VectorIndexJob.job_id).where(VectorIndexJob.case_id == resolved_case),
@@ -340,6 +351,7 @@ class VectorRepository:
             )
             deleted_vector_ids.append(target_vector_pk)
 
+        await self.create_job(remove_job)
         await self._db.flush()
         return (deleted_vector_ids, deleted_job_ids)
 

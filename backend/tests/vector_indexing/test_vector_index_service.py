@@ -21,10 +21,12 @@ from app.vector_indexing.embedding_input_models import (
     EmbeddingSourceRef,
 )
 from app.vector_indexing.index_service import VectorIndexService
-from app.vector_indexing.models import CaseVector, VectorIndexJob
+from app.vector_indexing.models import CaseVector, VectorIndexJob, VectorIndexJobType
 from app.vector_indexing.repository import VectorRepository
-from app.vector_indexing.repository_types import CaseVectorCreate
+from app.vector_indexing.repository_types import CaseVectorCreate, VectorSearchQuery
 from app.vector_indexing.schemas import (
+    DeleteVectorIndexReason,
+    DeleteVectorIndexRequest,
     EmbeddingResult,
     RefreshVectorIndexRequest,
     SourceVersion,
@@ -364,4 +366,82 @@ async def test_get_case_status_published_without_jobs(db_session):
     assert status.status == VectorIndexStatus.PUBLISHED
     assert status.latest_job is None
     assert status.current_vector is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_case_vector_audits_remove_and_excludes_from_search(db_session):
+    """手动删除应写入 remove 审计并从检索表中移除行。"""
+    dim = 1024
+    repo = VectorRepository(db_session)
+    await repo.refresh_case_vector(
+        "case_rm",
+        CaseVectorCreate(
+            vector_id="vec_rm",
+            case_id="case_rm",
+            case_updated_at=_utc_now(),
+            enrichment_id="enr_1",
+            enrichment_status="active",
+            embedding_model_id="bge-large-zh",
+            embedding_dimension=dim,
+            embedding_vector=_basis(dim, 3),
+            brand_id="b_rm",
+            store_id="s_rm",
+            problem_type="pt_rm",
+            tags=["x"],
+            case_status="open",
+        ),
+    )
+    await db_session.commit()
+
+    snap = IndexSourceSnapshot(case_id="case_rm")
+    embed = AsyncMock()
+    svc = _service(
+        db_session,
+        snap=snap,
+        composer_payload=EmbeddingInput(
+            text="q",
+            sections=[_emb_section("q")],
+            degraded_reason=None,
+        ),
+        embed_client=embed,
+    )
+
+    hits_before = await repo.search(
+        VectorSearchQuery(
+            query_embedding=_basis(dim, 3),
+            top_k=5,
+            brand_id="b_rm",
+        ),
+    )
+    assert any(h.case_id == "case_rm" for h in hits_before)
+
+    del_resp = await svc.delete_case_vector(
+        DeleteVectorIndexRequest(
+            case_id="case_rm",
+            reason=DeleteVectorIndexReason.CASE_DELETED,
+            requested_by="anonymous_user",
+        ),
+    )
+    await db_session.commit()
+
+    assert del_resp.success is True
+    assert del_resp.deleted_count == 1
+
+    stmt = select(VectorIndexJob).where(VectorIndexJob.case_id == "case_rm")
+    res = await db_session.execute(stmt)
+    jobs = res.scalars().all()
+    assert len(jobs) == 1
+    assert jobs[0].job_type == VectorIndexJobType.REMOVE.value
+    assert jobs[0].status == "succeeded"
+    assert jobs[0].old_vector_id == "vec_rm"
+    assert jobs[0].old_content_hash is not None
+
+    hits_after = await repo.search(
+        VectorSearchQuery(
+            query_embedding=_basis(dim, 3),
+            top_k=5,
+            brand_id="b_rm",
+        ),
+    )
+    assert all(h.case_id != "case_rm" for h in hits_after)
 
