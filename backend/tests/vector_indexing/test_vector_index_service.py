@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
@@ -21,7 +21,7 @@ from app.vector_indexing.embedding_input_models import (
     EmbeddingSourceRef,
 )
 from app.vector_indexing.index_service import VectorIndexService
-from app.vector_indexing.models import CaseVector
+from app.vector_indexing.models import CaseVector, VectorIndexJob
 from app.vector_indexing.repository import VectorRepository
 from app.vector_indexing.repository_types import CaseVectorCreate
 from app.vector_indexing.schemas import (
@@ -158,11 +158,19 @@ async def test_refresh_skips_embedding_when_source_version_matches(db_session):
         embed_client=embed,
     )
 
-    resp = await svc.refresh_case_index("case_skip", RefreshVectorIndexRequest(force_rebuild=False))
+    req = RefreshVectorIndexRequest(force_rebuild=False)
+    resp = await svc.refresh_case_index("case_skip", req)
+    resp2 = await svc.refresh_case_index("case_skip", req)
     await db_session.commit()
 
     embed.embed_for_index.assert_not_called()
     assert resp.status == VectorJobStatus.SUCCEEDED
+    assert resp.job_id == resp2.job_id
+    stmt = select(func.count()).select_from(VectorIndexJob).where(
+        VectorIndexJob.case_id == "case_skip",
+    )
+    cnt = (await db_session.execute(stmt)).scalar_one()
+    assert cnt == 1
     cur = await repo.get_current_vector("case_skip")
     assert cur is not None
     assert cur.vector_id == "vec_keep"

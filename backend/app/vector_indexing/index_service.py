@@ -91,6 +91,20 @@ def _parse_job_source_version(raw: dict[str, object] | None) -> SourceVersion | 
     )
 
 
+def _job_record_matches_source_version(
+    record: VectorIndexJobRecord,
+    sv: SourceVersion,
+) -> bool:
+    parsed = _parse_job_source_version(record.source_version)
+    if parsed is None:
+        return False
+    return (
+        _normalize_utc(parsed.case_updated_at) == _normalize_utc(sv.case_updated_at)
+        and parsed.enrichment_id == sv.enrichment_id
+        and (parsed.enrichment_status or None) == (sv.enrichment_status or None)
+    )
+
+
 def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -177,23 +191,60 @@ class VectorIndexService:
         assert fin is not None
         return _job_to_response(fin)
 
-    async def _finish_same_version_refresh(
+    async def _audit_failed_refresh(
         self,
-        job_id: str,
-        current: CaseVectorPersisted,
+        case_id: str,
+        blob: dict[str, object] | None,
+        code: str,
+        stage: str,
     ) -> VectorIndexJobResponse:
-        await self._repo.update_job(
-            job_id,
-            VectorIndexJobPatch(
-                status=EmbeddingJobStatus.SUCCEEDED.value,
-                finished_at=_utc_now(),
-                new_vector_id=current.vector_id,
+        job_id = uuid4().hex
+        started = _utc_now()
+        await self._repo.create_job(
+            VectorIndexJobCreate(
+                job_id=job_id,
+                case_id=case_id,
+                job_type=VectorIndexJobType.REFRESH.value,
+                status=EmbeddingJobStatus.RUNNING.value,
+                source_version=blob,
+                retry_count=0,
+                started_at=started,
             ),
         )
         await self._db.flush()
-        fin = await self._repo.get_job_by_id(job_id)
-        assert fin is not None
-        return _job_to_response(fin)
+        return await self._abort_job(job_id, code, stage)
+
+    async def _return_idempotent_refresh(
+        self,
+        case_id: str,
+        sv: SourceVersion,
+        current: CaseVectorPersisted,
+    ) -> VectorIndexJobResponse:
+        inflight = await self._repo.get_inflight_refresh_job(case_id)
+        if inflight is not None:
+            return _job_to_response(inflight)
+        latest = await self._repo.get_latest_job_for_case(case_id)
+        if latest is not None and _job_record_matches_source_version(latest, sv):
+            return _job_to_response(latest)
+        noop_id = uuid4().hex
+        now = _utc_now()
+        await self._repo.create_job(
+            VectorIndexJobCreate(
+                job_id=noop_id,
+                case_id=case_id,
+                job_type=VectorIndexJobType.REFRESH.value,
+                status=EmbeddingJobStatus.SUCCEEDED.value,
+                source_version=_source_version_blob(sv),
+                retry_count=0,
+                new_vector_id=current.vector_id,
+                started_at=now,
+                finished_at=now,
+            ),
+        )
+        await self._db.flush()
+        created = await self._repo.get_job_by_id(noop_id)
+        assert created is not None
+        return _job_to_response(created)
 
     async def _persist_refreshed_vector(
         self,
@@ -264,12 +315,40 @@ class VectorIndexService:
         Returns:
             反映任务最终状态的 ``VectorIndexJobResponse``。
         """
-        job_id = uuid4().hex
-        started = _utc_now()
         snap = await self._sources.load_source(case_id)
         sv = snap.source_version
         blob = _source_version_blob(sv) if sv is not None else None
 
+        if snap.not_indexable_reason is not None:
+            return await self._audit_failed_refresh(
+                case_id,
+                blob,
+                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
+                VectorErrorStage.LOAD_SOURCE.value,
+            )
+
+        if await self._repo.case_has_succeeded_remove_job(case_id):
+            return await self._audit_failed_refresh(
+                case_id,
+                blob,
+                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
+                VectorErrorStage.LOAD_SOURCE.value,
+            )
+
+        if sv is None or snap.filter_fields is None:
+            return await self._audit_failed_refresh(
+                case_id,
+                blob,
+                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
+                VectorErrorStage.LOAD_SOURCE.value,
+            )
+
+        current = await self._repo.get_current_vector(case_id)
+        if current is not None and not request.force_rebuild and _versions_match(current, sv):
+            return await self._return_idempotent_refresh(case_id, sv, current)
+
+        job_id = uuid4().hex
+        started = _utc_now()
         await self._repo.create_job(
             VectorIndexJobCreate(
                 job_id=job_id,
@@ -282,31 +361,6 @@ class VectorIndexService:
             ),
         )
         await self._db.flush()
-
-        if snap.not_indexable_reason is not None:
-            return await self._abort_job(
-                job_id,
-                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
-                VectorErrorStage.LOAD_SOURCE.value,
-            )
-
-        if await self._repo.case_has_succeeded_remove_job(case_id):
-            return await self._abort_job(
-                job_id,
-                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
-                VectorErrorStage.LOAD_SOURCE.value,
-            )
-
-        if sv is None or snap.filter_fields is None:
-            return await self._abort_job(
-                job_id,
-                ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
-                VectorErrorStage.LOAD_SOURCE.value,
-            )
-
-        current = await self._repo.get_current_vector(case_id)
-        if current is not None and not request.force_rebuild and _versions_match(current, sv):
-            return await self._finish_same_version_refresh(job_id, current)
 
         composed = self._composer.compose_case_input(snap)
         if isinstance(composed, EmbeddingComposeNotIndexable):

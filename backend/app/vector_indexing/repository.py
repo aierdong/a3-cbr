@@ -174,6 +174,37 @@ class VectorRepository:
             return None
         return VectorIndexJobRecord.model_validate(row)
 
+    async def get_inflight_refresh_job(self, case_id: str) -> VectorIndexJobRecord | None:
+        """返回案例中仍处于排队或执行中的刷新类任务（避免重复排队）。"""
+        stmt = (
+            select(VectorIndexJob)
+            .where(VectorIndexJob.case_id == case_id)
+            .where(
+                VectorIndexJob.job_type.in_(
+                    (
+                        VectorIndexJobType.REFRESH.value,
+                        VectorIndexJobType.INDEX.value,
+                        VectorIndexJobType.RETRY.value,
+                    ),
+                ),
+            )
+            .where(
+                VectorIndexJob.status.in_(
+                    (
+                        EmbeddingJobStatus.QUEUED.value,
+                        EmbeddingJobStatus.RUNNING.value,
+                    ),
+                ),
+            )
+            .order_by(VectorIndexJob.started_at.desc())
+            .limit(1)
+        )
+        res = await self._db.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            return None
+        return VectorIndexJobRecord.model_validate(row)
+
     async def case_has_succeeded_remove_job(self, case_id: str) -> bool:
         """判断是否已有成功的 remove 任务。
 
