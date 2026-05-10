@@ -223,6 +223,8 @@ class VectorSearchFilters(BaseModel):
     case_status: Optional[str] = None
     created_at_from: Optional[datetime] = None
     created_at_to: Optional[datetime] = None
+    case_updated_at_from: Optional[datetime] = None
+    case_updated_at_to: Optional[datetime] = None
 
     model_config = ConfigDict(extra="forbid")
 
