@@ -132,7 +132,7 @@
   - _Requirements: 1.3, 2.3, 3.3, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4_
   - _Boundary: VectorRouter, VectorIndexService, VectorSearchService, VectorJobRunner_
 
-- [ ] 5.2 完成 pgvector 迁移和仓储集成测试
+- [x] 5.2 完成 pgvector 迁移和仓储集成测试
   - 验证 pgvector 版本检查、向量维度、HNSW cosine 索引和过滤字段索引。
   - 验证刷新向量时在事务内先删除旧向量再插入新向量，确保每个案例最多一条记录。
   - 完成后，数据库层可证明向量结构、索引和唯一性约束符合设计。

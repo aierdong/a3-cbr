@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.vector_indexing.models import (
     CaseVector,
@@ -349,3 +349,67 @@ async def test_search_applies_case_updated_at_range(db_session, dim):
         ),
     )
     assert [h.case_id for h in hits] == ["new_case"]
+
+
+@pytest.mark.asyncio
+async def test_case_vectors_hnsw_indexdef_matches_design(db_session):
+    """HNSW 索引定义应符合设计：cosine、m=16、ef_construction=200。"""
+    row = await db_session.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = ANY (current_schemas(true))
+              AND indexname = :n
+            """,
+        ),
+        {"n": "ix_case_vectors_embedding_hnsw"},
+    )
+    defn = row.scalar_one()
+    lowered = defn.lower()
+    assert "using hnsw" in lowered
+    assert "vector_cosine_ops" in defn
+    compact = defn.replace(" ", "").lower()
+    assert "m='16'" in compact or "m=16" in compact
+    assert "ef_construction='200'" in compact or "ef_construction=200" in compact
+
+
+@pytest.mark.asyncio
+async def test_refresh_twice_count_by_case_id_is_one(db_session, dim):
+    """同一 case_id 多次刷新后，按 case_id 计数应恒为 1（唯一性 + 事务删插）。"""
+    from app.vector_indexing.repository import VectorRepository
+    from app.vector_indexing.repository_types import CaseVectorCreate
+
+    repo = VectorRepository(db_session)
+    base = CaseVectorCreate(
+        vector_id="vec_u1",
+        case_id="case_uniq_count",
+        case_updated_at=_utc_now(),
+        enrichment_id=None,
+        enrichment_status=None,
+        embedding_model_id="bge-large-zh",
+        embedding_dimension=dim,
+        embedding_vector=_basis(dim, 0),
+        brand_id="b1",
+        store_id="s1",
+        problem_type="pt1",
+        tags=[],
+        case_status="open",
+    )
+    await repo.refresh_case_vector("case_uniq_count", base)
+    await repo.refresh_case_vector(
+        "case_uniq_count",
+        base.model_copy(
+            update={
+                "vector_id": "vec_u2",
+                "embedding_vector": _basis(dim, 1),
+                "case_updated_at": _utc_now(),
+            },
+        ),
+    )
+    await db_session.commit()
+
+    cnt = await db_session.scalar(
+        select(func.count()).select_from(CaseVector).where(CaseVector.case_id == "case_uniq_count"),
+    )
+    assert cnt == 1

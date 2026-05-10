@@ -34,7 +34,9 @@ class TestCaseVectorModel:
 
         table = CaseVector.__table__
         # Check unique constraint exists on case_id
-        unique_constraints = [c for c in table.constraints if c.__class__.__name__ == "UniqueConstraint"]
+        unique_constraints = [
+            c for c in table.constraints if c.__class__.__name__ == "UniqueConstraint"
+        ]
         case_id_unique = any("case_id" in c.columns for c in unique_constraints)
         assert case_id_unique, "case_id should have unique constraint"
 
@@ -48,7 +50,14 @@ class TestCaseVectorModel:
         """CaseVector has brand_id, store_id, problem_type, case_status, tags."""
         from app.vector_indexing.models import CaseVector
 
-        required_cols = ["brand_id", "store_id", "problem_type", "case_status", "tags", "case_updated_at"]
+        required_cols = [
+            "brand_id",
+            "store_id",
+            "problem_type",
+            "case_status",
+            "tags",
+            "case_updated_at",
+        ]
         for col in required_cols:
             assert col in CaseVector.__table__.columns, f"Missing column: {col}"
 
