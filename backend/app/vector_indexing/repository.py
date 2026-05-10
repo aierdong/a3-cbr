@@ -123,7 +123,7 @@ class VectorRepository:
         Raises:
             ValueError: 任务不存在。
         """
-        data = patch.model_dump(exclude_none=True)
+        data = patch.model_dump(exclude_unset=True)
         if not data:
             existing = await self._db.get(VectorIndexJob, job_id)
             if existing is None:

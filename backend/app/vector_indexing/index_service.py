@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.llm_client import LLMClientError
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_client import EmbeddingClient
+from app.vector_indexing.job_runner import embedding_failure_retryable
 from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
 from app.vector_indexing.embedding_input_models import (
     EmbeddingComposeInsufficient,
@@ -175,15 +176,33 @@ class VectorIndexService:
         self._composer = composer
         self._embedding = embedding_client
         self._repo = VectorRepository(db)
+        self._job_runner: object | None = None
 
-    async def _abort_job(self, job_id: str, code: str, stage: str) -> VectorIndexJobResponse:
+    def register_job_runner(self, runner: object) -> None:
+        """注入 ``VectorJobRunner``（用于 ``retry_job``）。"""
+        self._job_runner = runner
+
+    async def _finish_job_failure(
+        self,
+        job_id: str,
+        code: str,
+        stage: str,
+        *,
+        retryable: bool = False,
+    ) -> VectorIndexJobResponse:
+        now = _utc_now()
         await self._repo.update_job(
             job_id,
             VectorIndexJobPatch(
-                status=EmbeddingJobStatus.FAILED.value,
+                status=(
+                    EmbeddingJobStatus.RETRYABLE.value
+                    if retryable
+                    else EmbeddingJobStatus.FAILED.value
+                ),
                 error_code=code,
                 error_stage=stage,
-                finished_at=_utc_now(),
+                finished_at=now,
+                next_retry_at=(now + timedelta(seconds=60)) if retryable else None,
             ),
         )
         await self._db.flush()
@@ -212,7 +231,7 @@ class VectorIndexService:
             ),
         )
         await self._db.flush()
-        return await self._abort_job(job_id, code, stage)
+        return await self._finish_job_failure(job_id, code, stage)
 
     async def _return_idempotent_refresh(
         self,
@@ -280,7 +299,7 @@ class VectorIndexService:
         try:
             persisted, old_vid = await self._repo.refresh_case_vector(case_id, create)
         except Exception:
-            return await self._abort_job(
+            return await self._finish_job_failure(
                 job_id,
                 ErrorCode.INTERNAL_ERROR,
                 VectorErrorStage.PERSIST.value,
@@ -356,7 +375,7 @@ class VectorIndexService:
                 job_type=VectorIndexJobType.REFRESH.value,
                 status=EmbeddingJobStatus.RUNNING.value,
                 source_version=blob,
-                retry_count=0,
+                retry_count=request.carry_retry_count,
                 started_at=started,
             ),
         )
@@ -364,13 +383,13 @@ class VectorIndexService:
 
         composed = self._composer.compose_case_input(snap)
         if isinstance(composed, EmbeddingComposeNotIndexable):
-            return await self._abort_job(
+            return await self._finish_job_failure(
                 job_id,
                 ErrorCode.VECTOR_CASE_NOT_INDEXABLE,
                 VectorErrorStage.COMPOSE_INPUT.value,
             )
         if isinstance(composed, EmbeddingComposeInsufficient):
-            return await self._abort_job(
+            return await self._finish_job_failure(
                 job_id,
                 ErrorCode.VECTOR_INPUT_INSUFFICIENT,
                 VectorErrorStage.COMPOSE_INPUT.value,
@@ -391,9 +410,24 @@ class VectorIndexService:
                 ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
             ):
                 stage = VectorErrorStage.VALIDATE_EMBEDDING.value
-            return await self._abort_job(job_id, exc.error_code, stage)
+            retryable = embedding_failure_retryable(exc.error_code)
+            return await self._finish_job_failure(
+                job_id,
+                exc.error_code,
+                stage,
+                retryable=retryable,
+            )
 
         return await self._persist_refreshed_vector(job_id, case_id, snap, sv, composed, emb_res)
+
+    async def retry_job(self, job_id: str) -> VectorIndexJobResponse:
+        """委托已注册的 ``VectorJobRunner`` 执行手动重试。"""
+        runner = self._job_runner
+        if runner is None:
+            msg = "VectorJobRunner 未注册，无法执行 retry_job"
+            raise RuntimeError(msg)
+        retry = getattr(runner, "retry_job")
+        return await retry(job_id)
 
     async def get_case_status(self, case_id: str) -> VectorIndexStatusResponse:
         """聚合最近任务与当前向量行的可读状态。
@@ -428,14 +462,19 @@ class VectorIndexService:
                 current_vector=_vector_to_api_record(cur) if cur else None,
             )
 
-        last_err = (
-            latest.error_code if latest.status == EmbeddingJobStatus.FAILED.value else None
-        )
+        last_err = latest.error_code if latest.status in (
+            EmbeddingJobStatus.FAILED.value,
+            EmbeddingJobStatus.RETRYABLE.value,
+        ) else None
 
         if latest.status == EmbeddingJobStatus.RUNNING.value:
             agg = VectorIndexStatus.RUNNING
         elif latest.status == EmbeddingJobStatus.FAILED.value:
             agg = VectorIndexStatus.FAILED
+        elif latest.status == EmbeddingJobStatus.RETRYABLE.value:
+            agg = VectorIndexStatus.RETRYABLE
+        elif latest.status == EmbeddingJobStatus.QUEUED.value:
+            agg = VectorIndexStatus.QUEUED
         elif latest.status == EmbeddingJobStatus.SUCCEEDED.value:
             if cur is not None:
                 agg = (

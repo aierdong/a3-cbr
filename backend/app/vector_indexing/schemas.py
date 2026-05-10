@@ -101,6 +101,11 @@ class RefreshVectorIndexRequest(BaseModel):
 
     force_rebuild: bool = Field(default=False, description="为 true 时跳过版本短路并强制刷新")
     requested_by: Optional[str] = Field(default=None, description="触发来源标识")
+    carry_retry_count: int = Field(
+        default=0,
+        ge=0,
+        description="编排用：新任务的 retry_count 初始值（手动重试时为前一任务 +1）",
+    )
 
     model_config = ConfigDict(extra="allow")
 
