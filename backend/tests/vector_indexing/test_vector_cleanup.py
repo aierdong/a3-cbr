@@ -141,3 +141,38 @@ async def test_cleanup_removes_vector_when_enrichment_missing(db_session, dim):
     assert len(job_rows) == 1
     assert job_rows[0].job_type == VectorIndexJobType.REMOVE.value
     assert job_rows[0].source_version.get("delete_reason") == "enrichment_deleted"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_remove_audit_includes_cleanup_detail(db_session, dim):
+    """孤立清理写入的 ``source_version`` 含 ``cleanup_detail``（与设计 cleanup 元数据一致）。"""
+    repo = VectorRepository(db_session)
+    await repo.refresh_case_vector(
+        "case_or_det",
+        CaseVectorCreate(
+            vector_id="vec_od",
+            case_id="case_or_det",
+            case_updated_at=_utc_now(),
+            enrichment_id=None,
+            enrichment_status=None,
+            embedding_model_id="bge-large-zh",
+            embedding_dimension=dim,
+            embedding_vector=_basis(dim, 5),
+            brand_id="b1",
+            store_id="s1",
+            problem_type="pt1",
+            tags=[],
+            case_status="open",
+        ),
+    )
+    await db_session.commit()
+
+    svc = VectorCleanupService(lambda: db_session, interval_seconds=3600, enabled=False)
+    await svc.cleanup_orphan_vectors(session=db_session)
+    await db_session.commit()
+
+    job_rows = (await db_session.execute(select(VectorIndexJob))).scalars().all()
+    assert len(job_rows) == 1
+    meta = job_rows[0].source_version or {}
+    assert meta.get("cleanup_detail") == "missing_a3_case"
+    assert meta.get("requested_by") == "system"

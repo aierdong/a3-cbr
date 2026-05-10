@@ -87,6 +87,16 @@ class ErrorCode:
     EMBEDDING_CONFIG_MISSING = "EMBEDDING_CONFIG_MISSING"
 
 
+_EMBEDDING_PUBLIC_MESSAGES: dict[str, str] = {
+    ErrorCode.EMBEDDING_TIMEOUT: "Embedding 调用超时",
+    ErrorCode.EMBEDDING_RATE_LIMITED: "Embedding 限流",
+    ErrorCode.EMBEDDING_PROVIDER_ERROR: "Embedding 网关错误",
+    ErrorCode.EMBEDDING_INVALID_RESPONSE: "Embedding 响应无法解析或校验失败",
+    ErrorCode.EMBEDDING_DIMENSION_MISMATCH: "Embedding 向量维度与配置不一致",
+    ErrorCode.EMBEDDING_CONFIG_MISSING: "Embedding 生产配置不完整或未确认隐私条款",
+}
+
+
 def create_error_response(
     code: str,
     message: str,
@@ -154,17 +164,23 @@ class ErrorMapper:
         if exc.retryable:
             meta["retryable"] = True
 
-        logger.warning(
-            "LLM 调用失败: error_code=%s, message=%s",
-            exc.error_code,
-            exc.message,
-        )
+        public_message = _EMBEDDING_PUBLIC_MESSAGES.get(exc.error_code)
+        if public_message is not None:
+            logger.warning("LLM 调用失败: error_code=%s", exc.error_code)
+            api_message = public_message
+        else:
+            logger.warning(
+                "LLM 调用失败: error_code=%s, message=%s",
+                exc.error_code,
+                exc.message,
+            )
+            api_message = exc.message
 
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=create_error_response(
                 code=exc.error_code,
-                message=exc.message,
+                message=api_message,
                 meta=meta or None,
             ).model_dump(),
         )
