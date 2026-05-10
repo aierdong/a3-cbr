@@ -8,7 +8,12 @@ from sqlalchemy import cast, delete, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.vector_indexing.models import CaseVector, VectorIndexJob
+from app.vector_indexing.models import (
+    CaseVector,
+    EmbeddingJobStatus,
+    VectorIndexJob,
+    VectorIndexJobType,
+)
 from app.vector_indexing.repository_types import (
     CaseVectorCreate,
     CaseVectorPersisted,
@@ -73,6 +78,7 @@ class VectorRepository:
             problem_type=row.problem_type,
             tags=_normalize_tags(row.tags),
             case_status=row.case_status,
+            degraded_reason=row.degraded_reason,
         )
 
     async def create_job(self, job: VectorIndexJobCreate) -> VectorIndexJobRecord:
@@ -133,6 +139,62 @@ class VectorRepository:
             raise ValueError("向量索引任务不存在")
         return VectorIndexJobRecord.model_validate(refreshed)
 
+    async def get_job_by_id(self, job_id: str) -> VectorIndexJobRecord | None:
+        """按主键读取任务。
+
+        Args:
+            job_id: 任务主键。
+
+        Returns:
+            任务快照；不存在则为 ``None``。
+        """
+        row = await self._db.get(VectorIndexJob, job_id)
+        if row is None:
+            return None
+        return VectorIndexJobRecord.model_validate(row)
+
+    async def get_latest_job_for_case(self, case_id: str) -> VectorIndexJobRecord | None:
+        """读取指定案例最近启动的任务。
+
+        Args:
+            case_id: 案例标识。
+
+        Returns:
+            ``started_at`` 最新的一条任务；若无则为 ``None``。
+        """
+        stmt = (
+            select(VectorIndexJob)
+            .where(VectorIndexJob.case_id == case_id)
+            .order_by(VectorIndexJob.started_at.desc())
+            .limit(1)
+        )
+        res = await self._db.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            return None
+        return VectorIndexJobRecord.model_validate(row)
+
+    async def case_has_succeeded_remove_job(self, case_id: str) -> bool:
+        """判断是否已有成功的 remove 任务。
+
+        Args:
+            case_id: 案例标识。
+
+        Returns:
+            存在 ``job_type=remove`` 且 ``status=succeeded`` 时为 ``True``。
+        """
+        stmt = (
+            select(VectorIndexJob.job_id)
+            .where(
+                VectorIndexJob.case_id == case_id,
+                VectorIndexJob.job_type == VectorIndexJobType.REMOVE.value,
+                VectorIndexJob.status == EmbeddingJobStatus.SUCCEEDED.value,
+            )
+            .limit(1)
+        )
+        hit = await self._db.execute(stmt)
+        return hit.scalar_one_or_none() is not None
+
     async def refresh_case_vector(
         self,
         case_id: str,
@@ -174,6 +236,7 @@ class VectorRepository:
             problem_type=vector.problem_type,
             tags=vector.tags,
             case_status=vector.case_status,
+            degraded_reason=vector.degraded_reason,
         )
         self._db.add(row)
         await self._db.flush()

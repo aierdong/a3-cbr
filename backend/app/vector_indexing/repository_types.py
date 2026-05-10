@@ -24,6 +24,7 @@ class CaseVectorCreate(BaseModel):
     problem_type: str = Field(..., max_length=64)
     tags: list[str] = Field(default_factory=list)
     case_status: str = Field(..., max_length=32)
+    degraded_reason: Optional[str] = Field(default=None, max_length=256)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +51,7 @@ class CaseVectorPersisted(BaseModel):
     problem_type: str
     tags: list[str]
     case_status: str
+    degraded_reason: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 

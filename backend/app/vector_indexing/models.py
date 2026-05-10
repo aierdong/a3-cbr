@@ -81,6 +81,7 @@ class CaseVector(Base):
     problem_type = Column(String(64), nullable=False)
     tags = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False)
     case_status = Column(String(32), nullable=False)
+    degraded_reason = Column(String(256), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("case_id", name="uq_case_vectors_case_id"),
