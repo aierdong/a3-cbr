@@ -593,6 +593,7 @@ components:
             - EMBEDDING_INVALID_RESPONSE
             - EMBEDDING_DIMENSION_MISMATCH
             - EMBEDDING_CONFIG_MISSING
+            - VECTOR_PGVECTOR_UNAVAILABLE
             - INTERNAL_ERROR
         message:
           type: string

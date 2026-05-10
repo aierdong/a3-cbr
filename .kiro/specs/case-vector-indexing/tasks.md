@@ -16,7 +16,7 @@
   - 完成后，迁移可在空库中创建所有向量索引结构，且不会修改案例基础表或 LLM 派生结果表。
   - _Requirements: 3.1, 3.5, 5.2, 6.4_
 
-- [ ] 1.3 建立向量索引 API schema、状态枚举和错误码
+- [x] 1.3 建立向量索引 API schema、状态枚举和错误码
   - 定义手动刷新、重试、删除、状态查询、搜索请求和搜索候选响应结构。
   - 定义任务状态（queued、running、succeeded、retryable、failed、cancelled）和向量索引状态（存在、降级原因）。
   - 增加输入不足、embedding 失败、维度不匹配、pgvector 不可用、查询参数无效等稳定错误码。
