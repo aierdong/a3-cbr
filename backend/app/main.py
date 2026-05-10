@@ -9,6 +9,7 @@ from app.db.session import async_session_maker
 from app.enrichment.cleanup import EnrichmentCleanupService, load_cleanup_config
 from app.enrichment.router import router as enrichment_router
 from app.vector_indexing.cleanup import VectorCleanupService
+from app.vector_indexing.router import router as vector_router
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ def create_app() -> FastAPI:
 
     # 注册增强路由
     app.include_router(enrichment_router)
+
+    # 注册向量索引与搜索路由
+    app.include_router(vector_router)
 
     return app
 
