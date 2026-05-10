@@ -13,9 +13,15 @@ from pydantic import ValidationError
 from app.common.llm_client import LLMClientError
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
+from app.vector_indexing.repository_types import (
+    VectorCandidateFilterPayload,
+    VectorCandidateRecord,
+    VectorSearchQuery,
+)
 from app.vector_indexing.schemas import (
     EmbeddingRequest,
     EmbeddingResult,
+    VectorCandidateFilterMetadata,
     VectorSearchFilters,
     VectorSearchRequest,
 )
@@ -28,10 +34,12 @@ def _query_hash(query_text: str) -> str:
     return hashlib.sha256(composed.text.encode("utf-8")).hexdigest()
 
 
-def _service(embed_mock: AsyncMock) -> VectorSearchService:
+def _service(embed_mock: AsyncMock, *, repository: AsyncMock | None = None) -> VectorSearchService:
+    repo = AsyncMock(search=AsyncMock(return_value=[])) if repository is None else repository
     return VectorSearchService(
         composer=EmbeddingInputComposer(),
         embedding_client=AsyncMock(embed_for_query=embed_mock),
+        repository=repo,
     )
 
 
@@ -39,7 +47,7 @@ def _service(embed_mock: AsyncMock) -> VectorSearchService:
 async def test_search_embed_once_returns_empty_items(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """合法查询应单次嵌入并返回空 items 与完整 query_metadata。"""
+    """合法查询应单次嵌入、单次仓储检索；空候选时 items=[] 且 total_candidates_considered=0。"""
     embed_mock = AsyncMock(
         return_value=EmbeddingResult(
             embedding_model_id="bge-large-zh",
@@ -47,7 +55,8 @@ async def test_search_embed_once_returns_empty_items(
             vector=[0.1, 0.2, 0.3, 0.4],
         ),
     )
-    svc = _service(embed_mock)
+    repo = AsyncMock(search=AsyncMock(return_value=[]))
+    svc = _service(embed_mock, repository=repo)
     req = VectorSearchRequest(query_text="  门店客流下降怎么办  ", top_k=5)
 
     caplog.set_level(logging.INFO, logger="app.vector_indexing.search")
@@ -60,12 +69,19 @@ async def test_search_embed_once_returns_empty_items(
     expected_fp = _query_hash(req.query_text)
     assert emb_req.content_fingerprint == expected_fp
 
+    repo.search.assert_awaited_once()
+    q_arg: VectorSearchQuery = repo.search.await_args.args[0]
+    assert q_arg == VectorSearchQuery(
+        query_embedding=[0.1, 0.2, 0.3, 0.4],
+        top_k=5,
+    )
+
     assert resp.items == []
     assert resp.query_metadata.query_hash == expected_fp
     assert resp.query_metadata.model_id == "bge-large-zh"
     assert resp.query_metadata.dimension == 4
     assert resp.query_metadata.filters_applied == {}
-    assert resp.query_metadata.total_candidates_considered is None
+    assert resp.query_metadata.total_candidates_considered == 0
 
 
 @pytest.mark.asyncio
@@ -78,7 +94,8 @@ async def test_search_with_filters_metadata(caplog: pytest.LogCaptureFixture) ->
             vector=[1.0, 0.0],
         ),
     )
-    svc = _service(embed_mock)
+    repo = AsyncMock(search=AsyncMock(return_value=[]))
+    svc = _service(embed_mock, repository=repo)
     t0 = datetime(2026, 1, 2, tzinfo=timezone.utc)
     t1 = datetime(2026, 1, 3, tzinfo=timezone.utc)
     filters = VectorSearchFilters(
@@ -95,6 +112,12 @@ async def test_search_with_filters_metadata(caplog: pytest.LogCaptureFixture) ->
     resp = await svc.search(req)
 
     assert resp.query_metadata.filters_applied == filters.model_dump(mode="json", exclude_none=True)
+
+    q_arg: VectorSearchQuery = repo.search.await_args.args[0]
+    assert q_arg.brand_id == "b1"
+    assert q_arg.tags == ["a", "b"]
+    assert q_arg.case_updated_at_from == t0
+    assert q_arg.case_updated_at_to == t1
 
 
 @pytest.mark.asyncio
@@ -214,6 +237,112 @@ async def test_embedding_error_propagates() -> None:
         await svc.search(VectorSearchRequest(query_text="hello", top_k=3))
 
     assert ei.value is err
+
+
+@pytest.mark.asyncio
+async def test_search_passes_store_problem_type_case_status_to_repository() -> None:
+    """结构化过滤：门店、问题类型、案例状态应传入 VectorSearchQuery。"""
+    embed_mock = AsyncMock(
+        return_value=EmbeddingResult(
+            embedding_model_id="m",
+            embedding_dimension=2,
+            vector=[0.0, 1.0],
+        ),
+    )
+    repo = AsyncMock(search=AsyncMock(return_value=[]))
+    svc = _service(embed_mock, repository=repo)
+    filters = VectorSearchFilters(
+        store_id="s9",
+        problem_type="inventory",
+        case_status="published",
+    )
+    req = VectorSearchRequest(query_text="ok", top_k=7, filters=filters)
+
+    await svc.search(req)
+
+    q_arg: VectorSearchQuery = repo.search.await_args.args[0]
+    assert q_arg.store_id == "s9"
+    assert q_arg.problem_type == "inventory"
+    assert q_arg.case_status == "published"
+    assert q_arg.top_k == 7
+
+
+@pytest.mark.asyncio
+async def test_search_maps_repository_records_to_items() -> None:
+    """仓储返回 VectorCandidateRecord 时应映射为 VectorSearchResponse.items。"""
+    cu = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    fm = VectorCandidateFilterPayload(
+        brand_id="bb",
+        store_id="ss",
+        problem_type="pt",
+        tags=["t1"],
+        case_status="open",
+    )
+    distance_f = 0.15
+    records = [
+        VectorCandidateRecord(
+            case_id="c1",
+            vector_id="v1",
+            similarity_score=1.0 - distance_f,
+            distance=distance_f,
+            case_updated_at=cu,
+            input_content_hash="abc123",
+            filter_metadata=fm,
+        ),
+    ]
+    embed_mock = AsyncMock(
+        return_value=EmbeddingResult(
+            embedding_model_id="emb",
+            embedding_dimension=2,
+            vector=[1.0, 0.0],
+        ),
+    )
+    repo = AsyncMock(search=AsyncMock(return_value=records))
+    svc = _service(embed_mock, repository=repo)
+
+    resp = await svc.search(VectorSearchRequest(query_text="q", top_k=20))
+
+    assert len(resp.items) == 1
+    item = resp.items[0]
+    assert item.case_id == "c1"
+    assert item.vector_id == "v1"
+    assert item.distance == distance_f
+    assert item.similarity_score == pytest.approx(1.0 - distance_f)
+    assert item.case_updated_at == cu
+    assert item.input_content_hash == "abc123"
+    assert item.filter_metadata == VectorCandidateFilterMetadata(
+        brand_id="bb",
+        store_id="ss",
+        business_type="",
+        store_scale="",
+        franchise_type="",
+        city="",
+        city_tier="",
+        problem_type="pt",
+        tags=["t1"],
+        case_status="open",
+    )
+    assert resp.query_metadata.total_candidates_considered == 1
+
+
+@pytest.mark.asyncio
+async def test_search_raises_when_repository_missing() -> None:
+    """嵌入成功后若未注入仓储应抛出 RuntimeError。"""
+    embed_mock = AsyncMock(
+        return_value=EmbeddingResult(
+            embedding_model_id="m",
+            embedding_dimension=1,
+            vector=[1.0],
+        ),
+    )
+    svc = VectorSearchService(
+        composer=EmbeddingInputComposer(),
+        embedding_client=AsyncMock(embed_for_query=embed_mock),
+        repository=None,
+    )
+
+    with pytest.raises(RuntimeError):
+        await svc.search(VectorSearchRequest(query_text="hello", top_k=3))
 
 
 @pytest.mark.asyncio

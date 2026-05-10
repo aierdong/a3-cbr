@@ -1,8 +1,4 @@
-"""向量搜索：查询校验、查询向量生成与元数据组装。
-
-候选向量检索（Top-K 仓储查询）由任务 4.2 接入 ``VectorRepository.search``；
-本任务中 ``VectorSearchService.search`` 返回的 ``items`` 暂为空列表。
-"""
+"""向量搜索：查询校验、查询向量生成、仓储 Top-K 检索与响应映射。"""
 
 from __future__ import annotations
 
@@ -13,9 +9,12 @@ from typing import TYPE_CHECKING, Any
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_client import EmbeddingClient
 from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
+from app.vector_indexing.repository_types import VectorCandidateRecord, VectorSearchQuery
 from app.vector_indexing.schemas import (
     EmbeddingRequest,
     EmbeddingResult,
+    VectorCandidateFilterMetadata,
+    VectorSearchCandidate,
     VectorSearchFilters,
     VectorSearchQueryMetadata,
     VectorSearchRequest,
@@ -87,8 +86,52 @@ def _filters_applied(request: VectorSearchRequest) -> dict[str, Any]:
     return request.filters.model_dump(mode="json", exclude_none=True)
 
 
+def _repository_search_query(
+    request: VectorSearchRequest,
+    query_embedding: list[float],
+) -> VectorSearchQuery:
+    """由搜索请求与查询向量构造仓储检索参数。"""
+    f: VectorSearchFilters | None = request.filters
+    return VectorSearchQuery(
+        query_embedding=query_embedding,
+        top_k=request.top_k,
+        brand_id=f.brand_id if f else None,
+        store_id=f.store_id if f else None,
+        problem_type=f.problem_type if f else None,
+        tags=f.tags if f else None,
+        case_status=f.case_status if f else None,
+        case_updated_at_from=f.case_updated_at_from if f else None,
+        case_updated_at_to=f.case_updated_at_to if f else None,
+    )
+
+
+def _candidate_record_to_api(record: VectorCandidateRecord) -> VectorSearchCandidate:
+    """仓储候选记录 → API 契约 ``VectorSearchCandidate``。"""
+    fm = record.filter_metadata
+    return VectorSearchCandidate(
+        case_id=record.case_id,
+        vector_id=record.vector_id,
+        similarity_score=1.0 - record.distance,
+        distance=record.distance,
+        case_updated_at=record.case_updated_at,
+        input_content_hash=record.input_content_hash,
+        filter_metadata=VectorCandidateFilterMetadata(
+            brand_id=fm.brand_id,
+            store_id=fm.store_id,
+            business_type=fm.business_type,
+            store_scale=fm.store_scale,
+            franchise_type=fm.franchise_type,
+            city=fm.city,
+            city_tier=fm.city_tier,
+            problem_type=fm.problem_type,
+            tags=fm.tags,
+            case_status=fm.case_status,
+        ),
+    )
+
+
 class VectorSearchService:
-    """查询向量生成与搜索前置编排（向量候选检索 handled by task 4.2）。"""
+    """查询向量生成与带结构化过滤的 Top-K 语义候选检索。"""
 
     def __init__(
         self,
@@ -102,7 +145,7 @@ class VectorSearchService:
         Args:
             composer: 查询文本组合器。
             embedding_client: 搜索路径嵌入客户端（``embed_for_query``）。
-            repository: 预留仓储依赖；任务 4.1 不调用仓储。
+            repository: 向量仓储；``search`` 依赖其 ``search`` 原语。
 
         Returns:
             None
@@ -157,17 +200,24 @@ class VectorSearchService:
         return embedding_result, meta
 
     async def search(self, request: VectorSearchRequest) -> VectorSearchResponse:
-        """校验并嵌入查询向量；返回空候选列表（候选检索由任务 4.2 负责）。
+        """校验并嵌入查询向量，调用仓储 Top-K 检索并映射候选列表。
 
         Args:
             request: 向量搜索请求。
 
         Returns:
-            ``items`` 当前为空列表；``query_metadata`` 有效。
+            按向量距离升序的候选列表与查询元数据（不做加权或重排）。
 
         Raises:
             VectorSearchValidationError: 语义校验失败。
             LLMClientError: 嵌入调用失败。
+            RuntimeError: 未注入 ``VectorRepository``。
         """
-        _, meta = await self.build_query_vector(request)
-        return VectorSearchResponse(items=[], query_metadata=meta)
+        embedding_result, meta = await self.build_query_vector(request)
+        if self._repository is None:
+            raise RuntimeError("VectorSearchService.search requires an injected VectorRepository")
+        query = _repository_search_query(request, embedding_result.vector)
+        records = await self._repository.search(query)
+        meta.total_candidates_considered = len(records)
+        items = [_candidate_record_to_api(r) for r in records]
+        return VectorSearchResponse(items=items, query_metadata=meta)

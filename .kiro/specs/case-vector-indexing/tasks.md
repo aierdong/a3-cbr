@@ -109,7 +109,7 @@
   - _Requirements: 5.1, 5.3, 6.5_
   - _Boundary: VectorSearchService, VectorSchemas, EmbeddingClient_
 
-- [ ] 4.2 实现带结构化过滤的 Top-K 问题语义候选搜索
+- [x] 4.2 实现带结构化过滤的 Top-K 问题语义候选搜索
   - 使用品牌、门店、问题类型、标签、状态和时间范围过滤存在向量记录的案例；时间范围直接使用 `case_vectors.case_updated_at`。
   - 返回候选案例标识、向量标识、距离、相似度、来源版本和过滤元数据。
   - 完成后，搜索结果只包含满足过滤条件且存在向量记录的案例，并按问题语义距离排序。
