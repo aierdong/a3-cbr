@@ -35,6 +35,7 @@ _EXPECTED_VECTOR_SEARCH_CANDIDATE_FIELDS = frozenset(
         "case_updated_at",
         "input_content_hash",
         "filter_metadata",
+        "index_status",
     },
 )
 
@@ -45,6 +46,8 @@ _EXPECTED_VECTOR_SEARCH_QUERY_METADATA_FIELDS = frozenset(
         "dimension",
         "filters_applied",
         "total_candidates_considered",
+        "search_ref",
+        "index_version",
     },
 )
 
@@ -84,21 +87,28 @@ def test_vector_search_schemas_exclude_forbidden_recommendation_fields() -> None
 
 
 def test_vector_search_response_rejects_unknown_fields() -> None:
-    """extra forbid：未知字段（含 recommendation_reason）校验失败。"""
+    """extra forbid：顶层未知字段 recommendation_reason 单独触发校验失败。"""
     base_meta = {
         "query_hash": "a" * 64,
         "model_id": "bge-large-zh",
         "dimension": 4,
         "filters_applied": {},
         "total_candidates_considered": None,
+        "search_ref": "b" * 64,
+        "index_version": "bge-large-zh@dim4",
     }
     payload = {
         "items": [],
         "query_metadata": base_meta,
         "recommendation_reason": "must-not-appear",
     }
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         VectorSearchResponse.model_validate(payload)
+    errors = exc_info.value.errors()
+    assert len(errors) == 1
+    err = errors[0]
+    assert err["type"] == "extra_forbidden"
+    assert err["loc"] == ("recommendation_reason",)
 
 
 def test_vector_search_service_init_dependencies_are_primitive_only() -> None:

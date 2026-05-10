@@ -655,6 +655,7 @@ erDiagram
 
 - `items`: ordered list of `VectorSearchCandidate`，按问题语义相似度排序。
 - `query_metadata`: query hash, model id, dimension, filters applied, total candidates considered when available.
+- `query_metadata` 还须携带批次信封字段 `search_ref`（追踪引用）与 `index_version`（本次检索所用索引/模型版本表述），与下游 `VectorSearchPort` 对齐。
 - Excludes recommendation reason, reranker score, aggregated score and feedback data.
 
 **VectorSearchCandidate**
@@ -665,6 +666,12 @@ erDiagram
 - `distance`
 - `case_updated_at`
 - `filter_metadata`: brand/store/problem type/tags/status needed by downstream.
+- `index_status`: 候选检索态字面量（当前为 `searchable`），与下游必填字段对齐。
+
+**VectorSearchQueryMetadata**
+
+- `search_ref`：批次级追踪引用（非空字符串）。
+- `index_version`：索引/模型版本标识（非空字符串，例如 ``model@dim``）。
 
 ## Error Handling
 

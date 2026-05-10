@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Foundation: 向量索引运行基础
+- [x] 1. Foundation: 向量索引运行基础
 - [x] 1.1 建立向量索引配置与生产启用门控
   - 增加 embedding api_key、model、base_url、向量维度、超时、重试、pgvector 最低版本和供应商隐私确认配置。
   - 默认 model 为 `bge-large-zh`，默认维度为 1024，生产环境缺少必要配置时启动或调用失败关闭。
@@ -24,7 +24,7 @@
   - 完成后，API 层可以返回一致的成功、校验失败、状态冲突和外部依赖失败响应。
   - _Requirements: 3.3, 5.3, 5.4, 6.3, 6.5_
 
-- [ ] 2. Core indexing: 输入组合、embedding 和持久化
+- [x] 2. Core indexing: 输入组合、embedding 和持久化
 - [x] 2.1 (P) 构建案例索引输入快照读取能力
   - 读取上游案例基础字段、状态、过滤字段、`updated_at` 和当前可消费的 LLM 派生结果。
   - 对 LLM 派生结果缺失或未发布的情况返回明确可降级原因。
@@ -61,7 +61,7 @@
   - _Requirements: 1.5, 3.1, 3.2, 4.2, 4.5, 5.2, 6.2_
   - _Boundary: VectorRepository_
 
-- [ ] 3. Lifecycle: 手动刷新、重试、移除和状态
+- [x] 3. Lifecycle: 手动刷新、重试、移除和状态
 - [x] 3.1 编排单案例向量刷新与发布流程
   - 串联输入快照、输入组合、embedding 调用、向量校验和仓储刷新。
   - 通过比较 `case_updated_at` 和 `enrichment_id` 判断是否需要刷新；对新输入版本在事务内删除旧向量并插入新向量。
@@ -100,7 +100,7 @@
   - _Requirements: 3.4, 6.2_
   - _Boundary: VectorCleanupService_
 
-- [ ] 4. Search primitives: 查询向量化与 Top-K 候选搜索原语
+- [x] 4. Search primitives: 查询向量化与 Top-K 候选搜索原语
 - [x] 4.1 构建用户问题查询向量生成和搜索请求校验
   - 校验查询文本、Top-K 范围和过滤字段。
   - 使用与案例索引一致的 embedding 客户端生成查询向量。
@@ -124,7 +124,7 @@
   - _Requirements: 5.5_
   - _Boundary: VectorSearchService_
 
-- [ ] 5. Validation: API、数据库、隐私和回归验证
+- [x] 5. Validation: API、数据库、隐私和回归验证
 - [x] 5.1 完成刷新、状态、重试和搜索 API 集成测试
   - 覆盖单案例手动刷新成功、降级输入、失败任务状态、重试成功、重试上限、手动删除和状态查询。
   - 覆盖搜索成功、空结果、过滤条件、非法参数和已删除案例不命中。
@@ -148,7 +148,7 @@
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
   - _Boundary: VectorJobRunner, VectorIndexService, VectorSearchService, VectorCleanupService, ErrorMapper_
 
-- [ ] 5.4 完成向量搜索契约快照与下游兼容回归测试
+- [x] 5.4 完成向量搜索契约快照与下游兼容回归测试
   - 固化向量搜索请求/响应最小字段契约（批次级 `search_ref`、`index_version`；候选级 `case_id`、`vector_id`、`similarity_score`、`index_status`）并建立快照或等价契约测试。
   - 覆盖上游字段语义变化、索引状态语义变化和过滤字段变化时的稳定失败路径，确保不可解析结果按 `invalid_response` 处理。
   - 覆盖与 `cbr-retrieval-recommendation` 的兼容回归，验证请求参数与响应字段保持稳定，不因字段漂移破坏下游消费。

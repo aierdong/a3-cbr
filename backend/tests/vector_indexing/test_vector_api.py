@@ -29,6 +29,7 @@ from app.vector_indexing.schemas import (
     VectorJobStatus,
     VectorJobType,
     VectorSearchCandidate,
+    VectorSearchIndexStatus,
     VectorSearchQueryMetadata,
     VectorSearchRequest,
     VectorSearchResponse,
@@ -112,6 +113,7 @@ def _search_candidate(case_id: str = "case_hit") -> VectorSearchCandidate:
         case_updated_at=now,
         input_content_hash="qh",
         filter_metadata=_filter_meta(),
+        index_status=VectorSearchIndexStatus.SEARCHABLE,
     )
 
 
@@ -122,6 +124,8 @@ def _search_meta(**kwargs: object) -> VectorSearchQueryMetadata:
         "dimension": 1024,
         "filters_applied": {"brand_id": "b1"},
         "total_candidates_considered": 1,
+        "search_ref": "abc",
+        "index_version": "bge-large-zh@dim1024",
     }
     defaults.update(kwargs)
     return VectorSearchQueryMetadata(**defaults)  # type: ignore[arg-type]

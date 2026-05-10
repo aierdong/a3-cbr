@@ -131,6 +131,7 @@ class TestVectorSearchResponseRoundTrip:
         from app.vector_indexing.schemas import (
             VectorCandidateFilterMetadata,
             VectorSearchCandidate,
+            VectorSearchIndexStatus,
             VectorSearchQueryMetadata,
             VectorSearchResponse,
         )
@@ -155,12 +156,15 @@ class TestVectorSearchResponseRoundTrip:
                 tags=["a"],
                 case_status="active",
             ),
+            index_status=VectorSearchIndexStatus.SEARCHABLE,
         )
         meta = VectorSearchQueryMetadata(
             query_hash="qh",
             model_id="bge-large-zh",
             dimension=1024,
             filters_applied={},
+            search_ref="qh",
+            index_version="bge-large-zh@dim1024",
         )
         resp = VectorSearchResponse(items=[candidate], query_metadata=meta)
         dumped = resp.model_dump(mode="json")

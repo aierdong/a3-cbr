@@ -208,6 +208,16 @@ class DeleteVectorIndexResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class VectorSearchIndexStatus(str, Enum):
+    """候选案例索引状态字面量集合（搜索原语层）。
+
+    仅包含 ``searchable``：候选已通过过滤、向量存在且案例可被检索；
+    不混入降级、归档或不可检索原因，避免与 ``VectorIndexStatus`` 混淆。
+    """
+
+    SEARCHABLE = "searchable"
+
+
 class VectorSearchFilters(BaseModel):
     """结构化过滤条件。"""
 
@@ -258,7 +268,11 @@ class VectorCandidateFilterMetadata(BaseModel):
 
 
 class VectorSearchCandidate(BaseModel):
-    """单个语义检索候选。"""
+    """单个语义检索候选。
+
+    ``index_status`` 固定为 ``searchable``：候选已通过过滤、向量存在、案例可被检索；
+    与 ``cbr-retrieval-recommendation`` design.md ``VectorCandidate`` 必填集合对齐。
+    """
 
     case_id: str
     vector_id: str
@@ -267,18 +281,26 @@ class VectorSearchCandidate(BaseModel):
     case_updated_at: datetime
     input_content_hash: str
     filter_metadata: VectorCandidateFilterMetadata
+    index_status: VectorSearchIndexStatus
 
     model_config = ConfigDict(extra="forbid")
 
 
 class VectorSearchQueryMetadata(BaseModel):
-    """搜索批次查询侧元数据。"""
+    """搜索批次查询侧元数据。
+
+    ``search_ref`` 与 ``index_version`` 为下游 ``VectorSearchPort``
+    ``VectorCandidateBatch`` 必填信封字段：``search_ref`` 用于运行记录与排障引用，
+    ``index_version`` 标识本次检索使用的索引/模型版本。
+    """
 
     query_hash: str
     model_id: str
     dimension: int = Field(..., ge=1)
     filters_applied: dict[str, Any] = Field(default_factory=dict)
     total_candidates_considered: Optional[int] = Field(default=None, ge=0)
+    search_ref: str = Field(..., min_length=1)
+    index_version: str = Field(..., min_length=1)
 
     model_config = ConfigDict(extra="forbid")
 

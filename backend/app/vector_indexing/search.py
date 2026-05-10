@@ -16,6 +16,7 @@ from app.vector_indexing.schemas import (
     VectorCandidateFilterMetadata,
     VectorSearchCandidate,
     VectorSearchFilters,
+    VectorSearchIndexStatus,
     VectorSearchQueryMetadata,
     VectorSearchRequest,
     VectorSearchResponse,
@@ -106,7 +107,12 @@ def _repository_search_query(
 
 
 def _candidate_record_to_api(record: VectorCandidateRecord) -> VectorSearchCandidate:
-    """仓储候选记录 → API 契约 ``VectorSearchCandidate``。"""
+    """仓储候选记录 → API 契约 ``VectorSearchCandidate``。
+
+    仓储侧仅返回 searchable 候选（已通过过滤、向量存在、案例可被检索），
+    因此 API 层的 ``index_status`` 固定为 ``SEARCHABLE``，与下游
+    ``cbr-retrieval-recommendation`` ``VectorSearchPort`` 候选必填语义一致。
+    """
     fm = record.filter_metadata
     return VectorSearchCandidate(
         case_id=record.case_id,
@@ -127,7 +133,17 @@ def _candidate_record_to_api(record: VectorCandidateRecord) -> VectorSearchCandi
             tags=fm.tags,
             case_status=fm.case_status,
         ),
+        index_status=VectorSearchIndexStatus.SEARCHABLE,
     )
+
+
+def _build_index_version(model_id: str, dimension: int) -> str:
+    """``index_version`` 形态：``{model_id}@dim{dimension}``。
+
+    必含模型标识，附维度便于排查；与 cbr-retrieval-recommendation
+    ``VectorCandidateBatch.index_version`` 字段保持稳定契约。
+    """
+    return f"{model_id}@dim{dimension}"
 
 
 class VectorSearchService:
@@ -196,6 +212,11 @@ class VectorSearchService:
             dimension=embedding_result.embedding_dimension,
             filters_applied=filters_applied,
             total_candidates_considered=None,
+            search_ref=query_hash,
+            index_version=_build_index_version(
+                embedding_result.embedding_model_id,
+                embedding_result.embedding_dimension,
+            ),
         )
         return embedding_result, meta
 
