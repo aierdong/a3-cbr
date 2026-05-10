@@ -2,12 +2,11 @@
 
 提供测试夹具和测试应用。
 """
-import asyncio
 from typing import AsyncGenerator
 
-import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -30,8 +29,9 @@ async def db_session() -> AsyncGenerator:
         max_overflow=10,
     )
 
-    # 创建所有表
+    # 创建所有表（pgvector：`case_vectors.embedding_vector` 依赖扩展）
     async with test_engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
 
     # 创建会话

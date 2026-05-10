@@ -53,7 +53,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.5_
   - _Boundary: EmbeddingClient_
 
-- [ ] 2.4 (P) 构建向量仓储的发布、状态和搜索基础
+- [x] 2.4 (P) 构建向量仓储的发布、状态和搜索基础
   - 保存成功向量、来源版本、过滤字段、任务状态和最近失败原因。
   - 刷新向量时在事务内先删除旧向量（如果存在）再插入新向量，保证每个案例最多一条向量记录。
   - 搜索查询返回所有存在于 `case_vectors` 表中的向量记录。
@@ -160,3 +160,4 @@
 ## Implementation Notes
 
 - `backend/pyproject.toml` 增补 `numpy`/`pgvector` 与已合并的 `vector_indexing.models`（`pgvector.sqlalchemy.Vector`）对齐；此前 HEAD 清单缺依赖会导致导入失败，与任务 2.3 同批补齐。
+- 仓储集成测试夹具在 `create_all` 前执行 `CREATE EXTENSION IF NOT EXISTS vector`，否则含 `VECTOR(dim)` 的表无法在测试库创建（任务 2.4）。
