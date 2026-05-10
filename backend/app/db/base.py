@@ -8,5 +8,8 @@ from app.db.session import Base
 # 导入增强 ORM 模型，使其注册到 Base.metadata
 from app.enrichment import models as enrichment_models  # noqa: F401
 
+# 导入向量索引 ORM 模型，使其注册到 Base.metadata
+from app.vector_indexing import models as vector_indexing_models  # noqa: F401
+
 # 导出 Base 供其他模块使用
 __all__ = ["Base"]
