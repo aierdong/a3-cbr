@@ -77,6 +77,12 @@ class EmbeddingConfig(BaseModel):
     vector_dimension: int = 1024  # BGE-large 默认维度
     pgvector_min_version: str = "0.8.2"
     privacy_acknowledged: bool = False
+    # 索引刷新路径（延迟容忍较高）：默认 30s、最多 2 次重试
+    index_timeout_ms: int = 30000
+    index_max_retries: int = 2
+    # 候选搜索路径（延迟敏感）：默认 5s、不重试，失败映射 503 语义
+    search_timeout_ms: int = 5000
+    search_max_retries: int = 0
 
 
 class RerankerConfig(BaseModel):
@@ -149,6 +155,10 @@ def load_app_config() -> AppConfig:
         vector_dimension=_int_env("EMBEDDING_VECTOR_DIMENSION", 1024),
         pgvector_min_version=_env("EMBEDDING_PGVECTOR_MIN_VERSION", "0.8.2"),
         privacy_acknowledged=_bool_env("EMBEDDING_PRIVACY_ACKNOWLEDGED", False),
+        index_timeout_ms=_int_env("EMBEDDING_INDEX_TIMEOUT_MS", 30000),
+        index_max_retries=_int_env("EMBEDDING_INDEX_MAX_RETRIES", 2),
+        search_timeout_ms=_int_env("EMBEDDING_SEARCH_TIMEOUT_MS", 5000),
+        search_max_retries=_int_env("EMBEDDING_SEARCH_MAX_RETRIES", 0),
     )
 
     reranker = RerankerConfig(

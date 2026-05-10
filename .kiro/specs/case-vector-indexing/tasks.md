@@ -42,7 +42,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1_
   - _Boundary: EmbeddingInputComposer_
 
-- [ ] 2.3 (P) 构建远程 embedding 客户端与响应校验
+- [x] 2.3 (P) 构建远程 embedding 客户端与响应校验
   - 调用配置的云端 embedding 接入点，并记录供应商、模型 id、维度和调用状态。
   - **区分索引路径（`embed_for_index`）和搜索路径（`embed_for_query`）的超时/重试配置**：
     - 索引路径：默认超时 30 秒，最多重试 2 次（容忍延迟）
@@ -156,3 +156,7 @@
   - _Requirements: 2.1, 2.2, 2.4, 5.1, 5.2, 5.3, 5.4_
   - _Boundary: VectorSearchService, VectorSchemas, VectorRepository_
   - _Depends: 4.2, 5.1_
+
+## Implementation Notes
+
+- `backend/pyproject.toml` 增补 `numpy`/`pgvector` 与已合并的 `vector_indexing.models`（`pgvector.sqlalchemy.Vector`）对齐；此前 HEAD 清单缺依赖会导致导入失败，与任务 2.3 同批补齐。

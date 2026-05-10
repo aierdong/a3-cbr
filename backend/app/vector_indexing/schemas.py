@@ -53,6 +53,30 @@ class VectorIndexStatus(str, Enum):
     UNSEARCHABLE = "unsearchable"
 
 
+class EmbeddingRequest(BaseModel):
+    """远程 embedding 单次请求（不向日志写入全文）。"""
+
+    text: str = Field(..., description="待嵌入文本")
+    case_id: Optional[str] = Field(default=None, description="案例标识，用于结构化日志")
+    correlation_id: Optional[str] = Field(default=None, description="调用链关联标识")
+    content_fingerprint: Optional[str] = Field(
+        default=None,
+        description="输入指纹（哈希）；用于观测而不记录正文",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class EmbeddingResult(BaseModel):
+    """校验通过的向量嵌入结果。"""
+
+    embedding_model_id: str = Field(..., description="模型标识（持久化为 embedding_model_id）")
+    embedding_dimension: int = Field(..., ge=1)
+    vector: list[float]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class MarkVectorUnsearchableReason(str, Enum):
     """标记不可检索原因（契约枚举子集；允许任意字符串以兼容扩展）。"""
 
