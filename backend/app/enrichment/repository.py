@@ -228,6 +228,24 @@ class EnrichmentRepository:
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_enrichment_result_for_case(
+        self,
+        case_id: str,
+    ) -> Optional[CaseEnrichmentResult]:
+        """按 case_id 查询派生结果行（表级唯一 case_id，任意 status）。
+
+        Args:
+            case_id: 案例标识。
+
+        Returns:
+            派生结果 ORM；不存在时返回 None。
+        """
+        stmt = select(CaseEnrichmentResult).where(
+            CaseEnrichmentResult.case_id == case_id,
+        )
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_run(self, run_id: str) -> Optional[CaseEnrichmentRun]:
         """按 run_id 查询运行记录。
 
