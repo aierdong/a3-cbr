@@ -47,7 +47,7 @@
 
 - `a3-case-management` 的案例详情读取契约：`case_id`、基础 A3 字段、状态、过滤字段、`created_at`、`updated_at`。
 - `llm-case-enrichment` 的当前可消费派生结果：`enrichment_id`、`case_updated_at`、`status`、`problem_summary`、结构化建议、适用场景建议和标签建议。`solution_summary` 可供下游展示或精排使用，但不进入本规格主召回向量。
-- Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、pytest，与上游后端规格保持一致。
+- Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、官方 **`pgvector`**（PyPI，`pgvector-python`）适配器、pytest，与上游后端规格保持一致；向量列类型须来自 `pgvector.sqlalchemy`，不得从 `sqlalchemy.dialects.postgresql` 臆造 `VECTOR`。
 - PostgreSQL + pgvector `0.8.2+`，默认向量维度 1024，默认 HNSW cosine 索引。
 - 云端 embedding 服务，默认模型 ID `bge-large-zh`，通过独立的 `api_key/model/base_url` 配置项指定。
 
@@ -149,10 +149,19 @@ flowchart TB
 | Backend / Services | Python 3.11+ + FastAPI                                            | 暴露向量索引、状态和搜索 API    | 延续上游后端栈                  |
 | Validation         | Pydantic                                                          | 请求响应、配置、状态和错误结构校验   | 禁止不匹配向量维度发布              |
 | Data / Storage     | PostgreSQL + pgvector `0.8.2+`                                    | 保存向量、状态、过滤字段和运行记录   | MVP 单库部署                 |
-| ORM / Migration    | SQLAlchemy + Alembic                                              | 新增向量表、任务表和索引迁移      | 启动或迁移时检查 pgvector 版本     |
+| ORM / Migration    | SQLAlchemy + Alembic + **`pgvector`**（PyPI）                      | 新增向量表、任务表和索引迁移      | 向量列统一用 `pgvector.sqlalchemy`；迁移脚本与 ORM 一致；启动或迁移时检查 pgvector 扩展版本     |
 | External AI        | Remote embedding model `bge-large-zh` (`api_key/model/base_url`) | 生成案例和查询 embedding   | 默认维度 1024，可配置但必须校验       |
 | Testing            | pytest + FastAPI TestClient                                       | 单元、API、索引、失败和搜索集成测试 | embedding 使用 fake client |
 
+### PostgreSQL pgvector 与 SQLAlchemy 类型约束（实现必读）
+
+为避免编码与迁移时疏漏，须同时满足 **数据库扩展**、**Python 依赖** 与 **ORM/迁移类型来源** 三方面：
+
+1. **数据库侧**：PostgreSQL 实例须安装 pgvector 扩展（满足本文 `0.8.2+`）；物理模型中的 `CREATE EXTENSION IF NOT EXISTS vector` 仅启用扩展，前提是服务端已具备对应扩展包（镜像/运维负责安装）。
+2. **Python 依赖**：在 `backend` 中声明并安装 PyPI 包 **`pgvector`**（官方维护的 [pgvector-python](https://github.com/pgvector/pgvector-python)），用于向量列与 Python 列表/numpy 等在驱动层的互操作。
+3. **禁止误用 SQLAlchemy 内置方言类型**：SQLAlchemy **不提供**与 pgvector `vector` 列对应的官方类型；**不得**从 `sqlalchemy.dialects.postgresql` 引用或自创名为 `VECTOR` 的类型来映射向量列。
+4. **应用 ORM**：`vector_indexing` 等模块中的向量列必须使用 **`pgvector.sqlalchemy`** 提供的类型（例如带维度的 `Vector(dim)`），与配置中的 embedding 维度一致。
+5. **Alembic 迁移**：生成/变更 `vector(...)` 列的 revision **同样**通过 **`pgvector.sqlalchemy`** 中的类型声明列，与 `models.py` 保持一致；避免手写与 ORM 不一致的 DDL 类型或混用错误导入路径。
 
 ## File Structure Plan
 
@@ -583,6 +592,8 @@ erDiagram
 - `CREATE EXTENSION IF NOT EXISTS vector;`
 - 启动或迁移时检查 `vector` 扩展版本必须为 `0.8.2+`。
 
+**ORM / Alembic 映射**：表中 `embedding_vector` 的 SQL 类型为 `vector(维度)`；在 SQLAlchemy 模型与 Alembic 脚本中须使用 **`pgvector.sqlalchemy`** 的类型（见上文「PostgreSQL pgvector 与 SQLAlchemy 类型约束」），禁止从 `sqlalchemy.dialects.postgresql` 冒充向量类型。
+
 **Table: `case_vectors`**
 
 
@@ -751,4 +762,4 @@ flowchart TD
 
 
 
-迁移新增 pgvector 扩展、`case_vectors`、`vector_index_jobs` 和相关索引，不修改 `a3_cases` 或 LLM 派生结果表。回滚应删除本规格新增表和索引；若生产已有向量数据，回滚前必须确认下游搜索已停用。
+迁移新增 pgvector 扩展、`case_vectors`、`vector_index_jobs` 和相关索引，不修改 `a3_cases` 或 LLM 派生结果表。迁移脚本中向量列类型须通过 **`pgvector.sqlalchemy`** 声明，与应用 ORM 对齐。回滚应删除本规格新增表和索引；若生产已有向量数据，回滚前必须确认下游搜索已停用。
