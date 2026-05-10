@@ -1465,7 +1465,7 @@ GET `/api/recommendations/runs/{run_id}`：**404** 表示运行不存在；其�
 ### Security and Privacy Tests
 
 - 日志、错误响应和运行记录不包含完整问题原文、完整案例正文、完整向量数组或供应商原始响应。
-- 生产 reranker 配置缺少 provider、model、base_url、超时、凭据来源或隐私确认时 fail closed。
+- 生产 reranker 配置缺少 api_key、model、base_url、超时、凭据来源或隐私确认时 fail closed。
 - 外发 reranker payload 只包含查询和候选重排所需文本，不包含反馈、向量数组或未授权字段。
 
 ### Performance / Load

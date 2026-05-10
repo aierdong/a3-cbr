@@ -208,7 +208,7 @@ backend/
 ### Modified Files
 
 - `backend/app/main.py` — 仅追加注册 `VectorRouter` 和启动 `VectorCleanupService`，不改写应用入口基础实现。
-- `backend/app/core/config.py` — 仅追加 embedding 的 provider、model、base_url、维度、索引路径超时/重试（`index_timeout`/`index_max_retries`）、搜索路径超时/重试（`search_timeout`/`search_max_retries`）、pgvector 版本、`PGVECTOR_HNSW_EF_SEARCH`（默认 40）、清理服务配置（`vector_cleanup_interval_seconds` 默认 86400）和隐私确认配置值，不拥有共享配置基础设施。
+- `backend/app/core/config.py` — 仅追加 embedding 的 api_key、model、base_url、维度、索引路径超时/重试（`index_timeout`/`index_max_retries`）、搜索路径超时/重试（`search_timeout`/`search_max_retries`）、pgvector 版本、`PGVECTOR_HNSW_EF_SEARCH`（默认 40）、清理服务配置（`vector_cleanup_interval_seconds` 默认 86400）和隐私确认配置值，不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加向量索引与 embedding 错误码映射，不拥有 `ErrorMapper` 基础实现。
 - `backend/app/db/base.py` — 仅追加导入 `vector_indexing` ORM metadata，不拥有数据库基础设施。
 - `backend/app/cases/service.py` — 不改变案例契约，仅供 `CaseIndexSourceProvider` 读取案例快照。
@@ -722,7 +722,7 @@ erDiagram
 
 ### Security and Privacy Tests
 
-- 生产 embedding 配置缺少 provider、model、base_url、凭据来源、超时、重试或隐私确认时 fail closed。
+- 生产 embedding 配置缺少 api_key、model、base_url、凭据来源、超时、重试或隐私确认时 fail closed。
 - 日志、错误响应和任务记录不包含完整案例正文、完整 embedding 输入文本或向量数组。
 - 外发 embedding payload 只包含组合后的问题侧必要文本和任务元数据，不包含解决步骤、效果结果、推荐反馈或未授权字段。
 
@@ -735,7 +735,7 @@ erDiagram
 ## Security Considerations
 
 - 案例内容视为敏感业务数据，embedding 输入仅包含问题侧候选搜索所需文本片段。
-- 生产环境必须显式配置 provider、model、base_url、凭据来源、超时、重试上限和数据保留确认。
+- 生产环境必须显式配置 api_key、model、base_url、凭据来源、超时、重试上限和数据保留确认。
 - 不在日志、错误响应、任务记录中保存完整输入文本或向量数组。
 - pgvector 版本必须为 `0.8.2+`，避免已知 HNSW 并行构建漏洞风险。
 

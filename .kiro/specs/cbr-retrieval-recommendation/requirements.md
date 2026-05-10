@@ -102,7 +102,7 @@
 
 7.1 When 每次检索请求被处理, the CBR 检索推荐服务 shall 生成稳定推荐运行标识，并记录查询哈希、过滤条件、业务权重、候选数量、最终数量、降级状态和错误类型。
 7.2 The CBR 检索推荐服务 shall 在响应中返回可供下游反馈记录引用的推荐运行标识和推荐项标识。
-7.3 The CBR 检索推荐服务 shall 记录重排 `model_id`、调用状态和耗时，默认重排 model 为 `qwen3-reranker-8b`；provider/base_url 仅作为运行时配置，不作为持久化字段。持久化的调用状态 `reranker_status` shall 取 `pending`（**默认值**：尚未得到重排外呼最终结果，含从未进入重排阶段的终态路径）、`succeeded`、`failed` 或 `skipped` 之一；`pending` shall 与 `failed` 区分，后者仅表示已发起重排外呼且失败。
+7.3 The CBR 检索推荐服务 shall 记录重排 `model_id`、调用状态和耗时，默认重排 model 为 `qwen3-reranker-8b`；api_key/base_url 仅作为运行时配置，不作为持久化字段。持久化的调用状态 `reranker_status` shall 取 `pending`（**默认值**：尚未得到重排外呼最终结果，含从未进入重排阶段的终态路径）、`succeeded`、`failed` 或 `skipped` 之一；`pending` shall 与 `failed` 区分，后者仅表示已发起重排外呼且失败。
 7.4 If 外部重排、结构化局部评分、业务评分、分值聚合或解释依赖缺少生产配置、超时、限流或供应商失败, then the CBR 检索推荐服务 shall fail closed 或降级到已定义候选展示路径，并返回稳定状态；摘要或标准化查询生成失败不适用降级检索路径，适用 Requirement `1.7` 的终止策略。
 7.5 The CBR 检索推荐服务 shall 避免在日志、错误响应和运行记录中暴露完整问题原文、完整案例正文、向量数组或敏感门店信息。
 7.6 When 为推荐项生成或持久化 `recommendation_item_id`, the CBR 检索推荐服务 shall 保证该标识**不等于**字面字符串 `RUN`（该取值保留给下游 `recommendation-feedback` 表示运行级反馈持久化哨兵）。

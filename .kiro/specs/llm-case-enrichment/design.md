@@ -1038,7 +1038,7 @@ erDiagram
 ## Security Considerations
 
 - 案例内容视为敏感业务数据；外发 LLM 仅带任务所需最少字段。
-- 生产须显式配置三套独立参数：LLM、Embedding、Reranker 各自的 provider、model、base_url、API key 来源、超时、重试上限与数据保留确认。
+- 生产须显式配置三套独立参数：LLM、Embedding、Reranker 各自的 api_key、model、base_url、API key 来源、超时、重试上限与数据保留确认。
 - Prompt 注入防护：详见 `docs/prompt-injection-defense.md`，核心策略包括输入清洗、高风险模式阻断、结构化分隔和输出一致性校验。
 - 不向终端用户暴露供应商原始错误、Prompt 或完整输出；对外给稳定码与运维可读说明。
 

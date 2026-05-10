@@ -2,7 +2,7 @@
 
 - [ ] 1. Foundation: 向量索引运行基础
 - [ ] 1.1 建立向量索引配置与生产启用门控
-  - 增加 embedding provider、model、base_url、向量维度、超时、重试、pgvector 最低版本和供应商隐私确认配置。
+  - 增加 embedding api_key、model、base_url、向量维度、超时、重试、pgvector 最低版本和供应商隐私确认配置。
   - 默认 model 为 `bge-large-zh`，默认维度为 1024，生产环境缺少必要配置时启动或调用失败关闭。
   - 仅向共享配置追加本规格所需配置值，不拥有 `backend/app/core/config.py` 基础实现。
   - 完成后，配置校验能区分开发 fake embedding、生产远程 embedding 和配置缺失三类状态。

@@ -83,5 +83,5 @@
 6.1 The 案例向量索引服务 shall 在发送给 embedding 服务前限制输入范围，仅包含生成案例语义向量所需的文本片段。
 6.2 The 案例向量索引服务 shall 记录向量任务生命周期，包括排队、处理中、成功、失败、重试和删除。
 6.3 The 案例向量索引服务 shall 提供按案例标识查询索引状态和最近失败原因的能力。
-6.4 If embedding 生产配置缺少 provider、model、base_url、凭据来源、超时、重试或供应商隐私确认, then the 案例向量索引服务 shall 拒绝启用生产向量化流程。
+6.4 If embedding 生产配置缺少 api_key、model、base_url、凭据来源、超时、重试或供应商隐私确认, then the 案例向量索引服务 shall 拒绝启用生产向量化流程。
 6.5 The 案例向量索引服务 shall 避免在日志和错误响应中暴露完整案例正文、完整 embedding 输入文本或向量数组。
