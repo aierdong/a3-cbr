@@ -4,15 +4,17 @@ import logging
 from fastapi import FastAPI
 
 from app.cases.router import router as case_router
-from app.core.config import settings
+from app.core.config import get_app_config, settings
 from app.db.session import async_session_maker
 from app.enrichment.cleanup import EnrichmentCleanupService, load_cleanup_config
 from app.enrichment.router import router as enrichment_router
+from app.vector_indexing.cleanup import VectorCleanupService
 
 logger = logging.getLogger(__name__)
 
 # 清理服务实例（模块级别，供 startup/shutdown 钩子使用）
 cleanup_service: EnrichmentCleanupService | None = None
+vector_cleanup_service: VectorCleanupService | None = None
 
 
 def create_app() -> FastAPI:
@@ -43,7 +45,7 @@ async def start_cleanup_service():
     使用 asyncio.create_task 启动周期性清理后台任务。
     启动失败时记录错误日志，不阻塞应用启动。
     """
-    global cleanup_service
+    global cleanup_service, vector_cleanup_service
     try:
         config = load_cleanup_config()
         cleanup_service = EnrichmentCleanupService(
@@ -55,6 +57,17 @@ async def start_cleanup_service():
     except Exception:
         logger.exception("增强清理服务启动失败，不影响应用正常运行")
 
+    try:
+        emb = get_app_config().embedding
+        vector_cleanup_service = VectorCleanupService(
+            db_session_factory=async_session_maker,
+            interval_seconds=emb.vector_cleanup_interval_seconds,
+        )
+        vector_cleanup_service.start()
+        logger.info("向量孤立清理服务已启动")
+    except Exception:
+        logger.exception("向量孤立清理服务启动失败，不影响应用正常运行")
+
 
 @app.on_event("shutdown")
 async def stop_cleanup_service():
@@ -62,9 +75,14 @@ async def stop_cleanup_service():
 
     优雅停止清理服务后台任务。
     """
+    global vector_cleanup_service
     if cleanup_service is not None:
         await cleanup_service.stop()
         logger.info("增强清理服务已停止")
+
+    if vector_cleanup_service is not None:
+        await vector_cleanup_service.stop()
+        logger.info("向量孤立清理服务已停止")
 
 
 @app.get("/health")

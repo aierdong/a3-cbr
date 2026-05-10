@@ -83,6 +83,7 @@ class EmbeddingConfig(BaseModel):
     # 候选搜索路径（延迟敏感）：默认 5s、不重试，失败映射 503 语义
     search_timeout_ms: int = 5000
     search_max_retries: int = 0
+    vector_cleanup_interval_seconds: int = 86400
 
 
 class RerankerConfig(BaseModel):
@@ -159,6 +160,7 @@ def load_app_config() -> AppConfig:
         index_max_retries=_int_env("EMBEDDING_INDEX_MAX_RETRIES", 2),
         search_timeout_ms=_int_env("EMBEDDING_SEARCH_TIMEOUT_MS", 5000),
         search_max_retries=_int_env("EMBEDDING_SEARCH_MAX_RETRIES", 0),
+        vector_cleanup_interval_seconds=_int_env("VECTOR_CLEANUP_INTERVAL_SECONDS", 86400),
     )
 
     reranker = RerankerConfig(

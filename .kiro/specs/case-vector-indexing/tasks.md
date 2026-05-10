@@ -92,7 +92,7 @@
   - _Requirements: 3.4, 4.5, 6.2_
   - _Boundary: VectorIndexService, VectorRepository_
 
-- [ ] 3.5 实现后台异步清理服务
+- [x] 3.5 实现后台异步清理服务
   - 定期扫描并清理孤立的向量数据（`case_id` 在 `a3_cases` 中不存在，或 `enrichment_id` 在 `case_enrichment_results` 中不存在）。
   - 清理任务在应用启动时自动启动，清理间隔通过配置项 `vector_cleanup_interval_seconds` 指定（默认 86400 秒）。
   - 清理操作创建 `job_type=remove` 且 `requested_by=system` 的审计任务，记录清理原因和删除的向量标识。
