@@ -74,6 +74,9 @@ class EmbeddingConfig(BaseModel):
     base_url: str
     timeout_ms: int = 60000
     max_retries: int = 3
+    vector_dimension: int = 1024  # BGE-large 默认维度
+    pgvector_min_version: str = "0.8.2"
+    privacy_acknowledged: bool = False
 
 
 class RerankerConfig(BaseModel):
@@ -143,6 +146,9 @@ def load_app_config() -> AppConfig:
         base_url=_env("EMBEDDING_BASE_URL", "https://qianfan.baidubce.com/v2"),
         timeout_ms=_int_env("EMBEDDING_TIMEOUT_MS", 60000),
         max_retries=_int_env("EMBEDDING_MAX_RETRIES", 3),
+        vector_dimension=_int_env("EMBEDDING_VECTOR_DIMENSION", 1024),
+        pgvector_min_version=_env("EMBEDDING_PGVECTOR_MIN_VERSION", "0.8.2"),
+        privacy_acknowledged=_bool_env("EMBEDDING_PRIVACY_ACKNOWLEDGED", False),
     )
 
     reranker = RerankerConfig(
@@ -166,3 +172,44 @@ def load_app_config() -> AppConfig:
 def get_app_config() -> AppConfig:
     """全局单例配置，应用启动时加载一次。"""
     return load_app_config()
+
+
+# ---------------------------------------------------------------------------
+# 向量索引配置校验（case-vector-indexing 1.1）
+# ---------------------------------------------------------------------------
+# 三类状态：
+#   - dev_fake: api_key 为空或 "fake"，使用本地 fake embedding（开发/测试）
+#   - production_remote: api_key 有效，model_id 为 bge-large-zh，privacy_acknowledged=True
+#   - config_missing: 生产环境缺少必要配置，fail-closed
+# ---------------------------------------------------------------------------
+
+
+class EmbeddingConfigStatus:
+    """Embedding 配置状态（区分三类配置场景）。"""
+
+    DEVMODE_FAKE = "dev_fake"  # 开发 fake embedding
+    PRODUCTION_REMOTE = "production_remote"  # 生产远程 embedding
+    CONFIG_MISSING = "config_missing"  # 配置缺失，fail-closed
+
+
+def get_embedding_config_status(config: EmbeddingConfig) -> EmbeddingConfigStatus:
+    """判断 EmbeddingConfig 所处状态，用于启用门控。
+
+    Args:
+        config: EmbeddingConfig 实例。
+
+    Returns:
+        EmbeddingConfigStatus: 配置状态枚举值。
+    """
+    api_key = config.api_key or ""
+    is_fake_key = api_key.lower() in ("", "fake", "test")
+
+    if is_fake_key:
+        return EmbeddingConfigStatus.DEVMODE_FAKE
+
+    # 生产环境：api_key 有效，必须确认隐私政策
+    if not config.privacy_acknowledged:
+        return EmbeddingConfigStatus.CONFIG_MISSING
+
+    # api_key 有效 + privacy_acknowledged=True -> 生产远程 embedding
+    return EmbeddingConfigStatus.PRODUCTION_REMOTE
