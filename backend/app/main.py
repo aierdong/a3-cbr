@@ -11,6 +11,9 @@ from app.enrichment.router import router as enrichment_router
 from app.vector_indexing.cleanup import VectorCleanupService
 from app.vector_indexing.router import router as vector_router
 
+from app.feedback.cleanup import FeedbackCleanupBackgroundService, load_feedback_cleanup_config
+from app.feedback.router import admin_router as feedback_admin_router
+from app.feedback.router import router as feedback_router
 from app.retrieval.router import router as retrieval_router
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,7 @@ logger = logging.getLogger(__name__)
 # 清理服务实例（模块级别，供 startup/shutdown 钩子使用）
 cleanup_service: EnrichmentCleanupService | None = None
 vector_cleanup_service: VectorCleanupService | None = None
+feedback_cleanup_service: FeedbackCleanupBackgroundService | None = None
 
 
 def create_app() -> FastAPI:
@@ -40,6 +44,10 @@ def create_app() -> FastAPI:
     # 注册检索推荐路由
     app.include_router(retrieval_router)
 
+    # 推荐反馈 API
+    app.include_router(feedback_router)
+    app.include_router(feedback_admin_router)
+
     return app
 
 
@@ -54,7 +62,7 @@ async def start_cleanup_service():
     使用 asyncio.create_task 启动周期性清理后台任务。
     启动失败时记录错误日志，不阻塞应用启动。
     """
-    global cleanup_service, vector_cleanup_service
+    global cleanup_service, feedback_cleanup_service, vector_cleanup_service
     try:
         config = load_cleanup_config()
         cleanup_service = EnrichmentCleanupService(
@@ -77,6 +85,18 @@ async def start_cleanup_service():
     except Exception:
         logger.exception("向量孤立清理服务启动失败，不影响应用正常运行")
 
+    try:
+        fb_cfg = load_feedback_cleanup_config()
+        feedback_cleanup_service = FeedbackCleanupBackgroundService(
+            session_factory=async_session_maker,
+            interval_seconds=fb_cfg.interval_seconds,
+            enabled=fb_cfg.enabled,
+        )
+        feedback_cleanup_service.start()
+        logger.info("反馈悬空清理后台任务已启动")
+    except Exception:
+        logger.exception("反馈悬空清理后台任务启动失败，不影响应用正常运行")
+
 
 @app.on_event("shutdown")
 async def stop_cleanup_service():
@@ -84,7 +104,7 @@ async def stop_cleanup_service():
 
     优雅停止清理服务后台任务。
     """
-    global vector_cleanup_service
+    global feedback_cleanup_service, vector_cleanup_service
     if cleanup_service is not None:
         await cleanup_service.stop()
         logger.info("增强清理服务已停止")
@@ -92,6 +112,10 @@ async def stop_cleanup_service():
     if vector_cleanup_service is not None:
         await vector_cleanup_service.stop()
         logger.info("向量孤立清理服务已停止")
+
+    if feedback_cleanup_service is not None:
+        await feedback_cleanup_service.stop()
+        logger.info("反馈悬空清理后台任务已停止")
 
 
 @app.get("/health")

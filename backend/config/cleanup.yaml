@@ -5,3 +5,8 @@ enrichment_cleanup:
   enabled: true
   interval_seconds: 86400  # 每日执行
   batch_size: 1000
+
+feedback_cleanup:
+  enabled: true
+  interval_seconds: 3600
+  batch_size: 1000

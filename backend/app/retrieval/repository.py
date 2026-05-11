@@ -420,9 +420,13 @@ class RecommendationCascadeDeleteService:
         """
         try:
             client = await self._get_http_client()
-            response = await client.delete(
-                f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback",
-                params={"recommendation_run_id": run_id},
+            response = await client.post(
+                f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback/delete",
+                json={
+                    "recommendation_run_id": run_id,
+                    "reason": "schedule_deleted",
+                    "requested_by": "system",
+                },
                 timeout=FEEDBACK_DELETE_TIMEOUT,
             )
             if response.status_code == 200:
@@ -470,9 +474,13 @@ class RecommendationCascadeDeleteService:
         for item_id in item_ids:
             try:
                 client = await self._get_http_client()
-                response = await client.delete(
-                    f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback",
-                    params={"recommendation_item_id": item_id},
+                response = await client.post(
+                    f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback/delete",
+                    json={
+                        "recommendation_item_id": item_id,
+                        "reason": "schedule_deleted",
+                        "requested_by": "system",
+                    },
                     timeout=FEEDBACK_DELETE_TIMEOUT,
                 )
                 if response.status_code == 200:

@@ -166,7 +166,9 @@ class CaseDeleteCoordinator:
         # Step 4: 删除推荐反馈数据
         try:
             feedback_deleted, feedback_deleted_count = await self._call_feedback_delete(
-                request.case_id, request.requested_by
+                request.case_id,
+                request.requested_by,
+                reason="case_deleted",
             )
         except Exception as e:
             logger.warning(f"Failed to delete recommendation feedback data: {e}")
@@ -228,7 +230,9 @@ class CaseDeleteCoordinator:
         # Step 2: 删除推荐反馈数据
         try:
             feedback_deleted, feedback_deleted_count = await self._call_feedback_delete(
-                case_id, requested_by
+                case_id,
+                requested_by,
+                reason="enrichment_deleted",
             )
         except Exception as e:
             logger.warning(f"Failed to delete recommendation feedback data: {e}")
@@ -273,7 +277,9 @@ class CaseDeleteCoordinator:
         # 只删除推荐反馈数据
         try:
             feedback_deleted, feedback_deleted_count = await self._call_feedback_delete(
-                case_id, requested_by
+                case_id,
+                requested_by,
+                reason="vector_deleted",
             )
         except Exception as e:
             logger.warning(f"Failed to delete recommendation feedback data: {e}")
@@ -398,22 +404,36 @@ class CaseDeleteCoordinator:
             return True, 0
 
     async def _call_feedback_delete(
-        self, case_id: str, requested_by: str
+        self,
+        case_id: str,
+        requested_by: str,
+        *,
+        reason: str,
     ) -> tuple[bool, int]:
         """调用推荐反馈服务删除 API。
 
         Args:
             case_id: 案例 ID
             requested_by: 请求者标识
+            reason: 删除原因枚举字符串（与 FeedbackDeleteReason 对齐）
 
         Returns:
             tuple[bool, int]: (是否成功, 删除数量)
         """
         try:
+            rb = (
+                requested_by
+                if requested_by in ("anonymous_user", "system")
+                else "anonymous_user"
+            )
             client = await self._get_http_client()
             response = await client.post(
                 f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback/delete",
-                json={"case_id": case_id, "requested_by": requested_by},
+                json={
+                    "case_id": case_id,
+                    "reason": reason,
+                    "requested_by": rb,
+                },
             )
             if response.status_code == 200:
                 data = response.json()
