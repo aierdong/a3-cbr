@@ -57,6 +57,32 @@ paths:
                 $ref: '#/components/schemas/CaseEnrichmentStatusResponse'
         '404':
           $ref: '#/components/responses/CaseNotFound'
+  /enrichment/delete:
+    post:
+      tags: [Enrichment]
+      summary: 删除增强派生数据（级联删除契约）
+      operationId: deleteEnrichmentData
+      description: >
+        至少提供 case_id 或 enrichment_id 之一。在单个事务内删除派生结果与运行记录；
+        幂等：无匹配数据时 deleted_count 为 0。不主动触发下游删除，由调用方协调
+        （与 `docs/cascade-deletion-design.md` §2.2 及 `.kiro/specs/llm-case-enrichment/design.md` 对齐）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteEnrichmentRequest'
+      responses:
+        '200':
+          description: 删除成功或幂等无数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteEnrichmentResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /recommendations/copy:
     post:
       tags: [RecommendationCopy]
@@ -189,6 +215,15 @@ components:
                 message: suspected injection contamination in llm output
                 meta:
                   description: 输出侧疑似注入污染，在 LLM 返回后 OutputValidator 校验阶段触发，阻断输出
+    InternalError:
+      description: 系统内部异常（如删除事务失败）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
   schemas:
     CreateEnrichmentRunRequest:
       type: object
@@ -196,6 +231,52 @@ components:
         触发增强运行的请求体。根据设计文档，MVP 阶段无必填业务字段；
         该对象预留扩展字段，不影响当前契约稳定性。
       additionalProperties: true
+    DeleteEnrichmentReason:
+      type: string
+      description: 级联删除原因（与 `docs/cascade-deletion-design.md` 对齐）
+      enum:
+        - case_deleted
+        - enrichment_deleted
+        - vector_deleted
+        - feedback_deleted
+        - schedule_deleted
+    RequestedBy:
+      type: string
+      description: 删除发起方标识
+      enum: [anonymous_user, system]
+    DeleteEnrichmentRequest:
+      type: object
+      description: >
+        至少提供 case_id 或 enrichment_id 之一；二者均省略时服务端返回 422。
+      required: [reason, requested_by]
+      properties:
+        case_id:
+          type: string
+          maxLength: 64
+          description: 按案例删除全部增强数据（可与 enrichment_id 二选一或同时提供）
+        enrichment_id:
+          type: string
+          maxLength: 64
+          description: 按增强标识删除特定记录（可与 case_id 二选一或同时提供）
+        reason:
+          $ref: '#/components/schemas/DeleteEnrichmentReason'
+        requested_by:
+          $ref: '#/components/schemas/RequestedBy'
+      additionalProperties: false
+    DeleteEnrichmentResponse:
+      type: object
+      required: [success, deleted_count, deleted_at]
+      properties:
+        success:
+          type: boolean
+        deleted_count:
+          type: integer
+          minimum: 0
+          description: 删除的记录数（派生结果与运行记录合计）
+        deleted_at:
+          type: string
+          format: date-time
+      additionalProperties: false
     EnrichmentTaskType:
       type: string
       enum: [case_enrichment]

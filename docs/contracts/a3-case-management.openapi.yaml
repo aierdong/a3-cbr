@@ -5,6 +5,8 @@ info:
   description: >
     A3 案例管理基础契约，覆盖案例创建、编辑、详情、列表查询，不包含 AI 派生字段、
     向量检索、推荐与反馈能力。
+    本契约依据 `.kiro/specs/a3-case-management/design.md` 整理，并与
+    `backend/app/cases` 实现保持同步。
 servers:
   - url: /api
 tags:

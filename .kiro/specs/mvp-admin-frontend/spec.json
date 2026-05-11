@@ -15,10 +15,10 @@
       "revision_reason": "三次审查通过：补充契约维护职责、加载更多按钮状态机、匿名认证演进路径"
     },
     "tasks": {
-      "generated": false,
-      "approved": false,
+      "generated": true,
+      "approved": true,
       "revision_reason": null
     }
   },
-  "ready_for_implementation": false
+  "ready_for_implementation": true
 }

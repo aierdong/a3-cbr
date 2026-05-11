@@ -3,9 +3,9 @@ info:
   title: Case Vector Indexing API
   version: 1.0.0
   description: >
-    案例问题侧向量索引与搜索契约，覆盖手动刷新、状态查询、不可检索标记、
+    案例问题侧向量索引与搜索契约，覆盖手动刷新、状态查询、级联删除、不可检索标记、
     失败任务重试和 Top-K 语义候选检索。
-    本契约依据 `.kiro/specs/case-vector-indexing/design.md` 整理。
+    本契约依据 `.kiro/specs/case-vector-indexing/design.md` 整理，并与 `backend/app/vector_indexing` 对齐。
 servers:
   - url: /api
 tags:
@@ -58,6 +58,32 @@ paths:
                 $ref: '#/components/schemas/VectorIndexStatusResponse'
         '404':
           $ref: '#/components/responses/CaseNotFound'
+  /vector-index/delete:
+    post:
+      tags: [VectorIndex]
+      summary: 按案例或向量标识删除索引（级联删除契约）
+      operationId: deleteCaseVectorIndex
+      description: >
+        至少提供 case_id 或 vector_id 之一；创建 job_type=remove 审计任务并在事务内删除
+        case_vectors 与相关 vector_index_jobs。幂等：无向量时 deleted_count 为 0。
+        与 `docs/cascade-deletion-design.md` §2.2 及 `.kiro/specs/case-vector-indexing/design.md` 对齐。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteVectorIndexRequest'
+      responses:
+        '200':
+          description: 删除成功或幂等无数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteVectorIndexResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /a3-cases/{case_id}/vector-index/unsearchable:
     post:
       tags: [VectorIndex]
@@ -243,6 +269,15 @@ components:
               value:
                 code: EMBEDDING_CONFIG_MISSING
                 message: embedding config missing
+    InternalError:
+      description: 系统内部异常（如删除或状态查询失败）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
   schemas:
     RefreshVectorIndexRequest:
       type: object
@@ -256,6 +291,11 @@ components:
         requested_by:
           type: string
           description: 触发来源标识（系统、管理员或流程）
+        carry_retry_count:
+          type: integer
+          minimum: 0
+          default: 0
+          description: 编排用新任务的 retry_count 初始值（手动重试时为前一任务 +1）
       additionalProperties: true
     MarkVectorUnsearchableReason:
       type: string
@@ -277,6 +317,49 @@ components:
           type: string
           nullable: true
           description: 操作发起方标识
+      additionalProperties: false
+    DeleteVectorIndexReason:
+      type: string
+      description: 级联删除向量索引原因
+      enum:
+        - case_deleted
+        - enrichment_deleted
+        - vector_deleted
+        - feedback_deleted
+        - schedule_deleted
+    DeleteVectorIndexRequest:
+      type: object
+      description: case_id 与 vector_id 至少填其一，否则服务端返回 422。
+      required: [reason, requested_by]
+      properties:
+        case_id:
+          type: string
+          maxLength: 64
+          description: 按案例删除向量索引
+        vector_id:
+          type: string
+          maxLength: 64
+          description: 按向量记录删除
+        reason:
+          $ref: '#/components/schemas/DeleteVectorIndexReason'
+        requested_by:
+          type: string
+          minLength: 1
+          description: 删除发起方（如 anonymous_user、system）
+      additionalProperties: false
+    DeleteVectorIndexResponse:
+      type: object
+      required: [success, deleted_count, deleted_at]
+      properties:
+        success:
+          type: boolean
+        deleted_count:
+          type: integer
+          minimum: 0
+          description: 删除的向量记录数量
+        deleted_at:
+          type: string
+          format: date-time
       additionalProperties: false
     VectorJobType:
       type: string
@@ -460,6 +543,14 @@ components:
         created_at_to:
           type: string
           format: date-time
+        case_updated_at_from:
+          type: string
+          format: date-time
+          description: 按 case_vectors.case_updated_at 下限过滤（与 design.md 首选字段一致）
+        case_updated_at_to:
+          type: string
+          format: date-time
+          description: 按 case_vectors.case_updated_at 上限过滤
       additionalProperties: false
     VectorSearchRequest:
       type: object
@@ -516,6 +607,7 @@ components:
         - case_updated_at
         - input_content_hash
         - filter_metadata
+        - index_status
       properties:
         case_id:
           type: string
@@ -534,10 +626,20 @@ components:
           type: string
         filter_metadata:
           $ref: '#/components/schemas/VectorCandidateFilterMetadata'
+        index_status:
+          type: string
+          enum: [searchable]
+          description: 候选检索态字面量；与 `cbr-retrieval-recommendation` VectorSearchPort 必填字段对齐
       additionalProperties: false
     VectorSearchQueryMetadata:
       type: object
-      required: [query_hash, model_id, dimension, filters_applied]
+      required:
+        - query_hash
+        - model_id
+        - dimension
+        - filters_applied
+        - search_ref
+        - index_version
       properties:
         query_hash:
           type: string
@@ -551,6 +653,14 @@ components:
         total_candidates_considered:
           type: integer
           nullable: true
+        search_ref:
+          type: string
+          minLength: 1
+          description: 批次级追踪引用（VectorSearchPort / 运行记录信封）
+        index_version:
+          type: string
+          minLength: 1
+          description: 本次检索所用索引或模型版本表述（如 model@dim）
       additionalProperties: false
     VectorSearchResponse:
       type: object
