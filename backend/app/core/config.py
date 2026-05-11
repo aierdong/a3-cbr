@@ -5,7 +5,7 @@
 import os
 from functools import lru_cache
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -117,6 +117,14 @@ class RetrievalConfig(BaseModel):
     reranker_model_id: str = "qwen3-reranker-8b"
 
 
+class FeedbackConfig(BaseModel):
+    """推荐反馈专用配置（recommendation-feedback 使用）。"""
+
+    enabled: bool = True
+    comment_max_length: int = 2000
+    stats_default_range_days: int = 30
+
+
 def get_retrieval_config(config: "AppConfig") -> RetrievalConfig:
     """从 AppConfig 构造检索推荐配置。
 
@@ -160,6 +168,8 @@ class AppConfig(BaseModel):
     }
     max_business_weight: float = 1.0
     contract_version: str = "mvp-1"
+    # --- recommendation-feedback 配置 ---
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
 
     @property
     def retrieval(self) -> RetrievalConfig:
@@ -176,6 +186,7 @@ def load_app_config() -> AppConfig:
         EMBEDDING_APIKEY, EMBEDDING_MODEL_ID, ...
         RERANKER_APIKEY, RERANKER_MODEL_ID, ...
         MAX_RECOMMENDATION_CANDIDATES
+        FEEDBACK_ENABLED, FEEDBACK_COMMENT_MAX_LENGTH, FEEDBACK_STATS_DEFAULT_RANGE_DAYS
     """
 
     def _env(name: str, default: str = "") -> str:
@@ -256,6 +267,11 @@ def load_app_config() -> AppConfig:
         },
         max_business_weight=1.0,
         contract_version="mvp-1",
+        feedback=FeedbackConfig(
+            enabled=_bool_env("FEEDBACK_ENABLED", True),
+            comment_max_length=_int_env("FEEDBACK_COMMENT_MAX_LENGTH", 2000),
+            stats_default_range_days=_int_env("FEEDBACK_STATS_DEFAULT_RANGE_DAYS", 30),
+        ),
     )
 
 

@@ -121,6 +121,15 @@ class ErrorCode:
     # 解释生成
     RETRIEVAL_EXPLANATION_FALLBACK = "RETRIEVAL_EXPLANATION_FALLBACK"  # 200: 解释降级（回退至 LLM）
 
+    # --- recommendation-feedback 反馈相关错误码 ---
+
+    # 推荐运行或推荐项不存在 / 上游引用缺失（404）
+    FEEDBACK_TARGET_NOT_FOUND = "FEEDBACK_TARGET_NOT_FOUND"
+    # 推荐项不属于指定推荐运行（409）
+    FEEDBACK_TARGET_MISMATCH = "FEEDBACK_TARGET_MISMATCH"
+    # 反馈字段校验失败：枚举、备注长度、统计查询时间范围等（422）
+    FEEDBACK_VALIDATION_ERROR = "FEEDBACK_VALIDATION_ERROR"
+
 
 _EMBEDDING_PUBLIC_MESSAGES: dict[str, str] = {
     ErrorCode.EMBEDDING_TIMEOUT: "Embedding 调用超时",
@@ -152,6 +161,12 @@ _RETRIEVAL_PUBLIC_MESSAGES: dict[str, str] = {
     ErrorCode.RETRIEVAL_STRUCTURED_SCORING_SKIPPED: "结构化局部评分跳过",
     ErrorCode.RETRIEVAL_BUSINESS_SCORING_FAILED: "业务评分失败",
     ErrorCode.RETRIEVAL_EXPLANATION_FALLBACK: "解释生成降级",
+}
+
+_FEEDBACK_PUBLIC_MESSAGES: dict[str, str] = {
+    ErrorCode.FEEDBACK_TARGET_NOT_FOUND: "反馈目标不存在或引用已失效",
+    ErrorCode.FEEDBACK_TARGET_MISMATCH: "推荐项与推荐运行不匹配",
+    ErrorCode.FEEDBACK_VALIDATION_ERROR: "反馈请求字段校验失败",
 }
 
 
