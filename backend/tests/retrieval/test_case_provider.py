@@ -144,24 +144,6 @@ def _make_enrichment_result(
 
 
 # ---------------------------------------------------------------------------
-# Tests: Feature Flag Gate
-# ---------------------------------------------------------------------------
-
-
-class TestCaseProviderFeatureFlag:
-    """Feature Flag Protocol: flag=OFF 时测试应跳过或失败。"""
-
-    def test_feature_flag_default_enabled(self):
-        """默认 feature flag 为 True（实现完成前为 False）。"""
-        # TODO: 实现完成后改为 True
-        assert RECOMMENDATION_CASE_PROVIDER_ENABLED is True
-
-    def test_is_case_provider_enabled_returns_correct_value(self):
-        """is_case_provider_enabled 返回 flag 当前值。"""
-        assert is_case_provider_enabled() == RECOMMENDATION_CASE_PROVIDER_ENABLED
-
-
-# ---------------------------------------------------------------------------
 # Tests: 成功路径
 # ---------------------------------------------------------------------------
 

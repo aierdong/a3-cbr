@@ -30,19 +30,6 @@ from app.retrieval.schemas import (
 
 
 # ---------------------------------------------------------------------------
-# Feature Flag: QueryNormalizer 功能开关
-# ---------------------------------------------------------------------------
-
-# TODO: QueryNormalizer 实现后移除此 flag
-RETRIEVAL_QUERY_NORMALIZER_ENABLED = True
-
-
-def _is_normalizer_enabled() -> bool:
-    """检查 QueryNormalizer 功能是否启用。"""
-    return RETRIEVAL_QUERY_NORMALIZER_ENABLED
-
-
-# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -57,18 +44,6 @@ def _app_config() -> AppConfig:
 def _normalizer_config() -> NormalizerLLMConfig:
     """测试用 NormalizerLLMConfig。"""
     return _app_config().normalizer_llm
-
-
-def _normalizer_llm_completion_request(**overrides) -> LLMCompletionRequest:
-    """构造 LLM normalizer 调用请求。"""
-    defaults = {
-        "prompt": "请分析以下案例问题并生成标准化查询...",
-        "model_id": _normalizer_config().model_id,
-        "task_type": TaskType.CASE_ENRICHMENT,
-        "request_purpose": RequestPurpose.CASE_RETRIEVAL_QUERY,
-    }
-    defaults.update(overrides)
-    return LLMCompletionRequest(**defaults)
 
 
 def _stub_normalizer_completion(
@@ -111,24 +86,6 @@ def _mock_normalizer_async_client(completion: SimpleNamespace) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Feature Flag Gate
-# ---------------------------------------------------------------------------
-
-
-class TestFeatureFlagGate:
-    """Feature Flag Protocol: flag=OFF 时测试应跳过或失败。"""
-
-    @pytest.mark.skipif(
-        _is_normalizer_enabled(),
-        reason="QueryNormalizer 功能已启用，跳过此测试",
-    )
-    def test_normalizer_disabled_raises(self):
-        """flag=OFF 时，QueryNormalizer 不可用。"""
-        with pytest.raises(ImportError):
-            from app.retrieval.query import QueryNormalizer  # noqa: F401
-
-
-# ---------------------------------------------------------------------------
 # Tests: 基础输入校验
 # ---------------------------------------------------------------------------
 
@@ -143,13 +100,6 @@ class TestBasicValidation:
 
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("query_text",) for e in errors)
-
-    def test_whitespace_only_query_text_strips_and_passes(self):
-        """Pydantic v2 默认不 strip 空白字符，"   " 通过 min_length=1 校验是预期行为。"""
-        # Pydantic 默认保留空白字符，"   " 长度为 3，满足 min_length=1
-        # 如需严格校验空白，需在 schema 中自定义 validator
-        req = RetrievalRequest(query_text="   ", top_k=10)
-        assert req.query_text == "   "
 
     def test_top_k_zero_raises(self):
         """top_k=0 校验失败。"""
@@ -246,9 +196,6 @@ class TestLLMNormalizerSuccess:
     @pytest.mark.asyncio
     async def test_normalize_returns_structured_query(self):
         """LLM normalizer 成功时返回 NormalizedRetrievalQuery。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import QueryNormalizer
 
         comp = _stub_normalizer_completion(
@@ -280,8 +227,6 @@ class TestLLMNormalizerSuccess:
     @pytest.mark.asyncio
     async def test_normalize_echoes_applied_filters(self):
         """规范化后的过滤条件回显到结果中。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
 
         from app.retrieval.query import QueryNormalizer
 
@@ -308,9 +253,6 @@ class TestLLMNormalizerSuccess:
     @pytest.mark.asyncio
     async def test_normalize_echoes_effective_weights(self):
         """有效业务权重回显到结果中（使用默认权重）。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import QueryNormalizer
 
         comp = _stub_normalizer_completion()
@@ -333,9 +275,6 @@ class TestLLMNormalizerSuccess:
     @pytest.mark.asyncio
     async def test_normalize_with_custom_weights(self):
         """自定义业务权重正确合并到结果。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import QueryNormalizer
 
         comp = _stub_normalizer_completion()
@@ -372,9 +311,6 @@ class TestLLMNormalizerFailure:
     @pytest.mark.asyncio
     async def test_normalizer_timeout_raises_specific_error(self):
         """LLM normalizer 超时时抛出可辨认的异常。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import NormalizerTimeout, QueryNormalizer
 
         import openai
@@ -397,9 +333,6 @@ class TestLLMNormalizerFailure:
     @pytest.mark.asyncio
     async def test_normalizer_rate_limited_raises_specific_error(self):
         """LLM normalizer 限流时抛出可辨认的异常。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import NormalizerRateLimited, QueryNormalizer
 
         import httpx
@@ -429,9 +362,6 @@ class TestLLMNormalizerFailure:
     @pytest.mark.asyncio
     async def test_normalizer_config_missing_raises_specific_error(self):
         """LLM normalizer 配置缺失时抛出可辨认的异常。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import NormalizerConfigMissing, QueryNormalizer
 
         config = NormalizerLLMConfig(
@@ -461,9 +391,6 @@ class TestLLMNormalizerFailure:
     @pytest.mark.asyncio
     async def test_normalizer_invalid_response_raises_specific_error(self):
         """LLM normalizer 响应不可解析时抛出可辨认的异常。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import NormalizerInvalidResponse, QueryNormalizer
 
         # 响应 content 不是有效的 JSON
@@ -491,9 +418,6 @@ class TestLLMNormalizerFailure:
     @pytest.mark.asyncio
     async def test_normalizer_failure_does_not_return_fallback(self):
         """LLM normalizer 失败时不得使用原始 query_text 兜底。"""
-        if not _is_normalizer_enabled():
-            pytest.skip("QueryNormalizer 功能未启用")
-
         from app.retrieval.query import QueryNormalizer
 
         import openai

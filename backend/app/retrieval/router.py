@@ -40,6 +40,7 @@ from app.retrieval.schemas import (
     RecommendationResponse,
     RecommendationRunResponse,
     RetrievalRequest,
+    RunStatus,
 )
 from app.retrieval.score_aggregator import ScoreAggregator
 from app.retrieval.service import RecommendationService
@@ -161,7 +162,22 @@ async def recommend_similar_cases(
         推荐响应。
     """
     try:
-        return await service.recommend_similar_cases(request)
+        response = await service.recommend_similar_cases(request)
+
+        # 如果 service 返回失败状态，映射为 503 HTTP 状态码
+        if response.status == RunStatus.FAILED:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=create_error_response(
+                    code=response.error_code or ErrorCode.INTERNAL_ERROR,
+                    message=response.message or "推荐服务暂时不可用，请稍后重试",
+                ).model_dump(),
+            )
+
+        return response
+    except HTTPException:
+        # 重新抛出 HTTPException（包括上面的 503）
+        raise
     except Exception as exc:
         logger.error("相似案例推荐失败: %s: %s", type(exc).__name__, exc)
         raise HTTPException(

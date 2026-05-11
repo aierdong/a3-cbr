@@ -77,9 +77,7 @@ class RecommendationRepository:
             requested_top_k=run.requested_top_k,
             returned_count=0,
             vector_candidate_count=0,
-            status=RunStatus.PENDING.value
-            if hasattr(RunStatus, "PENDING")
-            else "pending",
+            status=RunStatus.FAILED.value,  # 初始状态，会被 complete_run/fail_run 覆盖
             reranker_model_id=run.reranker_model_id,
             reranker_status=RerankerStatus.PENDING.value,
             aggregation_status=AggregationStatus.SKIPPED.value,

@@ -275,15 +275,3 @@ class QueryNormalizer:
             "brand_affinity": weights.brand_affinity_weight,
             "recency": weights.recency_weight,
         }
-
-
-# =============================================================================
-# Feature Flag: 全局启用开关
-# =============================================================================
-# TODO: 实现完成后设为 True
-RETRIEVAL_QUERY_NORMALIZER_ENABLED = True
-
-
-def is_query_normalizer_enabled() -> bool:
-    """检查 QueryNormalizer 功能是否启用。"""
-    return RETRIEVAL_QUERY_NORMALIZER_ENABLED

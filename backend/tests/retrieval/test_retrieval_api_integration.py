@@ -206,7 +206,7 @@ class TestRecommendationSuccess:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """POST /api/recommendations/similar-cases 成功返回 200。"""
         if not _is_integration_enabled():
@@ -227,7 +227,7 @@ class TestRecommendationSuccess:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """成功响应包含 contract_version。"""
         if not _is_integration_enabled():
@@ -261,7 +261,6 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """LLM normalizer 失败时返回 503 + recommendation_run_id。"""
         if not _is_integration_enabled():
@@ -269,13 +268,13 @@ class TestLLMNormalizerFailure:
 
         import openai
 
-        # Mock normalizer 超时
-        async def mock_normalizer_failure(*args, **kwargs):
+        # Mock LLM client 超时（不使用 mock_external_apis，直接 mock 失败）
+        async def mock_llm_failure(*args, **kwargs):
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_failure,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=mock_llm_failure,
         ):
             response = await test_client.post(
                 "/api/recommendations/similar-cases",
@@ -296,7 +295,6 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """LLM normalizer 失败时 create_run 后 fail_run，响应含 recommendation_run_id。"""
         if not _is_integration_enabled():
@@ -304,13 +302,13 @@ class TestLLMNormalizerFailure:
 
         import openai
 
-        # Mock normalizer 超时
-        async def mock_normalizer_failure(*args, **kwargs):
+        # Mock LLM client 超时
+        async def mock_llm_failure(*args, **kwargs):
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_failure,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=mock_llm_failure,
         ):
             response = await test_client.post(
                 "/api/recommendations/similar-cases",
@@ -335,7 +333,6 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """LLM normalizer 失败时未调用向量搜索（验证 reranker_status=pending）。"""
         if not _is_integration_enabled():
@@ -348,13 +345,13 @@ class TestLLMNormalizerFailure:
             vector_search_called = True
             raise RuntimeError("Vector search should not be called")
 
-        async def mock_normalizer_failure(*args, **kwargs):
+        async def mock_llm_failure(*args, **kwargs):
             import openai
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_failure,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=mock_llm_failure,
         ):
             with patch(
                 "app.retrieval.vector_port.VectorSearchPort.search",
@@ -387,7 +384,6 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """LLM normalizer 失败时 reranker_status=pending（从未调用重排）。"""
         if not _is_integration_enabled():
@@ -395,12 +391,12 @@ class TestRerankerStatus:
 
         import openai
 
-        async def mock_normalizer_failure(*args, **kwargs):
+        async def mock_llm_failure(*args, **kwargs):
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_failure,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=mock_llm_failure,
         ):
             response = await test_client.post(
                 "/api/recommendations/similar-cases",
@@ -418,7 +414,7 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """空候选时 reranker_status=pending（无候选故未调用重排）。"""
         if not _is_integration_enabled():
@@ -470,39 +466,31 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """向量搜索失败时 reranker_status=pending（未调用重排）。"""
         if not _is_integration_enabled():
             pytest.skip("集成测试功能未启用")
 
         import openai
+        from app.enrichment.schemas import LLMCompletionResult, LLMTokenUsage
 
-        async def mock_normalizer_success(*args, **kwargs):
-            return MagicMock(
-                normalized_query_text="门店客户投诉处理方法",
-                query_structured_suggestions=MagicMock(
-                    model_dump=MagicMock(return_value={
-                        "suggested_problem_type": "客户投诉",
-                        "suggested_root_cause_category": "服务态度",
-                        "suggested_applicable_scenes": ["零售"],
-                        "suggested_tags": ["投诉"],
-                    }),
-                ),
-                applied_filters={},
-                effective_weights={"business_type": 0.2},
-                top_k=3,
-            )
+        # Mock normalizer 成功
+        mock_llm_result = LLMCompletionResult(
+            content='{"normalized_query_text": "门店客户投诉处理方法", "query_structured_suggestions": {"suggested_problem_type": "客户投诉", "suggested_root_cause_category": "服务态度", "suggested_applicable_scenes": ["零售"], "suggested_tags": ["投诉"]}}',
+            model_id="deepseek-v4-flash",
+            usage=LLMTokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+            finish_reason="stop",
+        )
 
         async def mock_vector_failure(*args, **kwargs):
             raise openai.APITimeoutError("Vector search timeout")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_success,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=AsyncMock(return_value=mock_llm_result),
         ):
             with patch(
-                "app.retrieval.vector_port.VectorSearchPort.search",
+                "app.vector_indexing.embedding_client.EmbeddingClient.embed_for_query",
                 new=mock_vector_failure,
             ):
                 response = await test_client.post(
@@ -530,7 +518,7 @@ class TestRunContextGuard:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """create_run 后若编排抛未捕获异常，仍通过 finally 写入 fail_run。"""
         if not _is_integration_enabled():
@@ -609,7 +597,7 @@ class TestContractVersion:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """POST 响应与 GET 返回的 contract_version 一致。"""
         if not _is_integration_enabled():
@@ -626,7 +614,6 @@ class TestContractVersion:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
     ):
         """contract_version 在 fail_run 后不被改写（create_run 时写入一次）。"""
         if not _is_integration_enabled():
@@ -634,12 +621,12 @@ class TestContractVersion:
 
         import openai
 
-        async def mock_normalizer_failure(*args, **kwargs):
+        async def mock_llm_failure(*args, **kwargs):
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.retrieval.query.QueryNormalizer.normalize",
-            new=mock_normalizer_failure,
+            "app.common.llm_client.LLMClient.complete_json",
+            new=mock_llm_failure,
         ):
             response = await test_client.post(
                 "/api/recommendations/similar-cases",
@@ -666,7 +653,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """GET /api/recommendations/runs/{run_id} 返回必需字段。"""
         if not _is_integration_enabled():
@@ -710,7 +697,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """推荐运行记录包含反馈引用标识（recommendation_run_id）。"""
         if not _is_integration_enabled():
@@ -740,7 +727,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """推荐项快照包含分值明细（score_breakdown）。"""
         if not _is_integration_enabled():
@@ -756,7 +743,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """推荐项快照包含有效权重（score_weights）。"""
         if not _is_integration_enabled():
@@ -771,7 +758,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """推荐运行记录包含耗时（latency_ms）。"""
         if not _is_integration_enabled():
@@ -786,7 +773,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """reranker_status 枚举值正确：pending, succeeded, failed, skipped。"""
         if not _is_integration_enabled():
@@ -811,7 +798,7 @@ class TestEmptyAndDegradedResults:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """向量搜索返回空候选时返回 200 + status=empty。"""
         if not _is_integration_enabled():
@@ -862,7 +849,7 @@ class TestEmptyAndDegradedResults:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """降级结果包含 degraded_reason。"""
         if not _is_integration_enabled():
@@ -888,7 +875,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """输入校验失败返回 422。"""
         if not _is_integration_enabled():
@@ -910,7 +897,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """Top-K 越界返回 422。"""
         if not _is_integration_enabled():
@@ -931,7 +918,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
-        mock_recommendation_service,
+        mock_external_apis,
     ):
         """运行不存在返回 404。"""
         if not _is_integration_enabled():

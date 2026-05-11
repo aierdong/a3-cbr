@@ -112,18 +112,6 @@ class VectorSearchInvalidResponse(VectorSearchError):
 
 
 # =============================================================================
-# Feature Flag: 全局启用开关
-# =============================================================================
-# TODO: 实现完成后设为 True
-RETRIEVAL_VECTOR_SEARCH_ENABLED = True
-
-
-def is_vector_search_enabled() -> bool:
-    """检查 VectorSearchPort 功能是否启用。"""
-    return RETRIEVAL_VECTOR_SEARCH_ENABLED
-
-
-# =============================================================================
 # VectorSearchPort
 # =============================================================================
 

@@ -19,19 +19,6 @@ from app.retrieval.schemas import ScoreBreakdownSource
 
 
 # ---------------------------------------------------------------------------
-# Feature Flag: ScoreAggregator 功能开关
-# ---------------------------------------------------------------------------
-
-# TODO: 实现完成后改为 True
-RETRIEVAL_SCORE_AGGREGATOR_ENABLED = True
-
-
-def is_score_aggregator_enabled() -> bool:
-    """检查 ScoreAggregator 功能是否启用。"""
-    return RETRIEVAL_SCORE_AGGREGATOR_ENABLED
-
-
-# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -91,23 +78,6 @@ def _make_default_weights() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Feature Flag Gate
-# ---------------------------------------------------------------------------
-
-
-class TestScoreAggregatorFeatureFlag:
-    """Feature Flag Protocol: flag=ON 时功能可用。"""
-
-    def test_feature_flag_enabled_after_implementation(self):
-        """实现完成后 feature flag 为 True。"""
-        assert RETRIEVAL_SCORE_AGGREGATOR_ENABLED is True
-
-    def test_is_score_aggregator_enabled_returns_correct_value(self):
-        """is_score_aggregator_enabled 返回 flag 当前值。"""
-        assert is_score_aggregator_enabled() == RETRIEVAL_SCORE_AGGREGATOR_ENABLED
-
-
-# ---------------------------------------------------------------------------
 # Tests: 成功路径 - 基础聚合
 # ---------------------------------------------------------------------------
 
@@ -121,9 +91,6 @@ class TestScoreAggregationSuccess:
         case-001 在语义分低但向量和业务分高，case-002 语义分高但向量和业务分低。
         加权聚合后 case-002 总分更高（因为语义分权重 0.4 最大）。
         """
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -164,9 +131,6 @@ class TestScoreAggregationSuccess:
 
     def test_aggregate_respects_custom_weights(self):
         """自定义权重覆盖默认权重。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -192,9 +156,6 @@ class TestScoreAggregationSuccess:
 
     def test_aggregate_empty_candidates_returns_empty_list(self):
         """空候选列表返回空列表。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         aggregator = ScoreAggregator(default_weights=_make_default_weights())
@@ -213,9 +174,6 @@ class TestMinMaxNormalization:
 
     def test_normalization_spreads_scores(self):
         """不同分值归一化后应有区分度。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -247,9 +205,6 @@ class TestMinMaxNormalization:
 
     def test_all_candidates_same_score_becomes_one(self):
         """所有候选某分项均为相同非零值时归一化为 1.0。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # 所有候选的语义分都是 0.8
@@ -275,9 +230,6 @@ class TestMinMaxNormalization:
 
     def test_all_candidates_zero_score_becomes_zero(self):
         """所有候选某分项均为 0 时归一化为 0.0。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -311,9 +263,6 @@ class TestMissingScoreReweighting:
 
     def test_missing_score_reweights_to_one(self):
         """只有一个有效分项时其权重为 1.0。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # case-001 只有向量分
@@ -343,9 +292,6 @@ class TestMissingScoreReweighting:
 
     def test_missing_score_excludes_from_calculation(self):
         """缺失分项不参与聚合计算。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # case-001 没有业务分
@@ -379,9 +325,6 @@ class TestAggregationUnavailable:
 
     def test_all_scores_missing_returns_zero_with_source_mark(self):
         """所有可聚合分项均缺失时 final_score=0 且 final_score_source 为默认值。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # 所有分项都为 None
@@ -410,9 +353,6 @@ class TestAggregationUnavailable:
         当 reranker + aggregation 同时失败时，按业务分优先降级。
         此测试验证：case-001 和 case-002 聚合分相同，并列打破按语义分排序。
         """
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # case-001 和 case-002 的聚合分相同
@@ -457,9 +397,6 @@ class TestTieBreaking:
 
     def test_tiebreak_by_semantic_score(self):
         """final_score 并列时按语义分打破并列。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # 两个候选聚合分相同但语义分不同
@@ -490,9 +427,6 @@ class TestTieBreaking:
 
     def test_tiebreak_by_business_score(self):
         """final_score 并列、语义分相同时按业务分打破并列。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -522,9 +456,6 @@ class TestTieBreaking:
 
     def test_tiebreak_by_vector_score(self):
         """final_score 并列、语义分和业务分都相同时按向量分打破并列。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -554,9 +485,6 @@ class TestTieBreaking:
 
     def test_tiebreak_by_case_updated_at(self):
         """final_score 并列、前三分项都相同时按更新时间打破并列（新高者优先）。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -586,9 +514,6 @@ class TestTieBreaking:
 
     def test_tiebreak_by_case_id(self):
         """最终并列时按 case_id 字典序打破并列。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -627,9 +552,6 @@ class TestBoundaryCases:
 
     def test_only_vector_score_available(self):
         """只有向量分可用时正常聚合。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -653,9 +575,6 @@ class TestBoundaryCases:
 
     def test_score_breakdown_contains_all_fields(self):
         """score_breakdown 包含所有必要字段。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         candidates = [
@@ -685,9 +604,6 @@ class TestBoundaryCases:
 
     def test_aggregator_does_not_load_from_database(self):
         """聚合器只处理传入候选集，不从全量 SQL casebase 重新检索。"""
-        if not _is_score_aggregator_enabled():
-            pytest.skip("ScoreAggregator 功能未启用")
-
         from app.retrieval.score_aggregator import ScoreAggregator
 
         # 构造一个只有 3 个候选的列表
@@ -714,13 +630,3 @@ class TestBoundaryCases:
 
         # 结果应该只有 3 个候选，不多不少
         assert len(result.candidates) == 3
-
-
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
-def _is_score_aggregator_enabled() -> bool:
-    """检查 ScoreAggregator 功能是否启用。"""
-    return RETRIEVAL_SCORE_AGGREGATOR_ENABLED

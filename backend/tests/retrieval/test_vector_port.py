@@ -21,13 +21,11 @@ from app.retrieval.schemas import (
     QueryStructuredSuggestions,
 )
 from app.retrieval.vector_port import (
-    RETRIEVAL_VECTOR_SEARCH_ENABLED,
     VectorCandidateBatch,
     VectorSearchInvalidResponse,
     VectorSearchPort,
     VectorSearchTimeout,
     VectorSearchUnavailable,
-    is_vector_search_enabled,
 )
 from app.vector_indexing.schemas import (
     VectorCandidateFilterMetadata,
@@ -36,15 +34,6 @@ from app.vector_indexing.schemas import (
     VectorSearchQueryMetadata,
     VectorSearchResponse,
 )
-
-
-# ---------------------------------------------------------------------------
-# Feature Flag: VectorSearchPort 功能开关
-# ---------------------------------------------------------------------------
-
-def _is_vector_search_enabled() -> bool:
-    """检查 VectorSearchPort 功能是否启用。"""
-    return RETRIEVAL_VECTOR_SEARCH_ENABLED
 
 
 # ---------------------------------------------------------------------------
@@ -127,37 +116,17 @@ def _make_vector_search_response(
 
 
 # ---------------------------------------------------------------------------
-# Tests: Feature Flag Gate
-# ---------------------------------------------------------------------------
-
-
-class TestVectorSearchFeatureFlag:
-    """Feature Flag Protocol: flag=OFF 时测试应跳过或失败。"""
-
-    def test_feature_flag_default_enabled(self):
-        """默认 feature flag 为 True（实现完成前为 False）。"""
-        # TODO: 实现完成后改为 True
-        assert RETRIEVAL_VECTOR_SEARCH_ENABLED is True
-
-    def test_is_vector_search_enabled_returns_correct_value(self):
-        """is_vector_search_enabled 返回 flag 当前值。"""
-        assert is_vector_search_enabled() == RETRIEVAL_VECTOR_SEARCH_ENABLED
-
-
-# ---------------------------------------------------------------------------
 # Tests: 成功路径
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning:pydantic.main")
 class TestVectorSearchSuccess:
     """向量搜索成功场景。"""
 
     @pytest.mark.asyncio
     async def test_search_returns_valid_batch(self):
         """成功调用向量搜索并返回 VectorCandidateBatch。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             return_value=_make_vector_search_response()
@@ -180,24 +149,36 @@ class TestVectorSearchSuccess:
         VectorSearchIndexStatus 仅定义 SEARCHABLE="searchable"，其他字符串值在
         _validate_candidate 的枚举转换阶段失败，视为 invalid_response。
         """
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         # 使用 model_construct 绕过 Pydantic 构造校验，模拟上游返回非法枚举字符串
-        invalid_candidate = VectorSearchCandidate.model_construct(
-            case_id="case-002",
-            vector_id="vec-002",
-            similarity_score=0.88,
-            distance=0.12,
-            case_updated_at=datetime(2025, 1, 2),
-            input_content_hash="hash002",
-            index_status="unsearchable",  # 非法的 index_status 字符串
-            filter_metadata=_make_default_filter_metadata(),
-        )
+        raw_candidate = {
+            "case_id": "case-002",
+            "vector_id": "vec-002",
+            "similarity_score": 0.88,
+            "distance": 0.12,
+            "case_updated_at": datetime(2025, 1, 2),
+            "input_content_hash": "hash002",
+            "index_status": "unsearchable",  # 非法的 index_status 字符串
+            "filter_metadata": _make_default_filter_metadata(),
+        }
+        invalid_candidate = VectorSearchCandidate.model_construct(**raw_candidate)
+
+        # 使用 model_construct 构造响应以避免触发 Pydantic 序列化警告
+        raw_response = {
+            "items": [invalid_candidate],
+            "query_metadata": VectorSearchQueryMetadata(
+                query_hash="hash-query",
+                model_id="bge-large",
+                dimension=1024,
+                filters_applied={},
+                total_candidates_considered=1,
+                search_ref="ref-001",
+                index_version="v1-1024",
+            ),
+        }
+        response = VectorSearchResponse.model_construct(**raw_response)
+
         mock_service = MagicMock()
-        mock_service.search = AsyncMock(
-            return_value=_make_vector_search_response(candidates=[invalid_candidate])
-        )
+        mock_service.search = AsyncMock(return_value=response)
 
         port = VectorSearchPort(search_service=mock_service)
         query = _make_normalized_query()
@@ -210,9 +191,6 @@ class TestVectorSearchSuccess:
     @pytest.mark.asyncio
     async def test_search_empty_candidates_returns_empty_list(self):
         """空候选列表返回空列表（非失败）。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             return_value=_make_vector_search_response(candidates=[])
@@ -231,9 +209,6 @@ class TestVectorSearchSuccess:
     @pytest.mark.asyncio
     async def test_search_preserves_candidate_fields(self):
         """候选字段完整保留：case_id、vector_id、similarity_score、distance、index_status。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             return_value=_make_vector_search_response()
@@ -263,9 +238,6 @@ class TestBatchLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_search_ref_raises_invalid_response(self):
         """缺少 search_ref 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         # 使用 model_construct 绕过 min_length 校验，模拟上游返回空字符串
         meta = VectorSearchQueryMetadata.model_construct(
             query_hash="hash-query",
@@ -302,9 +274,6 @@ class TestBatchLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_index_version_raises_invalid_response(self):
         """缺少 index_version 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         meta = VectorSearchQueryMetadata.model_construct(
             query_hash="hash-query",
             model_id="bge-large",
@@ -340,9 +309,6 @@ class TestBatchLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_both_envelope_fields_raises_invalid_response(self):
         """search_ref 和 index_version 都缺失时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         meta = VectorSearchQueryMetadata.model_construct(
             query_hash="hash-query",
             model_id="bge-large",
@@ -379,15 +345,13 @@ class TestBatchLevelValidation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning:pydantic.main")
 class TestCandidateLevelValidation:
     """候选级必选字段校验：case_id、vector_id、similarity_score、index_status。"""
 
     @pytest.mark.asyncio
     async def test_missing_case_id_raises_invalid_response(self):
         """缺少 case_id 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         # 构造一个上游响应，其中候选的 case_id 为 None
         raw_candidate = {
             "case_id": None,  # 缺失
@@ -417,9 +381,6 @@ class TestCandidateLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_vector_id_raises_invalid_response(self):
         """缺少 vector_id 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         raw_candidate = {
             "case_id": "case-001",
             "vector_id": None,  # 缺失
@@ -447,9 +408,6 @@ class TestCandidateLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_similarity_score_raises_invalid_response(self):
         """缺少 similarity_score 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         raw_candidate = {
             "case_id": "case-001",
             "vector_id": "vec-001",
@@ -477,9 +435,6 @@ class TestCandidateLevelValidation:
     @pytest.mark.asyncio
     async def test_missing_index_status_raises_invalid_response(self):
         """缺少 index_status 时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         raw_candidate = {
             "case_id": "case-001",
             "vector_id": "vec-001",
@@ -507,9 +462,6 @@ class TestCandidateLevelValidation:
     @pytest.mark.asyncio
     async def test_invalid_index_status_raises_invalid_response(self):
         """index_status 为无效枚举值时抛出 VectorSearchInvalidResponse。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         raw_candidate = {
             "case_id": "case-001",
             "vector_id": "vec-001",
@@ -522,7 +474,21 @@ class TestCandidateLevelValidation:
         }
         # 使用 model_construct 绕过 index_status 枚举校验
         candidate = VectorSearchCandidate.model_construct(**raw_candidate)
-        response = _make_vector_search_response(candidates=[candidate])
+
+        # 使用 model_construct 构造响应以避免触发 Pydantic 序列化警告
+        raw_response = {
+            "items": [candidate],
+            "query_metadata": VectorSearchQueryMetadata(
+                query_hash="hash-query",
+                model_id="bge-large",
+                dimension=1024,
+                filters_applied={},
+                total_candidates_considered=1,
+                search_ref="ref-001",
+                index_version="v1-1024",
+            ),
+        }
+        response = VectorSearchResponse.model_construct(**raw_response)
 
         mock_service = MagicMock()
         mock_service.search = AsyncMock(return_value=response)
@@ -547,9 +513,6 @@ class TestErrorSemanticMapping:
     @pytest.mark.asyncio
     async def test_timeout_error_raises_vector_search_timeout(self):
         """上游超时映射为 VectorSearchTimeout。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         import openai
 
         mock_service = MagicMock()
@@ -568,9 +531,6 @@ class TestErrorSemanticMapping:
     @pytest.mark.asyncio
     async def test_unavailable_error_raises_vector_search_unavailable(self):
         """上游不可用映射为 VectorSearchUnavailable。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         import httpx
 
         mock_service = MagicMock()
@@ -589,9 +549,6 @@ class TestErrorSemanticMapping:
     @pytest.mark.asyncio
     async def test_rate_limit_error_raises_vector_search_unavailable(self):
         """上游限流映射为 VectorSearchUnavailable。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         import httpx
         import openai
 
@@ -616,9 +573,6 @@ class TestErrorSemanticMapping:
     @pytest.mark.asyncio
     async def test_generic_error_raises_vector_search_unavailable(self):
         """其他错误（供应商失败）映射为 VectorSearchUnavailable。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             side_effect=RuntimeError("Vector search provider error")
@@ -638,6 +592,7 @@ class TestErrorSemanticMapping:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning:pydantic.main")
 class TestCandidateRetrievability:
     """候选可检索性过滤：index_status 为 searchable 才保留。"""
 
@@ -648,36 +603,49 @@ class TestCandidateRetrievability:
         VectorSearchIndexStatus 仅定义 SEARCHABLE="searchable"，其他字符串值在
         _validate_candidate 的枚举转换阶段失败，视为 invalid_response。
         """
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         # 使用 model_construct 绕过 Pydantic 构造校验，模拟上游返回非法枚举字符串
+        raw_data_1 = {
+            "case_id": "case-001",
+            "vector_id": "vec-001",
+            "similarity_score": 0.95,
+            "distance": 0.05,
+            "case_updated_at": datetime(2025, 1, 1),
+            "input_content_hash": "hash001",
+            "index_status": "failed",  # 非法 index_status 字符串
+            "filter_metadata": _make_default_filter_metadata(),
+        }
+        raw_data_2 = {
+            "case_id": "case-002",
+            "vector_id": "vec-002",
+            "similarity_score": 0.88,
+            "distance": 0.12,
+            "case_updated_at": datetime(2025, 1, 2),
+            "input_content_hash": "hash002",
+            "index_status": "archived",  # 非法 index_status 字符串
+            "filter_metadata": _make_default_filter_metadata(),
+        }
         candidates = [
-            VectorSearchCandidate.model_construct(
-                case_id="case-001",
-                vector_id="vec-001",
-                similarity_score=0.95,
-                distance=0.05,
-                case_updated_at=datetime(2025, 1, 1),
-                input_content_hash="hash001",
-                index_status="failed",  # 非法 index_status 字符串
-                filter_metadata=_make_default_filter_metadata(),
-            ),
-            VectorSearchCandidate.model_construct(
-                case_id="case-002",
-                vector_id="vec-002",
-                similarity_score=0.88,
-                distance=0.12,
-                case_updated_at=datetime(2025, 1, 2),
-                input_content_hash="hash002",
-                index_status="archived",  # 非法 index_status 字符串
-                filter_metadata=_make_default_filter_metadata(),
-            ),
+            VectorSearchCandidate.model_construct(**raw_data_1),
+            VectorSearchCandidate.model_construct(**raw_data_2),
         ]
+
+        # 使用 model_construct 构造响应以避免触发 Pydantic 序列化警告
+        raw_response = {
+            "items": candidates,
+            "query_metadata": VectorSearchQueryMetadata(
+                query_hash="hash-query",
+                model_id="bge-large",
+                dimension=1024,
+                filters_applied={},
+                total_candidates_considered=2,
+                search_ref="ref-001",
+                index_version="v1-1024",
+            ),
+        }
+        response = VectorSearchResponse.model_construct(**raw_response)
+
         mock_service = MagicMock()
-        mock_service.search = AsyncMock(
-            return_value=_make_vector_search_response(candidates=candidates)
-        )
+        mock_service.search = AsyncMock(return_value=response)
 
         port = VectorSearchPort(search_service=mock_service)
         query = _make_normalized_query()
@@ -694,9 +662,6 @@ class TestCandidateRetrievability:
         VectorSearchIndexStatus.SEARCHABLE 的候选通过；
         非法字符串（如 'degraded'）抛出 VectorSearchInvalidResponse。
         """
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         valid_candidate = VectorSearchCandidate(
             case_id="case-001",
             vector_id="vec-001",
@@ -707,22 +672,35 @@ class TestCandidateRetrievability:
             index_status=VectorSearchIndexStatus.SEARCHABLE,
             filter_metadata=_make_default_filter_metadata(),
         )
-        invalid_candidate = VectorSearchCandidate.model_construct(
-            case_id="case-002",
-            vector_id="vec-002",
-            similarity_score=0.88,
-            distance=0.12,
-            case_updated_at=datetime(2025, 1, 2),
-            input_content_hash="hash002",
-            index_status="degraded",  # 非法 index_status 字符串
-            filter_metadata=_make_default_filter_metadata(),
-        )
+        raw_data = {
+            "case_id": "case-002",
+            "vector_id": "vec-002",
+            "similarity_score": 0.88,
+            "distance": 0.12,
+            "case_updated_at": datetime(2025, 1, 2),
+            "input_content_hash": "hash002",
+            "index_status": "degraded",  # 非法 index_status 字符串
+            "filter_metadata": _make_default_filter_metadata(),
+        }
+        invalid_candidate = VectorSearchCandidate.model_construct(**raw_data)
+
+        # 使用 model_construct 构造响应以避免触发 Pydantic 序列化警告
+        raw_response = {
+            "items": [valid_candidate, invalid_candidate],
+            "query_metadata": VectorSearchQueryMetadata(
+                query_hash="hash-query",
+                model_id="bge-large",
+                dimension=1024,
+                filters_applied={},
+                total_candidates_considered=2,
+                search_ref="ref-001",
+                index_version="v1-1024",
+            ),
+        }
+        response = VectorSearchResponse.model_construct(**raw_response)
+
         mock_service = MagicMock()
-        mock_service.search = AsyncMock(
-            return_value=_make_vector_search_response(
-                candidates=[valid_candidate, invalid_candidate]
-            )
-        )
+        mock_service.search = AsyncMock(return_value=response)
 
         port = VectorSearchPort(search_service=mock_service)
         query = _make_normalized_query()
@@ -744,9 +722,6 @@ class TestFailureDistinguishability:
     @pytest.mark.asyncio
     async def test_empty_candidates_vs_failure(self):
         """空候选列表是稳定返回（VectorCandidateBatch），不是异常。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             return_value=_make_vector_search_response(candidates=[])
@@ -763,9 +738,6 @@ class TestFailureDistinguishability:
     @pytest.mark.asyncio
     async def test_searchable_candidates_vs_failure(self):
         """有可检索候选是成功路径，不抛异常。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             return_value=_make_vector_search_response()
@@ -781,9 +753,6 @@ class TestFailureDistinguishability:
     @pytest.mark.asyncio
     async def test_vector_search_failure_vs_empty(self):
         """向量搜索失败抛异常，与空候选明确区分。"""
-        if not _is_vector_search_enabled():
-            pytest.skip("VectorSearchPort 功能未启用")
-
         mock_service = MagicMock()
         mock_service.search = AsyncMock(
             side_effect=RuntimeError("Vector search provider unavailable")
