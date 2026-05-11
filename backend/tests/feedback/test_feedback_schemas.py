@@ -18,6 +18,7 @@ from app.feedback.schemas import (
     FeedbackTargetScope,
     FeedbackUsefulness,
     ItemRecommendationDetail,
+    NormalizedFeedbackInput,
     QueryContextSummary,
 )
 
@@ -31,6 +32,67 @@ def test_feedback_create_request_defaults_and_usefulness() -> None:
     assert req.source_channel == FeedbackSourceChannel.ADMIN_WEB
     assert req.recommendation_item_id is None
     assert req.comment is None
+
+
+def test_feedback_create_run_id_trimmed() -> None:
+    """run_id 首尾空白应去除。"""
+    req = FeedbackCreateRequest(
+        recommendation_run_id="  run-x  ",
+        usefulness=FeedbackUsefulness.UNKNOWN,
+    )
+    assert req.recommendation_run_id == "run-x"
+
+
+def test_feedback_create_run_id_rejects_blank() -> None:
+    """run_id 不得为空或纯空白。"""
+    with pytest.raises(ValueError):
+        FeedbackCreateRequest(
+            recommendation_run_id="   ",
+            usefulness=FeedbackUsefulness.UNKNOWN,
+        )
+
+
+def test_feedback_create_item_id_rejects_blank_when_provided() -> None:
+    """提供推荐项 id 时不得为纯空白字符串。"""
+    with pytest.raises(ValueError):
+        FeedbackCreateRequest(
+            recommendation_run_id="run-1",
+            recommendation_item_id=" \t ",
+            usefulness=FeedbackUsefulness.NOT_USEFUL,
+        )
+
+
+def test_feedback_create_comment_whitespace_becomes_none() -> None:
+    """备注仅为空白时视为未提供。"""
+    req = FeedbackCreateRequest(
+        recommendation_run_id="run-1",
+        usefulness=FeedbackUsefulness.USEFUL,
+        comment="   \n",
+    )
+    assert req.comment is None
+
+
+def test_normalized_feedback_input_run_vs_item() -> None:
+    """规范化输入应明确区分运行级与推荐项级目标。"""
+    run_req = FeedbackCreateRequest(
+        recommendation_run_id="run-1",
+        usefulness=FeedbackUsefulness.USEFUL,
+    )
+    norm_run = run_req.to_normalized_input()
+    assert isinstance(norm_run, NormalizedFeedbackInput)
+    assert norm_run.target_scope == FeedbackTargetScope.RUN
+    assert norm_run.recommendation_item_id is None
+
+    item_req = FeedbackCreateRequest(
+        recommendation_run_id="run-1",
+        recommendation_item_id="item-9",
+        usefulness=FeedbackUsefulness.NOT_USEFUL,
+        source_channel=FeedbackSourceChannel.API,
+    )
+    norm_item = NormalizedFeedbackInput.from_create_request(item_req)
+    assert norm_item.target_scope == FeedbackTargetScope.ITEM
+    assert norm_item.recommendation_item_id == "item-9"
+    assert norm_item.source_channel == FeedbackSourceChannel.API
 
 
 def test_feedback_create_comment_respects_max_length(

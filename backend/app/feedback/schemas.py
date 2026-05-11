@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -62,10 +62,32 @@ class FeedbackCreateRequest(BaseModel):
         default=FeedbackSourceChannel.ADMIN_WEB,
     )
 
+    @field_validator("recommendation_run_id")
+    @classmethod
+    def validate_run_id_non_blank(cls, value: str) -> str:
+        """去除首尾空白并禁止空字符串。"""
+        trimmed = value.strip()
+        if not trimmed:
+            msg = "recommendation_run_id must not be empty"
+            raise ValueError(msg)
+        return trimmed
+
+    @field_validator("recommendation_item_id")
+    @classmethod
+    def validate_item_id_optional_non_blank(cls, value: str | None) -> str | None:
+        """None 表示运行级反馈；若提供则不得为纯空白。"""
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            msg = "recommendation_item_id must not be blank when provided"
+            raise ValueError(msg)
+        return trimmed
+
     @field_validator("comment")
     @classmethod
     def validate_comment_length(cls, value: str | None) -> str | None:
-        """校验备注长度不超过配置上限。
+        """校验备注：空白视为未提供；长度不超过配置上限。
 
         Args:
             value: 原始备注。
@@ -77,12 +99,49 @@ class FeedbackCreateRequest(BaseModel):
             ValueError: 超出最大长度。
         """
         if value is None:
-            return value
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
         max_len = get_app_config().feedback.comment_max_length
-        if len(value) > max_len:
+        if len(trimmed) > max_len:
             msg = f"comment exceeds max length {max_len}"
             raise ValueError(msg)
-        return value
+        return trimmed
+
+    def to_normalized_input(self) -> "NormalizedFeedbackInput":
+        """生成服务层使用的规范化反馈输入（含运行级 / 推荐项级目标）。"""
+        return NormalizedFeedbackInput.from_create_request(self)
+
+
+class NormalizedFeedbackInput(BaseModel):
+    """通过 ``FeedbackCreateRequest`` 校验后的规范化提交输入。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    recommendation_run_id: str = Field(..., max_length=64)
+    recommendation_item_id: str | None = Field(None, max_length=64)
+    target_scope: FeedbackTargetScope
+    usefulness: FeedbackUsefulness
+    comment: str | None = None
+    source_channel: FeedbackSourceChannel
+
+    @classmethod
+    def from_create_request(cls, req: FeedbackCreateRequest) -> Self:
+        """由已通过校验的创建请求推导目标级别并组装规范化输入。"""
+        scope = (
+            FeedbackTargetScope.RUN
+            if req.recommendation_item_id is None
+            else FeedbackTargetScope.ITEM
+        )
+        return cls(
+            recommendation_run_id=req.recommendation_run_id,
+            recommendation_item_id=req.recommendation_item_id,
+            target_scope=scope,
+            usefulness=req.usefulness,
+            comment=req.comment,
+            source_channel=req.source_channel,
+        )
 
 
 class FeedbackDeleteRequest(BaseModel):

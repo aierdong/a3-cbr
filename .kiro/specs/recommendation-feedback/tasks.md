@@ -33,7 +33,7 @@
   - _Requirements: 1.2, 1.4, 3.5_
   - _Boundary: RecommendationReferenceResolver_
 
-- [ ] 2.2 (P) 实现反馈字段校验和目标类型判断
+- [x] 2.2 (P) 实现反馈字段校验和目标类型判断
   - 校验有用性、备注长度和来源渠道。
   - 支持推荐项级反馈和运行级反馈两种目标，`recommendation_item_id` 为 None 时明确标记为运行级反馈。
   - 完成后非法字段在保存前返回字段级错误，合法请求可生成规范化反馈输入。
