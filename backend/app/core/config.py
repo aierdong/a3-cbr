@@ -104,6 +104,18 @@ class AppConfig(BaseModel):
     embedding: EmbeddingConfig
     reranker: RerankerConfig
     max_recommendation_candidates: int = 10
+    # --- cbr-retrieval-recommendation 配置 ---
+    retrieval_enabled: bool = True
+    max_top_k: int = 20
+    max_vector_candidates: int = 50
+    default_score_weights: dict[str, float] = {
+        "vector": 0.3,
+        "semantic": 0.3,
+        "structured": 0.2,
+        "business": 0.2,
+    }
+    max_business_weight: float = 1.0
+    contract_version: str = "mvp-1"
 
 
 def load_app_config() -> AppConfig:
@@ -148,7 +160,10 @@ def load_app_config() -> AppConfig:
     )
 
     embedding = EmbeddingConfig(
-        api_key=_env("EMBEDDING_APIKEY", "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0"),
+        api_key=_env(
+            "EMBEDDING_APIKEY",
+            "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0",
+        ),
         model_id=_env("EMBEDDING_MODEL_ID", "bge-large-zh"),
         base_url=_env("EMBEDDING_BASE_URL", "https://qianfan.baidubce.com/v2"),
         timeout_ms=_int_env("EMBEDDING_TIMEOUT_MS", 60000),
@@ -164,7 +179,10 @@ def load_app_config() -> AppConfig:
     )
 
     reranker = RerankerConfig(
-        api_key=_env("RERANKER_APIKEY", "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0"),
+        api_key=_env(
+            "RERANKER_APIKEY",
+            "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0",
+        ),
         model_id=_env("RERANKER_MODEL_ID", "qwen3-reranker-8b"),
         base_url=_env("RERANKER_BASE_URL", "https://qianfan.baidubce.com/v2"),
         timeout_ms=_int_env("RERANKER_TIMEOUT_MS", 45000),
@@ -177,6 +195,18 @@ def load_app_config() -> AppConfig:
         embedding=embedding,
         reranker=reranker,
         max_recommendation_candidates=_int_env("MAX_RECOMMENDATION_CANDIDATES", 10),
+        # --- cbr-retrieval-recommendation 配置 ---
+        retrieval_enabled=_bool_env("RETRIEVAL_ENABLED", True),
+        max_top_k=_int_env("RETRIEVAL_MAX_TOP_K", 20),
+        max_vector_candidates=_int_env("RETRIEVAL_MAX_VECTOR_CANDIDATES", 50),
+        default_score_weights={
+            "vector": 0.3,
+            "semantic": 0.3,
+            "structured": 0.2,
+            "business": 0.2,
+        },
+        max_business_weight=1.0,
+        contract_version="mvp-1",
     )
 
 
