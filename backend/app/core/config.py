@@ -96,8 +96,52 @@ class RerankerConfig(BaseModel):
     max_retries: int = 2
 
 
+class RetrievalConfig(BaseModel):
+    """检索推荐专用配置（cbr-retrieval-recommendation 使用）。
+
+    包装 AppConfig 中与检索推荐相关的配置字段，
+    提供统一的 config.reranker_model_id 访问方式。
+    """
+
+    retrieval_enabled: bool = True
+    max_top_k: int = 20
+    max_vector_candidates: int = 50
+    default_score_weights: dict[str, float] = {
+        "vector": 0.3,
+        "semantic": 0.3,
+        "structured": 0.2,
+        "business": 0.2,
+    }
+    max_business_weight: float = 1.0
+    contract_version: str = "mvp-1"
+    reranker_model_id: str = "qwen3-reranker-8b"
+
+
+def get_retrieval_config(config: "AppConfig") -> RetrievalConfig:
+    """从 AppConfig 构造检索推荐配置。
+
+    Args:
+        config: 应用配置。
+
+    Returns:
+        检索推荐配置。
+    """
+    return RetrievalConfig(
+        retrieval_enabled=config.retrieval_enabled,
+        max_top_k=config.max_top_k,
+        max_vector_candidates=config.max_vector_candidates,
+        default_score_weights=config.default_score_weights,
+        max_business_weight=config.max_business_weight,
+        contract_version=config.contract_version,
+        reranker_model_id=config.reranker.model_id,
+    )
+
+
 class AppConfig(BaseModel):
-    """聚合四个模型配置 + 全局共享配置。"""
+    """聚合四个模型配置 + 全局共享配置。
+
+    检索推荐相关配置通过 `retrieval` 属性访问。
+    """
 
     enrichment_llm: EnrichmentLLMConfig
     normalizer_llm: NormalizerLLMConfig
@@ -116,6 +160,11 @@ class AppConfig(BaseModel):
     }
     max_business_weight: float = 1.0
     contract_version: str = "mvp-1"
+
+    @property
+    def retrieval(self) -> RetrievalConfig:
+        """返回检索推荐配置。"""
+        return get_retrieval_config(self)
 
 
 def load_app_config() -> AppConfig:
