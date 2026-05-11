@@ -21,7 +21,7 @@
   - _Requirements: 2.5, 4.3, 4.5, 6.1, 6.2, 6.5, 7.6_
   - **IMPLEMENTED**: `backend/app/retrieval/models.py` (RecommendationRun, RecommendationItemSnapshot ORM) + `backend/app/retrieval/schemas.py` (RecommendationRunCreate, RecommendationItemCreate, RecommendationRunRecord, RecommendationItemRecord, API schemas) + `backend/app/retrieval/repository.py` (RecommendationRepository: create_run, complete_run, fail_run, get_run, get_run_with_items, get_items_by_run, get_item_by_id, delete_run, delete_items_by_run, delete_items) + `backend/app/db/base.py` (retrieval_models 导入) + `alembic/versions/005_create_recommendation_runs_and_snapshots.py` (建表迁移, revision=005, down_revision=004)
 
-- [ ] 1.3 定义检索请求、过滤、候选和响应契约
+- [x] 1.3 定义检索请求、过滤、候选和响应契约
   - 定义相似案例推荐请求、过滤条件、业务权重参数、`NormalizedRetrievalQuery`（含单次 LLM normalizer 产出的标准化检索文本与 `query_structured_suggestions`）、推荐运行状态、推荐项、降级状态和错误响应契约。
   - 响应契约包含推荐运行标识、**`contract_version`（与 `recommendation_runs.contract_version` 一致）**、推荐项标识、应用后的过滤条件、有效权重、候选数量、分值明细、解释状态和来源引用；**GET** `/api/recommendations/runs/{run_id}` 的 **`RecommendationRunResponse`** 运行级元数据须包含同名 **`contract_version`**。
   - 完成后 API、服务、测试和下游反馈可复用同一套稳定 schema。
