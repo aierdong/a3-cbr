@@ -7,6 +7,8 @@ from app.feedback.reference_resolver import RecommendationReferenceResolver
 from app.feedback.repository import FeedbackRepository
 from app.feedback.schemas import (
     FeedbackCreateRequest,
+    FeedbackDeleteRequest,
+    FeedbackDeleteResponse,
     FeedbackResponse,
     FeedbackTargetScope,
     FeedbackUsefulness,
@@ -77,3 +79,12 @@ class FeedbackService:
         )
 
         return feedback_row_to_response(row)
+
+    async def delete_feedback(self, request: FeedbackDeleteRequest) -> FeedbackDeleteResponse:
+        """按过滤条件删除反馈，未命中时 ``deleted_count=0`` 仍为成功。"""
+        deleted_count, deleted_at = await self._repo.delete_feedback(request)
+        return FeedbackDeleteResponse(
+            success=True,
+            deleted_count=deleted_count,
+            deleted_at=deleted_at,
+        )

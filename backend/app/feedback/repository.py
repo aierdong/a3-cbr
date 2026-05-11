@@ -1,13 +1,18 @@
 """反馈聚合根持久化（幂等 upsert、删除与查询）。"""
 
+import logging
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.feedback.models import RecommendationFeedback
+from app.feedback.schemas import FeedbackDeleteRequest
+
+
+logger = logging.getLogger(__name__)
 
 
 class FeedbackRepository:
@@ -107,3 +112,46 @@ class FeedbackRepository:
             msg = "feedback upsert failed to load row after insert/update"
             raise RuntimeError(msg)
         return row
+
+    async def delete_feedback(self, request: FeedbackDeleteRequest) -> tuple[int, datetime]:
+        """按请求的过滤字段删除反馈（条件 AND）；返回删除条数与时间戳。
+
+        不在日志中输出备注正文或案例细节标识之外的扩展字段。
+        """
+        conditions = []
+        if request.feedback_id is not None:
+            conditions.append(
+                RecommendationFeedback.feedback_id == request.feedback_id,
+            )
+        if request.case_id is not None:
+            conditions.append(RecommendationFeedback.case_id == request.case_id)
+        if request.recommendation_run_id is not None:
+            conditions.append(
+                RecommendationFeedback.recommendation_run_id
+                == request.recommendation_run_id,
+            )
+        if request.recommendation_item_id is not None:
+            conditions.append(
+                RecommendationFeedback.recommendation_item_id
+                == request.recommendation_item_id,
+            )
+
+        deleted_at = datetime.now(timezone.utc)
+        stmt = delete(RecommendationFeedback).where(and_(*conditions))
+        result = await self._db.execute(stmt)
+        await self._db.flush()
+        deleted_count = int(result.rowcount or 0)
+
+        logger.info(
+            "feedback_delete executed deleted_count=%s reason=%s requested_by=%s "
+            "filter_feedback_id=%s filter_has_case=%s filter_has_run=%s filter_has_item=%s",
+            deleted_count,
+            request.reason.value,
+            request.requested_by.value,
+            request.feedback_id is not None,
+            request.case_id is not None,
+            request.recommendation_run_id is not None,
+            request.recommendation_item_id is not None,
+        )
+
+        return deleted_count, deleted_at
