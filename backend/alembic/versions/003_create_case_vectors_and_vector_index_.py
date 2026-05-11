@@ -20,6 +20,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql  # 导入 pg 方言模块
 
 # revision identifiers, used by Alembic.
 revision: str = "003"
@@ -69,7 +70,7 @@ def upgrade() -> None:
         sa.Column("brand_id", sa.String(64), nullable=False),
         sa.Column("store_id", sa.String(64), nullable=False),
         sa.Column("problem_type", sa.String(64), nullable=False),
-        sa.Column("tags", sa.JSON().with_variant(sa.JSONB, "postgresql"), nullable=False),
+        sa.Column("tags", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
         sa.Column("case_status", sa.String(32), nullable=False),
         sa.UniqueConstraint("case_id", name="uq_case_vectors_case_id"),
     )
@@ -107,7 +108,7 @@ def upgrade() -> None:
         sa.Column("case_id", sa.String(64), nullable=False, index=True),
         sa.Column("job_type", sa.String(32), nullable=False),  # index/refresh/retry/remove
         sa.Column("status", sa.String(32), nullable=False, index=True),
-        sa.Column("source_version", sa.JSON().with_variant(sa.JSONB, "postgresql"), nullable=True),
+        sa.Column("source_version", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=True),
         sa.Column("old_vector_id", sa.String(64), nullable=True),
         sa.Column("old_content_hash", sa.String(128), nullable=True),
         sa.Column("new_vector_id", sa.String(64), nullable=True),
