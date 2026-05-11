@@ -76,7 +76,7 @@ async def test_submit_feedback_run_level(db_session) -> None:
     retrieval_repo = RecommendationRepository(db_session)
     fb_repo = FeedbackRepository(db_session)
     resolver = RecommendationReferenceResolver(retrieval_repo)
-    service = FeedbackService(fb_repo, resolver)
+    service = FeedbackService(db_session, fb_repo, resolver)
 
     req = FeedbackCreateRequest(
         recommendation_run_id=run_id,
@@ -100,7 +100,7 @@ async def test_submit_feedback_item_level(db_session) -> None:
     retrieval_repo = RecommendationRepository(db_session)
     fb_repo = FeedbackRepository(db_session)
     resolver = RecommendationReferenceResolver(retrieval_repo)
-    service = FeedbackService(fb_repo, resolver)
+    service = FeedbackService(db_session, fb_repo, resolver)
 
     req = FeedbackCreateRequest(
         recommendation_run_id=run_id,
@@ -119,7 +119,7 @@ async def test_submit_feedback_propagates_target_not_found(db_session) -> None:
     retrieval_repo = RecommendationRepository(db_session)
     fb_repo = FeedbackRepository(db_session)
     resolver = RecommendationReferenceResolver(retrieval_repo)
-    service = FeedbackService(fb_repo, resolver)
+    service = FeedbackService(db_session, fb_repo, resolver)
 
     req = FeedbackCreateRequest(
         recommendation_run_id="no-run",
@@ -140,7 +140,7 @@ async def test_submit_feedback_disabled(monkeypatch: pytest.MonkeyPatch, db_sess
         retrieval_repo = RecommendationRepository(db_session)
         fb_repo = FeedbackRepository(db_session)
         resolver = RecommendationReferenceResolver(retrieval_repo)
-        service = FeedbackService(fb_repo, resolver)
+        service = FeedbackService(db_session, fb_repo, resolver)
 
         req = FeedbackCreateRequest(
             recommendation_run_id=run_id,

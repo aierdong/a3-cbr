@@ -1,5 +1,7 @@
 """反馈应用服务：提交、删除与查询编排。"""
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import get_app_config
 from app.feedback.exceptions import FeedbackDisabledError
 from app.feedback.models import RecommendationFeedback
@@ -9,10 +11,16 @@ from app.feedback.schemas import (
     FeedbackCreateRequest,
     FeedbackDeleteRequest,
     FeedbackDeleteResponse,
+    FeedbackListResponse,
+    FeedbackQuery,
     FeedbackResponse,
+    FeedbackStatsQuery,
+    FeedbackStatsResponse,
     FeedbackTargetScope,
     FeedbackUsefulness,
+    RunFeedbackResponse,
 )
+from app.feedback.stats import FeedbackStatsService
 
 
 def feedback_row_to_response(row: RecommendationFeedback) -> FeedbackResponse:
@@ -40,15 +48,18 @@ class FeedbackService:
 
     def __init__(
         self,
+        db: AsyncSession,
         repository: FeedbackRepository,
         reference_resolver: RecommendationReferenceResolver,
     ) -> None:
         """初始化服务。
 
         Args:
+            db: 数据库会话（统计等只读查询复用同一会话）。
             repository: 反馈仓储。
             reference_resolver: 上游推荐引用解析器。
         """
+        self._db = db
         self._repo = repository
         self._resolver = reference_resolver
 
@@ -88,3 +99,20 @@ class FeedbackService:
             deleted_count=deleted_count,
             deleted_at=deleted_at,
         )
+
+    async def list_feedback(self, query: FeedbackQuery) -> FeedbackListResponse:
+        """分页过滤查询反馈明细。"""
+        items = await self._repo.list_feedback(query)
+        return FeedbackListResponse(items=items)
+
+    async def get_run_feedback(self, run_id: str) -> RunFeedbackResponse:
+        """单次推荐运行下全部反馈（运行级 + 推荐项级）。"""
+        items = await self._repo.list_feedback(
+            FeedbackQuery(recommendation_run_id=run_id, limit=500, offset=0),
+        )
+        return RunFeedbackResponse(recommendation_run_id=run_id, items=items)
+
+    async def get_stats(self, query: FeedbackStatsQuery) -> FeedbackStatsResponse:
+        """基础统计：数量、有用率与有用性分布。"""
+        stats = FeedbackStatsService(self._db)
+        return await stats.summarize(query)

@@ -59,7 +59,7 @@
 
 - [ ] 3. 实现反馈删除与查询
 
-- [ ] 3.1 (P) 实现反馈删除
+- [x] 3.1 (P) 实现反馈删除
   - 支持按 `feedback_id`、`case_id`、`recommendation_run_id`、`recommendation_item_id` 删除反馈（至少提供一个过滤条件）。
   - 返回稳定删除结果：`success`、`deleted_count`、`deleted_at`；未命中时返回 `deleted_count=0` 且保持幂等成功。
   - 记录删除原因（`reason`）和删除者（`requested_by`），并满足隐私日志约束。

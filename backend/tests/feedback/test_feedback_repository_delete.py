@@ -62,7 +62,7 @@ async def test_delete_feedback_via_service(db_session) -> None:
     retrieval_repo = RecommendationRepository(db_session)
     resolver = RecommendationReferenceResolver(retrieval_repo)
     fb_repo = FeedbackRepository(db_session)
-    svc = FeedbackService(fb_repo, resolver)
+    svc = FeedbackService(db_session, fb_repo, resolver)
 
     await retrieval_repo.create_run(
         RecommendationRunCreate(

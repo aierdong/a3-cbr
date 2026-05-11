@@ -1,5 +1,6 @@
 """反馈聚合根持久化（幂等 upsert、删除与查询）。"""
 
+import json
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -9,10 +10,103 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.feedback.models import RecommendationFeedback
-from app.feedback.schemas import FeedbackDeleteRequest
+from app.feedback.schemas import (
+    FeedbackDeleteRequest,
+    FeedbackListItem,
+    FeedbackQuery,
+    FeedbackSourceChannel,
+    FeedbackTargetScope,
+    FeedbackUsefulness,
+    ItemRecommendationDetail,
+    QueryContextSummary,
+)
+from app.retrieval.models import RecommendationItemSnapshot, RecommendationRun
 
 
 logger = logging.getLogger(__name__)
+
+
+def _applied_filters_summary(applied_filters: object) -> str:
+    """将过滤条件 JSON 转为截断摘要（不写镜像全文）。"""
+    if applied_filters is None:
+        return "{}"
+    try:
+        raw = json.dumps(applied_filters, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        raw = str(applied_filters)
+    if len(raw) > 512:
+        return f"{raw[:509]}..."
+    return raw
+
+
+def _row_to_feedback_list_item(
+    fb: RecommendationFeedback,
+    *,
+    query_hash: str | None,
+    applied_filters: object | None,
+    vector_candidate_count: int | None,
+    returned_count: int | None,
+    item_rank: int | None,
+    vector_similarity_score: float | None,
+    semantic_similarity_score: float | None,
+    structured_similarity_score: float | None,
+    business_score: float | None,
+    final_score: float | None,
+    explanation_status: str | None,
+) -> FeedbackListItem:
+    """组装明细列表项及可选关联查询字段。"""
+    scope = (
+        FeedbackTargetScope.RUN
+        if fb.recommendation_item_id is None
+        else FeedbackTargetScope.ITEM
+    )
+
+    query_context = None
+    if (
+        query_hash is not None
+        and vector_candidate_count is not None
+        and returned_count is not None
+    ):
+        query_context = QueryContextSummary(
+            query_hash=query_hash,
+            applied_filters_summary=_applied_filters_summary(applied_filters),
+            vector_candidate_count=vector_candidate_count,
+            returned_count=returned_count,
+        )
+
+    item_detail = None
+    if (
+        fb.recommendation_item_id is not None
+        and item_rank is not None
+        and vector_similarity_score is not None
+        and final_score is not None
+        and explanation_status is not None
+    ):
+        item_detail = ItemRecommendationDetail(
+            rank=item_rank,
+            vector_similarity_score=vector_similarity_score,
+            semantic_similarity_score=semantic_similarity_score,
+            structured_similarity_score=structured_similarity_score,
+            business_score=business_score,
+            final_score=final_score,
+            explanation_status=explanation_status,
+        )
+
+    return FeedbackListItem(
+        feedback_id=fb.feedback_id,
+        recommendation_run_id=fb.recommendation_run_id,
+        recommendation_item_id=fb.recommendation_item_id,
+        case_id=fb.case_id,
+        usefulness=FeedbackUsefulness(fb.usefulness),
+        comment=fb.comment,
+        target_scope=scope,
+        created_at=fb.created_at,
+        updated_at=fb.updated_at,
+        actor_id=fb.actor_id,
+        source_channel=FeedbackSourceChannel(fb.source_channel),
+        query_context=query_context,
+        item_detail=item_detail,
+    )
 
 
 class FeedbackRepository:
@@ -155,3 +249,91 @@ class FeedbackRepository:
         )
 
         return deleted_count, deleted_at
+
+    async def list_feedback(self, query: FeedbackQuery) -> list[FeedbackListItem]:
+        """按过滤条件分页列出反馈并 LEFT JOIN 推荐运行与推荐项快照。"""
+        stmt = (
+            select(
+                RecommendationFeedback,
+                RecommendationRun.query_text_hash,
+                RecommendationRun.applied_filters,
+                RecommendationRun.vector_candidate_count,
+                RecommendationRun.returned_count,
+                RecommendationItemSnapshot.rank,
+                RecommendationItemSnapshot.vector_similarity_score,
+                RecommendationItemSnapshot.semantic_similarity_score,
+                RecommendationItemSnapshot.structured_similarity_score,
+                RecommendationItemSnapshot.business_score,
+                RecommendationItemSnapshot.final_score,
+                RecommendationItemSnapshot.explanation_status,
+            )
+            .outerjoin(
+                RecommendationRun,
+                RecommendationRun.recommendation_run_id
+                == RecommendationFeedback.recommendation_run_id,
+            )
+            .outerjoin(
+                RecommendationItemSnapshot,
+                and_(
+                    RecommendationFeedback.recommendation_item_id
+                    == RecommendationItemSnapshot.recommendation_item_id,
+                    RecommendationFeedback.recommendation_run_id
+                    == RecommendationItemSnapshot.recommendation_run_id,
+                ),
+            )
+        )
+
+        conditions: list = []
+        if query.recommendation_run_id is not None:
+            conditions.append(
+                RecommendationFeedback.recommendation_run_id
+                == query.recommendation_run_id,
+            )
+        if query.recommendation_item_id is not None:
+            conditions.append(
+                RecommendationFeedback.recommendation_item_id
+                == query.recommendation_item_id,
+            )
+        if query.case_id is not None:
+            conditions.append(RecommendationFeedback.case_id == query.case_id)
+        if query.actor_id is not None:
+            conditions.append(RecommendationFeedback.actor_id == query.actor_id)
+        if query.usefulness is not None:
+            conditions.append(
+                RecommendationFeedback.usefulness == query.usefulness.value,
+            )
+        if query.created_at_from is not None:
+            conditions.append(
+                RecommendationFeedback.created_at >= query.created_at_from,
+            )
+        if query.created_at_to is not None:
+            conditions.append(
+                RecommendationFeedback.created_at <= query.created_at_to,
+            )
+        if conditions:
+            stmt = stmt.where(and_(*conditions))
+
+        stmt = stmt.order_by(RecommendationFeedback.created_at.desc())
+        stmt = stmt.offset(query.offset).limit(query.limit)
+
+        result = await self._db.execute(stmt)
+        items: list[FeedbackListItem] = []
+        for row in result.all():
+            fb = row[0]
+            items.append(
+                _row_to_feedback_list_item(
+                    fb,
+                    query_hash=row[1],
+                    applied_filters=row[2],
+                    vector_candidate_count=row[3],
+                    returned_count=row[4],
+                    item_rank=row[5],
+                    vector_similarity_score=row[6],
+                    semantic_similarity_score=row[7],
+                    structured_similarity_score=row[8],
+                    business_score=row[9],
+                    final_score=row[10],
+                    explanation_status=row[11],
+                ),
+            )
+        return items
