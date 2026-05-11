@@ -12,7 +12,7 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -71,6 +71,115 @@ class ScoreBreakdownSource(StrEnum):
 
     AGGREGATED = "aggregated"
     DEFAULT_ZERO_NOT_AGGREGATED = "default_zero_not_aggregated"
+
+
+# =============================================================================
+# 请求、过滤与查询 Schema
+# =============================================================================
+
+
+class RetrievalFilters(BaseModel):
+    """检索过滤条件。
+
+    支持品牌、门店、问题类型、标签、案例状态和创建时间范围等基础过滤条件。
+    """
+
+    brand_id: Optional[str] = Field(None, max_length=64, description="品牌标识")
+    store_id: Optional[str] = Field(None, max_length=64, description="门店标识")
+    problem_type: Optional[str] = Field(None, max_length=128, description="问题类型")
+    tags: Optional[list[str]] = Field(default=None, description="标签列表")
+    case_status: Optional[str] = Field(None, max_length=32, description="案例状态")
+    created_at_from: Optional[datetime] = Field(None, description="创建时间范围起始")
+    created_at_to: Optional[datetime] = Field(None, description="创建时间范围结束")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BusinessWeights(BaseModel):
+    """业务权重参数。
+
+    用于调整不同业务因子在最终排序中的权重。
+    """
+
+    business_type_weight: Annotated[float, Field(ge=0, le=1, description="业态权重")] = 0.2
+    store_tier_weight: Annotated[float, Field(ge=0, le=1, description="门店等级权重")] = 0.15
+    brand_affinity_weight: Annotated[float, Field(ge=0, le=1, description="品牌亲和度权重")] = 0.1
+    recency_weight: Annotated[float, Field(ge=0, le=1, description="时间接近度权重")] = 0.05
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetrievalRequest(BaseModel):
+    """相似案例推荐请求。
+
+    包含当前问题文本、Top-K 参数、可选过滤条件和可选业务权重参数。
+    """
+
+    query_text: str = Field(..., min_length=1, max_length=2000, description="当前问题文本")
+    top_k: Annotated[int, Field(gt=0, le=100, description="推荐数量上限")] = 10
+    filters: Optional[RetrievalFilters] = Field(default=None, description="过滤条件")
+    business_weights: Optional[BusinessWeights] = Field(default=None, description="业务权重参数")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class QueryStructuredSuggestions(BaseModel):
+    """查询侧结构化画像。
+
+    LLM normalizer 单次外呼产出的查询侧结构化画像，用于后续结构化局部相似度评分。
+    MVP 可不纳入评分，但该字段在 LLM normalizer 成功时仍应落地。
+    """
+
+    suggested_problem_type: Optional[str] = Field(None, description="建议问题类型")
+    suggested_root_cause_category: Optional[str] = Field(None, description="建议根因分类")
+    suggested_applicable_scenes: Optional[list[str]] = Field(
+        default=None, description="建议适用场景"
+    )
+    suggested_tags: Optional[list[str]] = Field(default=None, description="建议标签")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NormalizedRetrievalQuery(BaseModel):
+    """标准化检索查询。
+
+    由 schema 校验后的请求字段与单次 LLM normalizer 输出合并而成。
+    包含标准化检索文本与查询侧结构化画像。
+    """
+
+    normalized_query_text: str = Field(..., description="标准化检索文本（用于向量搜索和 reranker）")
+    query_structured_suggestions: QueryStructuredSuggestions = Field(
+        ..., description="查询侧结构化画像"
+    )
+    applied_filters: dict[str, Any] = Field(..., description="规范化后的过滤条件")
+    effective_weights: dict[str, float] = Field(..., description="有效业务权重")
+    top_k: int = Field(..., description="Top-K 参数")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CandidateSnapshot(BaseModel):
+    """推荐候选案例快照。
+
+    从向量搜索候选和案例详情补齐后组装，供评分和聚合使用。
+    """
+
+    case_id: str = Field(..., description="案例标识")
+    vector_id: str = Field(..., description="向量标识")
+    vector_similarity_score: float = Field(..., description="向量相似度分值")
+    problem_summary: Optional[str] = Field(None, description="问题摘要")
+    problem_description: Optional[str] = Field(None, description="问题描述")
+    core_solution_steps: Optional[str] = Field(None, description="核心解决步骤")
+    outcome_summary: Optional[str] = Field(None, description="效果摘要")
+    structured_suggestions: Optional[dict[str, Any]] = Field(None, description="结构化建议")
+    brand_id: Optional[str] = Field(None, description="品牌标识")
+    store_id: Optional[str] = Field(None, description="门店标识")
+    problem_type: Optional[str] = Field(None, description="问题类型")
+    tags: Optional[list[str]] = Field(default=None, description="标签列表")
+    case_status: Optional[str] = Field(None, description="案例状态")
+    case_updated_at: datetime = Field(..., description="案例更新时间")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # =============================================================================
@@ -194,6 +303,44 @@ class RecommendationErrorData(BaseModel):
 
     error_code: str = Field(..., max_length=64, description="错误码")
     internal_reason: Optional[str] = Field(None, description="内部错误原因")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ValidationErrorDetail(BaseModel):
+    """字段级验证错误详情。"""
+
+    field: str = Field(..., description="错误字段路径")
+    message: str = Field(..., description="错误信息")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ValidationErrorResponse(BaseModel):
+    """请求验证失败响应（422）。"""
+
+    error_code: str = Field(default="VALIDATION_ERROR", description="错误码")
+    message: str = Field(default="请求参数验证失败", description="错误描述")
+    details: list[ValidationErrorDetail] = Field(..., description="字段级错误详情")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SummarizationFailedResponse(BaseModel):
+    """LLM normalizer 失败响应（503）。
+
+    用于 Requirement 1.7 fail closed 场景。
+    """
+
+    recommendation_run_id: str = Field(..., description="推荐运行标识")
+    error_code: str = Field(default="QUERY_SUMMARIZATION_FAILED", description="错误码")
+    status: RunStatus = Field(default=RunStatus.FAILED, description="运行状态")
+    message: str = Field(
+        default="当前无法理解您的问题，请稍后重试", description="用户可读提示文案"
+    )
+    summarization_status: str = Field(
+        default="failed", description="摘要生成状态"
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -334,6 +481,31 @@ class RecommendationRunResponse(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class DegradedStatus(StrEnum):
+    """降级状态枚举。
+
+    用于描述推荐流程中的降级原因。
+    """
+
+    RERANKER_FAILED = "reranker_failed"
+    AGGREGATION_FAILED = "aggregation_failed"
+    RERANKER_AND_AGGREGATION_FAILED = "reranker_and_aggregation_failed"
+    EXPLANATION_FALLBACK = "explanation_fallback"
+    PARTIAL_CANDIDATE_DATA = "partial_candidate_data"
+    NO_CANDIDATES = "no_candidates"
+
+
+class DegradedRankingResponse(BaseModel):
+    """降级排序响应。"""
+
+    fallback_ranking_source: str = Field(..., description="降级排序来源")
+    reranker_status: RerankerStatus = Field(..., description="重排状态")
+    aggregation_status: AggregationStatus = Field(..., description="聚合状态")
+    degraded_reason: str = Field(..., description="降级原因")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # Rebuild forward references
