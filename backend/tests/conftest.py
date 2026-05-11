@@ -3,15 +3,17 @@
 提供测试夹具和测试应用。
 """
 from typing import AsyncGenerator
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.db.session import Base
 from app.main import app
+from app.retrieval.router import get_recommendation_service
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -66,10 +68,46 @@ async def test_client(db_session) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mock_recommendation_service(db_session) -> MagicMock:
+    """Mock RecommendationService fixture。
+
+    创建完全 mocked 的 RecommendationService 实例，
+    并通过 app.dependency_overrides 替换 get_recommendation_service 依赖，
+    避免在测试环境中调用真实的 LLMClient、RerankerClient 等（需要 API keys）。
+
+    注意：某些测试需要 patch() 来模拟特定行为（如 normalizer 失败），
+    这些 patch 与 dependency_override 配合使用。
+    """
+    from app.retrieval.router import get_recommendation_service
+
+    mock_service = MagicMock()
+    mock_service.async_get_similar_cases = AsyncMock(return_value={
+        "status": "success",
+        "contract_version": "1.0.0",
+        "items": [],
+        "total": 0,
+    })
+
+    async def override_get_recommendation_service(session: AsyncSession):
+        return mock_service
+
+    app.dependency_overrides[get_recommendation_service] = override_get_recommendation_service
+
+    yield mock_service
+
+    # 清理 override
+    if get_recommendation_service in app.dependency_overrides:
+        del app.dependency_overrides[get_recommendation_service]
 
 
 # 需要从 app.db.session 导入 get_db

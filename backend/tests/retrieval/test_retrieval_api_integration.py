@@ -11,14 +11,20 @@
 
 Requirements: 5.1, 5.2, 5.3, 5.4, 7.1, 7.2, 7.3, 7.4
 Boundary: RetrievalRouter, RecommendationService, RecommendationRepository_
+
+Dependency Override:
+- get_recommendation_service 被 override 为返回预构建的 mock RecommendationService
+  这样避免了在测试环境中构造真实的 LLMClient、RerankerClient 等（需要 API keys）
 """
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from typing import AsyncGenerator
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
-from httpx import AsyncClient
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 
 from app.retrieval.schemas import (
     RerankerStatus,
@@ -154,6 +160,27 @@ def _make_reranker_success_result(scores: list[float] | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Mock RecommendationService Factory
+# ---------------------------------------------------------------------------
+
+
+def create_mock_recommendation_service():
+    """创建完全 mocked 的 RecommendationService 实例。
+
+    通过 override get_recommendation_service 依赖来避免真实 API 调用。
+    返回的 mock service 会使用 patch() 装饰的 mock 组件。
+    """
+    mock_service = MagicMock()
+    mock_service.async_get_similar_cases = AsyncMock(return_value={
+        "status": "success",
+        "contract_version": CONTRACT_VERSION,
+        "items": [],
+        "total": 0,
+    })
+    return mock_service
+
+
+# ---------------------------------------------------------------------------
 # Tests: Feature Flag Gate
 # ---------------------------------------------------------------------------
 
@@ -179,13 +206,12 @@ class TestRecommendationSuccess:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """POST /api/recommendations/similar-cases 成功返回 200。"""
         if not _is_integration_enabled():
             pytest.skip("集成测试功能未启用")
 
-        # 由于完整流程 mock 链较长，此测试简化为验证路由可达性
-        # 完整成功路径测试需要更多 mock 配合
         response = await test_client.post(
             "/api/recommendations/similar-cases",
             json={
@@ -201,12 +227,12 @@ class TestRecommendationSuccess:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """成功响应包含 contract_version。"""
         if not _is_integration_enabled():
             pytest.skip("集成测试功能未启用")
 
-        # 验证 contract_version 在响应中
         response = await test_client.post(
             "/api/recommendations/similar-cases",
             json={
@@ -235,6 +261,7 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """LLM normalizer 失败时返回 503 + recommendation_run_id。"""
         if not _is_integration_enabled():
@@ -269,6 +296,7 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """LLM normalizer 失败时 create_run 后 fail_run，响应含 recommendation_run_id。"""
         if not _is_integration_enabled():
@@ -307,6 +335,7 @@ class TestLLMNormalizerFailure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """LLM normalizer 失败时未调用向量搜索（验证 reranker_status=pending）。"""
         if not _is_integration_enabled():
@@ -358,6 +387,7 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """LLM normalizer 失败时 reranker_status=pending（从未调用重排）。"""
         if not _is_integration_enabled():
@@ -388,6 +418,7 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """空候选时 reranker_status=pending（无候选故未调用重排）。"""
         if not _is_integration_enabled():
@@ -439,6 +470,7 @@ class TestRerankerStatus:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """向量搜索失败时 reranker_status=pending（未调用重排）。"""
         if not _is_integration_enabled():
@@ -498,6 +530,7 @@ class TestRunContextGuard:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """create_run 后若编排抛未捕获异常，仍通过 finally 写入 fail_run。"""
         if not _is_integration_enabled():
@@ -576,6 +609,7 @@ class TestContractVersion:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """POST 响应与 GET 返回的 contract_version 一致。"""
         if not _is_integration_enabled():
@@ -592,6 +626,7 @@ class TestContractVersion:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """contract_version 在 fail_run 后不被改写（create_run 时写入一次）。"""
         if not _is_integration_enabled():
@@ -631,6 +666,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """GET /api/recommendations/runs/{run_id} 返回必需字段。"""
         if not _is_integration_enabled():
@@ -674,6 +710,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """推荐运行记录包含反馈引用标识（recommendation_run_id）。"""
         if not _is_integration_enabled():
@@ -703,6 +740,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """推荐项快照包含分值明细（score_breakdown）。"""
         if not _is_integration_enabled():
@@ -718,6 +756,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """推荐项快照包含有效权重（score_weights）。"""
         if not _is_integration_enabled():
@@ -732,6 +771,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """推荐运行记录包含耗时（latency_ms）。"""
         if not _is_integration_enabled():
@@ -746,6 +786,7 @@ class TestRunAndItemSnapshotFields:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """reranker_status 枚举值正确：pending, succeeded, failed, skipped。"""
         if not _is_integration_enabled():
@@ -770,6 +811,7 @@ class TestEmptyAndDegradedResults:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """向量搜索返回空候选时返回 200 + status=empty。"""
         if not _is_integration_enabled():
@@ -820,6 +862,7 @@ class TestEmptyAndDegradedResults:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """降级结果包含 degraded_reason。"""
         if not _is_integration_enabled():
@@ -845,6 +888,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """输入校验失败返回 422。"""
         if not _is_integration_enabled():
@@ -866,6 +910,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """Top-K 越界返回 422。"""
         if not _is_integration_enabled():
@@ -886,6 +931,7 @@ class TestErrorResponseStructure:
         self,
         test_client: AsyncClient,
         db_session,
+        mock_recommendation_service,
     ):
         """运行不存在返回 404。"""
         if not _is_integration_enabled():

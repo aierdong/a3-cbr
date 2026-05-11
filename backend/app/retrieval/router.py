@@ -19,7 +19,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cases.repository import CaseRepository
 from app.cases.service import CaseService
+from app.cases.validators import CaseValidator
+from app.common.llm_client import LLMClient
 from app.core.config import get_app_config
 from app.core.errors import (
     ErrorCode,
@@ -42,6 +45,10 @@ from app.retrieval.score_aggregator import ScoreAggregator
 from app.retrieval.service import RecommendationService
 from app.retrieval.structured_similarity import StructuredSimilarityScorer
 from app.retrieval.vector_port import VectorSearchPort
+from app.vector_indexing.embedding_client import EmbeddingClient
+from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
+from app.vector_indexing.repository import VectorRepository
+from app.vector_indexing.search import VectorSearchService
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +74,25 @@ def get_recommendation_service(
 
     # QueryNormalizer
     normalizer = QueryNormalizer(
+        llm_client=LLMClient(config=config.normalizer_llm),
         config=config.normalizer_llm,
-        top_k_upper_bound=retrieval_config.top_k_upper_bound,
-        business_weights_upper_bound=retrieval_config.business_weights_upper_bound,
     )
 
     # VectorSearchPort
-    vector_port = VectorSearchPort(retrieval_config=retrieval_config)
+    composer = EmbeddingInputComposer()
+    embedding_client = EmbeddingClient(config=config.embedding)
+    vector_repo = VectorRepository(session)
+    search_service = VectorSearchService(
+        composer=composer,
+        embedding_client=embedding_client,
+        repository=vector_repo,
+    )
+    vector_port = VectorSearchPort(search_service=search_service)
 
     # Case + Enrichment providers
-    case_service = CaseService(session)
+    case_repository = CaseRepository(session)
+    case_validator = CaseValidator()
+    case_service = CaseService(case_repository, case_validator)
     enrichment_repository = EnrichmentRepository(session)
     case_provider = RecommendationCaseProvider(
         case_service=case_service,
@@ -92,7 +108,7 @@ def get_recommendation_service(
 
     # ScoreAggregator
     aggregator = ScoreAggregator(
-        default_weights=retrieval_config.score_weights,
+        default_weights=retrieval_config.default_score_weights,
     )
 
     return RecommendationService(
