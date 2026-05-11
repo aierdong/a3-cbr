@@ -12,7 +12,7 @@ describe('App.vue', () => {
         }
       }
     })
-    expect(wrapper.find('#app').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'RouterView' }).exists()).toBe(true)
   })
 
   it('should render without router errors', async () => {
