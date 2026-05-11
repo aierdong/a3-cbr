@@ -18,6 +18,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -34,8 +35,8 @@ def upgrade() -> None:
         "recommendation_runs",
         sa.Column("recommendation_run_id", sa.String(64), primary_key=True),
         sa.Column("query_text_hash", sa.String(128), nullable=False),
-        sa.Column("applied_filters", sa.JSON().with_variant(sa.JSON(), "postgresql"), nullable=False),
-        sa.Column("score_weights", sa.JSON().with_variant(sa.JSON(), "postgresql"), nullable=False),
+        sa.Column("applied_filters", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
+        sa.Column("score_weights", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
         sa.Column("contract_version", sa.String(64), nullable=False),
         sa.Column("requested_top_k", sa.Integer(), nullable=False),
         sa.Column("returned_count", sa.Integer(), nullable=False),
@@ -104,13 +105,13 @@ def upgrade() -> None:
         ),
         sa.Column(
             "score_breakdown",
-            sa.JSON().with_variant(sa.JSON(), "postgresql"),
+            sa.JSON().with_variant(postgresql.JSONB, "postgresql"),
             nullable=False,
         ),
         sa.Column("explanation_status", sa.String(32), nullable=False),
         sa.Column(
             "missing_fields",
-            sa.JSON().with_variant(sa.JSON(), "postgresql"),
+            sa.JSON().with_variant(postgresql.JSONB, "postgresql"),
             nullable=False,
         ),
         sa.Column("case_updated_at", sa.DateTime(timezone=True), nullable=False),

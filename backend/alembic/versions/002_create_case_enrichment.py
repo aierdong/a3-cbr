@@ -13,6 +13,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -33,9 +34,9 @@ def upgrade() -> None:
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("problem_summary", sa.Text(), nullable=True),
         sa.Column("solution_summary", sa.Text(), nullable=True),
-        sa.Column("structured_suggestions", sa.JSON(), nullable=False),
-        sa.Column("tag_suggestions", sa.JSON(), nullable=False),
-        sa.Column("source_references", sa.JSON(), nullable=False),
+        sa.Column("structured_suggestions", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
+        sa.Column("tag_suggestions", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
+        sa.Column("source_references", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
         sa.Column("output_version", sa.String(32), nullable=False),
         sa.Column(
             "created_at",
@@ -115,11 +116,11 @@ def upgrade() -> None:
         sa.Column("copy_run_id", sa.String(64), primary_key=True),
         sa.Column("query_text_hash", sa.String(128), nullable=False),
         sa.Column("status", sa.String(32), nullable=False),
-        sa.Column("candidate_case_ids", sa.JSON(), nullable=False),
-        sa.Column("items", sa.JSON(), nullable=False),
+        sa.Column("candidate_case_ids", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
+        sa.Column("items", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=False),
         sa.Column("model_id", sa.String(128), nullable=False),
         sa.Column("request_purpose", sa.String(128), nullable=False),
-        sa.Column("token_usage", sa.JSON(), nullable=True),
+        sa.Column("token_usage", sa.JSON().with_variant(postgresql.JSONB, "postgresql"), nullable=True),
         sa.Column("schema_validation_status", sa.String(32), nullable=False),
         sa.Column(
             "created_at",
