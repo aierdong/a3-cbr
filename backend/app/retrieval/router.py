@@ -19,6 +19,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cases.service import CaseService
 from app.core.config import get_app_config
 from app.core.errors import (
     ErrorCode,
@@ -26,14 +27,20 @@ from app.core.errors import (
     create_error_response,
 )
 from app.db.session import get_db
+from app.enrichment.repository import EnrichmentRepository
+from app.retrieval.business_scoring import BusinessScoreCalculator
+from app.retrieval.case_provider import RecommendationCaseProvider
 from app.retrieval.query import QueryNormalizer
 from app.retrieval.repository import RecommendationRepository
+from app.retrieval.reranker_client import RerankerClient
 from app.retrieval.schemas import (
     RecommendationResponse,
     RecommendationRunResponse,
     RetrievalRequest,
 )
+from app.retrieval.score_aggregator import ScoreAggregator
 from app.retrieval.service import RecommendationService
+from app.retrieval.structured_similarity import StructuredSimilarityScorer
 from app.retrieval.vector_port import VectorSearchPort
 
 logger = logging.getLogger(__name__)
@@ -44,7 +51,7 @@ router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
 def get_recommendation_service(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RecommendationService:
-    """构造 ``RecommendationService`` 实例。
+    """构造 ``RecommendationService`` 实例（注入全部 9 个依赖）。
 
     Args:
         session: 数据库会话。
@@ -53,23 +60,50 @@ def get_recommendation_service(
         推荐服务实例。
     """
     config = get_app_config()
-    repository = RecommendationRepository(session)
-
-    normalizer_llm_config = config.normalizer_llm
     retrieval_config = config.retrieval
 
+    # Repository
+    repository = RecommendationRepository(session)
+
+    # QueryNormalizer
     normalizer = QueryNormalizer(
-        config=normalizer_llm_config,
+        config=config.normalizer_llm,
         top_k_upper_bound=retrieval_config.top_k_upper_bound,
         business_weights_upper_bound=retrieval_config.business_weights_upper_bound,
     )
 
+    # VectorSearchPort
     vector_port = VectorSearchPort(retrieval_config=retrieval_config)
+
+    # Case + Enrichment providers
+    case_service = CaseService(session)
+    enrichment_repository = EnrichmentRepository(session)
+    case_provider = RecommendationCaseProvider(
+        case_service=case_service,
+        enrichment_repository=enrichment_repository,
+    )
+
+    # Scoring
+    structured_scorer = StructuredSimilarityScorer()
+    business_scorer = BusinessScoreCalculator()
+
+    # Reranker
+    reranker = RerankerClient(config=config.reranker)
+
+    # ScoreAggregator
+    aggregator = ScoreAggregator(
+        default_weights=retrieval_config.score_weights,
+    )
 
     return RecommendationService(
         repository=repository,
         normalizer=normalizer,
         vector_port=vector_port,
+        case_provider=case_provider,
+        structured_scorer=structured_scorer,
+        business_scorer=business_scorer,
+        reranker=reranker,
+        aggregator=aggregator,
         config=retrieval_config,
     )
 
