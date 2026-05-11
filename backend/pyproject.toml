@@ -36,6 +36,9 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# 与 tests/conftest.py 中 DDL 互斥锁配合：单会话事件循环，避免每测新建 loop 导致 Lock 失效与并发 create_all。
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]

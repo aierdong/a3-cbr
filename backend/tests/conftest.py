@@ -2,6 +2,7 @@
 
 提供测试夹具和测试应用。
 """
+import asyncio
 from typing import AsyncGenerator
 from unittest.mock import MagicMock, AsyncMock
 
@@ -15,6 +16,9 @@ from app.db.session import Base
 from app.main import app
 from app.retrieval.router import get_recommendation_service
 
+# 共享库上并发 create_all/drop_all 会触发 PostgreSQL pg_type 唯一约束冲突；序列化 DDL。
+_db_schema_lock = asyncio.Lock()
+
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator:
@@ -22,38 +26,39 @@ async def db_session() -> AsyncGenerator:
 
     每个测试函数使用独立的数据库引擎和会话，避免事件循环关闭问题。
     """
-    # 为每个测试创建独立的引擎
-    test_engine = create_async_engine(
-        settings.database_url,
-        echo=settings.app_debug,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-    )
+    async with _db_schema_lock:
+        # 为每个测试创建独立的引擎
+        test_engine = create_async_engine(
+            settings.database_url,
+            echo=settings.app_debug,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+        )
 
-    # 创建所有表（pgvector：`case_vectors.embedding_vector` 依赖扩展）
-    async with test_engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(Base.metadata.create_all)
+        # 创建所有表（pgvector：`case_vectors.embedding_vector` 依赖扩展）
+        async with test_engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.create_all)
 
-    # 创建会话
-    test_session_maker = async_sessionmaker(
-        test_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
+        # 创建会话
+        test_session_maker = async_sessionmaker(
+            test_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
 
-    async with test_session_maker() as session:
-        yield session
+        async with test_session_maker() as session:
+            yield session
 
-    # 清理所有表
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        # 清理所有表
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
 
-    # 关闭引擎
-    await test_engine.dispose()
+        # 关闭引擎
+        await test_engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")
