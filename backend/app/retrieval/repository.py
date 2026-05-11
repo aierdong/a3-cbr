@@ -10,9 +10,11 @@
 - final_score=0 在降级路径或未聚合时表示占位符
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +30,12 @@ from app.retrieval.schemas import (
     RunResult,
     RunStatus,
 )
+
+
+logger = logging.getLogger(__name__)
+
+FEEDBACK_SERVICE_URL = "http://recommendation-feedback"
+FEEDBACK_DELETE_TIMEOUT = 5.0
 
 
 class RecommendationRepository:
@@ -315,3 +323,183 @@ class RecommendationRepository:
         )
         await self._db.flush()
         return del_result.rowcount
+
+
+# =============================================================================
+# 级联删除编排（调用 recommendation-feedback 删除接口）
+# =============================================================================
+
+
+class RecommendationCascadeDeleteService:
+    """推荐运行级联删除服务。
+
+    负责删除推荐运行/推荐项快照时同步清理关联的反馈记录。
+
+    设计约束：
+    - 反馈删除失败不阻塞推荐记录删除，但须记录告警日志
+    - 推荐项删除顺序：先调反馈删除 → 再删快照
+    - 运行删除顺序：先删快照 → 调反馈删除 → 删运行
+    """
+
+    def __init__(
+        self,
+        repository: "RecommendationRepository",
+        http_client: Optional[httpx.AsyncClient] = None,
+    ) -> None:
+        """初始化级联删除服务。
+
+        Args:
+            repository: 推荐仓储实例
+            http_client: 可选的 HTTP 客户端（用于测试注入）
+        """
+        self._repo = repository
+        self._http_client = http_client
+
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """获取或创建 HTTP 客户端。"""
+        if self._http_client is not None:
+            return self._http_client
+        return httpx.AsyncClient(timeout=FEEDBACK_DELETE_TIMEOUT)
+
+    async def delete_recommendation_run(
+        self, run_id: str
+    ) -> tuple[int, int, int]:
+        """删除推荐运行及其关联的推荐项快照和反馈记录。
+
+        执行顺序：
+        1. 删除推荐项快照
+        2. 调用反馈规格删除接口清理关联反馈
+        3. 删除推荐运行记录
+
+        Args:
+            run_id: 运行标识
+
+        Returns:
+            tuple[快照删除数, 反馈删除数, 运行删除数]
+        """
+        items_deleted = await self._repo.delete_items_by_run(run_id)
+
+        feedback_deleted_count = await self._call_feedback_delete_by_run(run_id)
+
+        run_deleted = await self._repo.delete_run(run_id)
+        run_deleted_count = 1 if run_deleted else 0
+
+        return items_deleted, feedback_deleted_count, run_deleted_count
+
+    async def delete_recommendation_items(
+        self, item_ids: list[str]
+    ) -> tuple[int, int]:
+        """删除推荐项快照及其关联反馈记录。
+
+        执行顺序：
+        1. 调用反馈规格删除接口清理关联反馈
+        2. 删除推荐项快照
+
+        Args:
+            item_ids: 推荐项标识列表
+
+        Returns:
+            tuple[反馈删除数, 快照删除数]
+        """
+        feedback_deleted_count = await self._call_feedback_delete_by_items(
+            item_ids
+        )
+
+        items_deleted = await self._repo.delete_items(item_ids)
+
+        return feedback_deleted_count, items_deleted
+
+    async def _call_feedback_delete_by_run(
+        self, run_id: str
+    ) -> int:
+        """调用反馈删除接口清理运行级关联反馈。
+
+        Args:
+            run_id: 推荐运行标识
+
+        Returns:
+            删除的反馈记录数
+        """
+        try:
+            client = await self._get_http_client()
+            response = await client.delete(
+                f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback",
+                params={"recommendation_run_id": run_id},
+                timeout=FEEDBACK_DELETE_TIMEOUT,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("deleted_count", 0)
+            elif response.status_code == 404:
+                return 0
+            else:
+                logger.warning(
+                    f"Feedback delete by run failed: {response.status_code}",
+                    extra={"run_id": run_id},
+                )
+                return 0
+        except httpx.TimeoutException:
+            logger.warning(
+                "Feedback service timeout during run cascade delete",
+                extra={"run_id": run_id},
+            )
+            return 0
+        except httpx.ConnectError as e:
+            logger.warning(
+                f"Cannot connect to feedback service during run cascade delete: {e}",
+                extra={"run_id": run_id},
+            )
+            return 0
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error during feedback delete by run: {e}",
+                extra={"run_id": run_id},
+            )
+            return 0
+
+    async def _call_feedback_delete_by_items(
+        self, item_ids: list[str]
+    ) -> int:
+        """调用反馈删除接口按推荐项批量删除反馈。
+
+        Args:
+            item_ids: 推荐项标识列表
+
+        Returns:
+            删除的反馈记录数
+        """
+        total_deleted = 0
+        for item_id in item_ids:
+            try:
+                client = await self._get_http_client()
+                response = await client.delete(
+                    f"{FEEDBACK_SERVICE_URL}/api/recommendation-feedback",
+                    params={"recommendation_item_id": item_id},
+                    timeout=FEEDBACK_DELETE_TIMEOUT,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    total_deleted += data.get("deleted_count", 0)
+                elif response.status_code == 404:
+                    pass
+                else:
+                    logger.warning(
+                        f"Feedback delete by item failed: {response.status_code}",
+                        extra={"item_id": item_id},
+                    )
+            except httpx.TimeoutException:
+                logger.warning(
+                    "Feedback service timeout during item cascade delete",
+                    extra={"item_id": item_id},
+                )
+            except httpx.ConnectError as e:
+                logger.warning(
+                    f"Cannot connect to feedback service during item cascade delete: {e}",
+                    extra={"item_id": item_id},
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error during feedback delete by item: {e}",
+                    extra={"item_id": item_id},
+                )
+        return total_deleted
