@@ -11,3 +11,9 @@ class FeedbackTargetMismatchError(Exception):
     """推荐项不属于给定推荐运行。"""
 
     error_code = "FEEDBACK_TARGET_MISMATCH"
+
+
+class FeedbackDisabledError(Exception):
+    """反馈功能已通过配置关闭。"""
+
+    error_code = "FEEDBACK_DISABLED"  # 与 ErrorCode.FEEDBACK_DISABLED 对齐

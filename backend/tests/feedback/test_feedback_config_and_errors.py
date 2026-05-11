@@ -11,6 +11,7 @@ def test_error_code_feedback_constants_exist() -> None:
     assert ErrorCode.FEEDBACK_TARGET_NOT_FOUND == "FEEDBACK_TARGET_NOT_FOUND"
     assert ErrorCode.FEEDBACK_TARGET_MISMATCH == "FEEDBACK_TARGET_MISMATCH"
     assert ErrorCode.FEEDBACK_VALIDATION_ERROR == "FEEDBACK_VALIDATION_ERROR"
+    assert ErrorCode.FEEDBACK_DISABLED == "FEEDBACK_DISABLED"
 
 
 def test_feedback_public_messages_cover_feedback_codes() -> None:
@@ -18,6 +19,7 @@ def test_feedback_public_messages_cover_feedback_codes() -> None:
     assert ErrorCode.FEEDBACK_TARGET_NOT_FOUND in _FEEDBACK_PUBLIC_MESSAGES
     assert ErrorCode.FEEDBACK_TARGET_MISMATCH in _FEEDBACK_PUBLIC_MESSAGES
     assert ErrorCode.FEEDBACK_VALIDATION_ERROR in _FEEDBACK_PUBLIC_MESSAGES
+    assert ErrorCode.FEEDBACK_DISABLED in _FEEDBACK_PUBLIC_MESSAGES
     for text in _FEEDBACK_PUBLIC_MESSAGES.values():
         assert isinstance(text, str)
         assert len(text) > 0
@@ -47,6 +49,7 @@ def test_load_app_config_includes_feedback(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_load_app_config_feedback_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """反馈配置可通过环境变量关闭或收窄时间与备注上限。"""
     monkeypatch.setenv("FEEDBACK_ENABLED", "false")
     monkeypatch.setenv("FEEDBACK_COMMENT_MAX_LENGTH", "512")
     monkeypatch.setenv("FEEDBACK_STATS_DEFAULT_RANGE_DAYS", "7")

@@ -129,6 +129,8 @@ class ErrorCode:
     FEEDBACK_TARGET_MISMATCH = "FEEDBACK_TARGET_MISMATCH"
     # 反馈字段校验失败：枚举、备注长度、统计查询时间范围等（422）
     FEEDBACK_VALIDATION_ERROR = "FEEDBACK_VALIDATION_ERROR"
+    # 反馈功能已关闭（503）
+    FEEDBACK_DISABLED = "FEEDBACK_DISABLED"
 
 
 _EMBEDDING_PUBLIC_MESSAGES: dict[str, str] = {
@@ -167,6 +169,7 @@ _FEEDBACK_PUBLIC_MESSAGES: dict[str, str] = {
     ErrorCode.FEEDBACK_TARGET_NOT_FOUND: "反馈目标不存在或引用已失效",
     ErrorCode.FEEDBACK_TARGET_MISMATCH: "推荐项与推荐运行不匹配",
     ErrorCode.FEEDBACK_VALIDATION_ERROR: "反馈请求字段校验失败",
+    ErrorCode.FEEDBACK_DISABLED: "反馈功能未启用",
 }
 
 
