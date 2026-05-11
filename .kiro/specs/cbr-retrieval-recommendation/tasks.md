@@ -11,14 +11,15 @@
   - 完成后，生产配置缺失时可以 fail closed，错误响应包含稳定错误码；模型配置与其他规格隔离。
   - _Requirements: 1.3, 1.6, 1.7, 2.4, 3.4, 6.3, 6.4, 7.4, 7.5_
 
-- [ ] 1.2 建立推荐运行和推荐项快照存储
+- [x] 1.2 建立推荐运行和推荐项快照存储
   - 创建推荐运行和推荐项快照的数据结构，用于保存运行标识、查询哈希、过滤条件、业务权重、候选引用、分值明细和降级状态。
   - **迁移与 ORM**：在 `recommendation_runs` 表增加独立列 **`contract_version`**（建议 `varchar(64) NOT NULL`，与 `design.md` 物理模型一致）；SQLAlchemy/Alembic 迁移与 `backend/app/retrieval/models.py`（或等价 ORM）同步纳入该列；**`reranker_status` 列 `NOT NULL`，数据库默认 `'pending'`**（与 `design.md`「Reranker 状态语义」一致）。
-  - **`contract_version` 语义**：运行级依赖契约快照标识（应用常量或配置注入，如 `mvp-1` / semver），须在本规格 **Version & Compatibility Policy** 与实现对齐；本条记录在 **`create_run` 时写入一次**，**`fail_run` / `complete_run` 不得改写该列**。
+  - **`contract_version` 语义**：运行级依赖契约快照标识（应用常量或配置注入，如 `mvp-1` / semver），须在本规格 **Version & Compatibility Policy** 与实现对齐；本条记录在 **`create_run` 时写入一次`，**`fail_run` / `complete_run` 不得改写该列**。
   - **`recommendation_item_id` 约束**：生成或写入推荐项快照前须校验 `recommendation_item_id` 不等于字面字符串 `'RUN'`（该取值保留给下游 `recommendation-feedback` 表示运行级反馈持久化哨兵，见 Requirement 7.6）；若冲突则视为内部错误并 fail closed。
   - 数据结构只保存上游标识、分值和轻量元数据，不保存完整问题原文、完整案例正文、向量数组或反馈结果。
   - 完成后测试数据库可以应用迁移，并通过运行标识查询推荐运行和排序项。
   - _Requirements: 2.5, 4.3, 4.5, 6.1, 6.2, 6.5, 7.6_
+  - **IMPLEMENTED**: `backend/app/retrieval/models.py` (RecommendationRun, RecommendationItemSnapshot ORM) + `backend/app/retrieval/schemas.py` (RecommendationRunCreate, RecommendationItemCreate, RecommendationRunRecord, RecommendationItemRecord, API schemas) + `backend/app/retrieval/repository.py` (RecommendationRepository: create_run, complete_run, fail_run, get_run, get_run_with_items, get_items_by_run, get_item_by_id, delete_run, delete_items_by_run, delete_items) + `backend/app/db/base.py` (retrieval_models 导入) + `alembic/versions/005_create_recommendation_runs_and_snapshots.py` (建表迁移, revision=005, down_revision=004)
 
 - [ ] 1.3 定义检索请求、过滤、候选和响应契约
   - 定义相似案例推荐请求、过滤条件、业务权重参数、`NormalizedRetrievalQuery`（含单次 LLM normalizer 产出的标准化检索文本与 `query_structured_suggestions`）、推荐运行状态、推荐项、降级状态和错误响应契约。

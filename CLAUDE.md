@@ -50,4 +50,4 @@ Adhere to a documentation-centric workflow to ensure consistency across the mono
 - CI integration is optional and not required by default at this stage.
 
 ## Testing
-- Run tests with `uv run pytest`. Do not invoke `pytest` or `python -m pytest` directly.
+- Before running tests, set the current working directory to `backend` (the directory that contains `pyproject.toml`), then run `uv run pytest`. Do not invoke `pytest` or `python -m pytest` directly.
