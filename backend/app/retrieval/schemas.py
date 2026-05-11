@@ -178,6 +178,9 @@ class CandidateSnapshot(BaseModel):
     tags: Optional[list[str]] = Field(default=None, description="标签列表")
     case_status: Optional[str] = Field(None, description="案例状态")
     case_updated_at: datetime = Field(..., description="案例更新时间")
+    missing_fields: list[str] = Field(
+        default_factory=list, description="候选缺失字段列表"
+    )
 
     model_config = ConfigDict(extra="forbid")
 
