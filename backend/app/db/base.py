@@ -14,5 +14,8 @@ from app.vector_indexing import models as vector_indexing_models  # noqa: F401
 # 导入检索推荐 ORM 模型，使其注册到 Base.metadata
 from app.retrieval import models as retrieval_models  # noqa: F401
 
+# 导入推荐反馈 ORM 模型，使其注册到 Base.metadata
+from app.feedback import models as feedback_models  # noqa: F401
+
 # 导出 Base 供其他模块使用
 __all__ = ["Base"]
