@@ -48,6 +48,3 @@ Adhere to a documentation-centric workflow to ensure consistency across the mono
   - `ruff check backend`
   - `python scripts/readability_check.py --path backend --max-lines 100`
 - CI integration is optional and not required by default at this stage.
-
-## Testing
-- Before running tests, set the current working directory to `backend` (the directory that contains `pyproject.toml`), then run `uv run pytest`. Do not invoke `pytest` or `python -m pytest` directly.
