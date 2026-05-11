@@ -2,7 +2,7 @@
 
 - [ ] 1. 建立检索推荐基础设施
 
-- [ ] 1.1 扩展推荐检索配置与错误码
+- [x] 1.1 扩展推荐检索配置与错误码
   - 增加相似案例推荐启用开关、Top-K 上限、向量候选上限、默认聚合权重、业务权重上限等通用项。
   - **复用 `llm-case-enrichment` 建立的多模型配置隔离基础设施**：使用 `NormalizerLLMConfig`（供 `QueryNormalizer` 使用）和 `RerankerConfig`（供 `RerankerClient` 使用），这两个配置类由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义。本规格只定义调用契约和配置命名空间，不拥有配置类定义或共享 `LLMClient` 实现。
   - 确保 `NormalizerLLMConfig` 和 `RerankerConfig` 通过依赖注入传递给各自的客户端，不与 `EnrichmentLLMConfig`、`EmbeddingConfig` 混用。
