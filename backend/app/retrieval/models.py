@@ -83,7 +83,7 @@ class RecommendationRun(Base):
     requested_top_k = Column(Integer, nullable=False)
     returned_count = Column(Integer, nullable=False)
     vector_candidate_count = Column(Integer, nullable=False)
-    status = Column(String(32), nullable=False, index=True)
+    status = Column(String(32), nullable=False)
     degraded_reason = Column(String(128), nullable=True)
     reranker_model_id = Column(String(128), nullable=False)
     reranker_status = Column(
