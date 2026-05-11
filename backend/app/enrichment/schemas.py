@@ -78,6 +78,7 @@ class RequestPurpose(StrEnum):
 
     CASE_ENRICHMENT = "case_enrichment"
     RECOMMENDATION_COPY = "recommendation_copy"
+    RETRIEVAL_QUERY_NORMALIZE = "retrieval_query_normalize"
 
 
 class SourceField(StrEnum):
