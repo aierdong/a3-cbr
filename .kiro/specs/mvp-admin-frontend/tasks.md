@@ -30,7 +30,7 @@
   - _Requirements: 6.1, 6.3_
   - _Boundary: package scripts, frontend/src/api/generated, CaseApiService, RecommendationApiService, FeedbackApiService_
 
-- [ ] 2. 实现案例管理页面
+- [x] 2. 实现案例管理页面
 - [x] 2.1 (P) 实现案例 API 契约映射
   - 定义案例列表项、案例详情、创建请求、编辑请求、分页响应和字段错误类型。
   - 封装创建、编辑、详情和列表查询调用，并统一使用通用错误模型。
@@ -46,22 +46,22 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.5_
   - _Boundary: CaseListPage, CaseFilterBar, CaseTable, useCases_
 
-- [ ] 2.3 实现案例详情页
+- [x] 2.3 实现案例详情页
   - 展示完整问题描述、场景上下文、根因分析、解决步骤、效果结果、标签和状态。
   - 排除向量数组、推荐运行、反馈表内部字段和后端诊断信息。
   - 完成后，用户从列表打开案例可看到完整基础字段并能返回列表。
   - _Requirements: 1.2, 2.4, 2.5_
   - _Boundary: CaseDetailPage, CaseDetailPanel, useCases_
 
-- [ ] 2.4 实现案例创建和编辑表单
+- [x] 2.4 实现案例创建和编辑表单
   - 支持录入问题描述、品牌信息、门店信息、问题类型、场景上下文、根因分析、解决步骤、效果结果和标签。
   - 编辑模式加载当前案例并阻止修改案例标识和创建时间。
   - 完成后，合法提交展示案例标识、状态和更新时间；字段错误展示在对应区域并保留可修改内容。
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
   - _Boundary: CaseCreatePage, CaseEditPage, CaseForm, useCases_
 
-- [ ] 3. 实现推荐检索与结果展示
-- [ ] 3.1 (P) 实现推荐 API 契约映射
+- [x] 3. 实现推荐检索与结果展示
+- [x] 3.1 (P) 实现推荐 API 契约映射
   - 定义推荐请求、过滤条件、推荐运行元数据、推荐项、分值、解释状态和降级状态类型。
   - 封装相似案例检索调用，并保持后端返回的推荐项顺序。
   - 完成后，推荐页面可以通过单一推荐服务消费检索推荐接口。
@@ -69,14 +69,14 @@
   - _Boundary: RecommendationApiService, ApiClient_
   - _Depends: 1.3_
 
-- [ ] 3.2 实现检索输入和过滤条件表单
+- [x] 3.2 实现检索输入和过滤条件表单
   - 支持当前问题文本、Top-K 参数和品牌、门店、问题类型、标签、案例状态、创建时间范围等过滤条件；不展示未列入上游契约的过滤字段。
   - 提交时展示加载状态，并在输入错误时显示字段级提示。
   - 完成后，用户可以提交一次完整检索请求并看到实际过滤条件回显。
   - _Requirements: 4.1, 4.2, 6.2_
   - _Boundary: RecommendationPage, RecommendationSearchForm, useRecommendations_
 
-- [ ] 3.3 实现推荐运行摘要和推荐项卡片
+- [x] 3.3 实现推荐运行摘要和推荐项卡片
   - 展示推荐运行标识、检索状态、候选数量、返回数量、降级原因和缺失字段提示。
   - 展示推荐项标识、案例标识、排序位置、案例引用、核心步骤、效果摘要、向量相似度、语义相似度、结构化相似度、业务参数分、最终聚合分、推荐理由、参考点、注意事项、来源引用、解释状态和 `missing_fields`。
   - 完成后，空结果、候选不足、重排降级和解释降级都能保留可用内容并清楚展示状态。
@@ -132,3 +132,5 @@
 
 - 任务 1.4：在 ESM 脚本中勿用 `createRequire(...).resolve('openapi-typescript/bin/cli.js')`（Node 可能解析到不存在的 `cli.mjs`）；应使用 `frontend/node_modules/openapi-typescript/bin/cli.js` 的绝对路径调用 CLI。
 - 任务 2.2：列表 GET 查询将 UI 的 `created_from`/`created_to` 映射为后端当前使用的 `created_after`/`created_before`；OpenAPI 列表项尚无 `tags` 字段时表格显示「—」，标签关键词在已加载结果上做本地筛选（含预览文本回退），待契约支持服务端标签筛选后应改为纯服务端查询。
+- 任务 2.3–2.4：当前 `CaseDetailResponse` / `CreateCaseRequest` / `UpdateCaseRequest` 在 OpenAPI 中无 `tags`；详情页与表单对标签作「—」与说明文案，待契约增加 `tags` 后再做字段映射与提交。
+- Vitest + jsdom：`type="submit"` 按钮的 `trigger('click')` 可能不触发表单 `submit` 事件；组件测试中对表单使用 `wrapper.find('form').trigger('submit')`。
