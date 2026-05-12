@@ -5,6 +5,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type {
   CaseApiService,
+  CaseDetailResponse,
   CaseListItem,
   CaseListQuery,
   PaginatedCaseListResponse,
@@ -163,5 +164,51 @@ export function useCaseList(caseApi: CaseApiService): UseCaseListReturn {
     loadMore,
     retryInitial,
     retryLoadMore,
+  }
+}
+
+/** 案例详情加载相（design § CaseDetailPanel / useCases） */
+export type CaseDetailPhase = 'idle' | 'loading' | 'success' | 'error'
+
+export interface UseCaseDetailReturn {
+  detail: Ref<CaseDetailResponse | null>
+  detailPhase: Ref<CaseDetailPhase>
+  detailError: Ref<ApiError | null>
+  loadDetail: (caseId: string) => Promise<void>
+  retryDetail: () => Promise<void>
+}
+
+export function useCaseDetail(caseApi: CaseApiService): UseCaseDetailReturn {
+  const detail = ref<CaseDetailResponse | null>(null)
+  const detailPhase = ref<CaseDetailPhase>('idle')
+  const detailError = ref<ApiError | null>(null)
+  const lastCaseId = ref<string | null>(null)
+
+  async function loadDetail(caseId: string): Promise<void> {
+    lastCaseId.value = caseId
+    detail.value = null
+    detailError.value = null
+    detailPhase.value = 'loading'
+    const res = await caseApi.detail(caseId)
+    if (!res.ok) {
+      detailError.value = res.error
+      detailPhase.value = 'error'
+      return
+    }
+    detail.value = res.data
+    detailPhase.value = 'success'
+  }
+
+  async function retryDetail(): Promise<void> {
+    const id = lastCaseId.value
+    if (id) await loadDetail(id)
+  }
+
+  return {
+    detail,
+    detailPhase,
+    detailError,
+    loadDetail,
+    retryDetail,
   }
 }

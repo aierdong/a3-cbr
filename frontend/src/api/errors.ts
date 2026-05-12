@@ -57,3 +57,14 @@ export interface BackendErrorResponse {
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiError };
+
+/**
+ * 将 API 返回的字段错误数组转为按路径索引的映射，供表单展示。
+ */
+export function apiFieldErrorsToMap(fields?: FieldError[]): Record<string, string> {
+  const m: Record<string, string> = {}
+  for (const f of fields ?? []) {
+    m[f.field] = f.message
+  }
+  return m
+}
