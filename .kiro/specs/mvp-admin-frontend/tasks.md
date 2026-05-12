@@ -39,7 +39,7 @@
   - _Boundary: CaseApiService, ApiClient_
   - _Depends: 1.3_
 
-- [ ] 2.2 实现案例列表、筛选和分页展示
+- [x] 2.2 实现案例列表、筛选和分页展示
   - 展示案例标识、问题描述预览、品牌、门店、问题类型、状态、标签、创建时间和更新时间。
   - 支持按品牌、门店、问题类型、标签、状态和创建时间范围提交筛选。
   - 完成后，列表空结果展示空状态和有效分页信息。
@@ -131,3 +131,4 @@
 ## Implementation Notes
 
 - 任务 1.4：在 ESM 脚本中勿用 `createRequire(...).resolve('openapi-typescript/bin/cli.js')`（Node 可能解析到不存在的 `cli.mjs`）；应使用 `frontend/node_modules/openapi-typescript/bin/cli.js` 的绝对路径调用 CLI。
+- 任务 2.2：列表 GET 查询将 UI 的 `created_from`/`created_to` 映射为后端当前使用的 `created_after`/`created_before`；OpenAPI 列表项尚无 `tags` 字段时表格显示「—」，标签关键词在已加载结果上做本地筛选（含预览文本回退），待契约支持服务端标签筛选后应改为纯服务端查询。
