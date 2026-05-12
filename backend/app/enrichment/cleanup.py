@@ -48,7 +48,7 @@ class EnrichmentCleanupConfig(BaseModel):
 
 
 def load_cleanup_config(
-    config_path: str = "backend/config/cleanup.yaml",
+    config_path: str = "config/cleanup.yaml",
 ) -> EnrichmentCleanupConfig:
     """从 YAML 文件加载清理配置。
 

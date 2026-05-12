@@ -30,7 +30,7 @@ class FeedbackCleanupConfig(BaseModel):
 
 
 def load_feedback_cleanup_config(
-    config_path: str = "backend/config/cleanup.yaml",
+    config_path: str = "config/cleanup.yaml",
 ) -> FeedbackCleanupConfig:
     """从 ``cleanup.yaml`` 读取 ``feedback_cleanup`` 段，缺失则用默认值。"""
     path = Path(config_path)
