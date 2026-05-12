@@ -2,15 +2,19 @@
 
 负责从环境变量读取数据库连接和应用运行配置。
 """
-import os
 from functools import lru_cache
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """应用配置类，从环境变量加载。."""
+    """应用配置类，从环境变量与可选的 .env 文件加载。
+
+    数据库与应用基础项在模块导入时实例化 ``settings``；
+    ``load_app_config`` 每次调用会再构造 ``Settings()``，
+    以便测试与运行时可响应环境变量变化。
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -29,6 +33,67 @@ class Settings(BaseSettings):
 
     # Alembic 迁移配置
     alembic_database_url: str = "postgresql://postgres:postgres@localhost:5432/a3_cases"
+
+    # --- 案例富化 LLM ---
+    enrichment_llm_apikey: str = ""
+    enrichment_llm_model_id: str = "deepseek-v4-flash"
+    enrichment_llm_base_url: str = "https://api.deepseek.com/v2"
+    enrichment_llm_timeout_ms: int = 30000
+    enrichment_llm_max_retries: int = 2
+    enrichment_llm_privacy_acknowledged: bool = False
+
+    # --- 查询规范化 LLM ---
+    normalizer_llm_apikey: str = ""
+    normalizer_llm_model_id: str = "deepseek-v4-flash"
+    normalizer_llm_base_url: str = "https://api.deepseek.com/v2"
+    normalizer_llm_timeout_ms: int = 30000
+    normalizer_llm_max_retries: int = 2
+
+    # --- 向量嵌入 ---
+    embedding_apikey: str = ""
+    embedding_model_id: str = "bge-large-zh"
+    embedding_base_url: str = "https://qianfan.baidubce.com/v2"
+    embedding_timeout_ms: int = 60000
+    embedding_max_retries: int = 3
+    embedding_vector_dimension: int = 1024
+    embedding_pgvector_min_version: str = "0.8.2"
+    embedding_privacy_acknowledged: bool = False
+    embedding_index_timeout_ms: int = 30000
+    embedding_index_max_retries: int = 2
+    embedding_search_timeout_ms: int = 5000
+    embedding_search_max_retries: int = 0
+    vector_cleanup_interval_seconds: int = 86400
+
+    # --- Reranker ---
+    reranker_apikey: str = ""
+    reranker_model_id: str = "qwen3-reranker-8b"
+    reranker_base_url: str = "https://qianfan.baidubce.com/v2"
+    reranker_timeout_ms: int = 45000
+    reranker_max_retries: int = 2
+
+    # --- 检索推荐与推荐反馈 ---
+    max_recommendation_candidates: int = 10
+    retrieval_enabled: bool = True
+    retrieval_max_top_k: int = 20
+    retrieval_max_vector_candidates: int = 50
+    feedback_enabled: bool = True
+    feedback_comment_max_length: int = 2000
+    feedback_stats_default_range_days: int = 30
+
+    @field_validator(
+        "enrichment_llm_privacy_acknowledged",
+        "embedding_privacy_acknowledged",
+        "retrieval_enabled",
+        "feedback_enabled",
+        "app_debug",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_env_bool(cls, value: object) -> object:
+        """与历史 os.environ 布尔解析一致：true / 1 / yes（大小写不敏感）。"""
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes")
+        return value
 
 
 settings = Settings()
@@ -178,9 +243,12 @@ class AppConfig(BaseModel):
 
 
 def load_app_config() -> AppConfig:
-    """从环境变量构造 AppConfig。
+    """从环境变量与 .env 构造 AppConfig（与 ``Settings`` 同源）。
 
-    环境变量命名约定：
+    每次调用新建 ``Settings()``，以便在测试中通过 ``monkeypatch`` 修改环境变量后
+    与 ``get_app_config.cache_clear()`` 组合可得到最新配置。
+
+    环境变量命名约定（与字段名对应，不区分大小写）：
         ENRICHMENT_LLM_APIKEY, ENRICHMENT_LLM_MODEL_ID, ...
         NORMALIZER_LLM_APIKEY, NORMALIZER_LLM_MODEL_ID, ...
         EMBEDDING_APIKEY, EMBEDDING_MODEL_ID, ...
@@ -188,65 +256,47 @@ def load_app_config() -> AppConfig:
         MAX_RECOMMENDATION_CANDIDATES
         FEEDBACK_ENABLED, FEEDBACK_COMMENT_MAX_LENGTH, FEEDBACK_STATS_DEFAULT_RANGE_DAYS
     """
-
-    def _env(name: str, default: str = "") -> str:
-        return os.environ.get(name, default)
-
-    def _int_env(name: str, default: int) -> int:
-        raw = os.environ.get(name)
-        return int(raw) if raw is not None else default
-
-    def _bool_env(name: str, default: bool) -> bool:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        return raw.lower() in ("true", "1", "yes")
+    s = Settings()
 
     enrichment_llm = EnrichmentLLMConfig(
-        api_key=_env("ENRICHMENT_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
-        model_id=_env("ENRICHMENT_LLM_MODEL_ID", "deepseek-v4-flash"),
-        base_url=_env("ENRICHMENT_LLM_BASE_URL", "https://api.deepseek.com/v2"),
-        timeout_ms=_int_env("ENRICHMENT_LLM_TIMEOUT_MS", 30000),
-        max_retries=_int_env("ENRICHMENT_LLM_MAX_RETRIES", 2),
-        privacy_acknowledged=_bool_env("ENRICHMENT_LLM_PRIVACY_ACKNOWLEDGED", False),
+        api_key=s.enrichment_llm_apikey,
+        model_id=s.enrichment_llm_model_id,
+        base_url=s.enrichment_llm_base_url,
+        timeout_ms=s.enrichment_llm_timeout_ms,
+        max_retries=s.enrichment_llm_max_retries,
+        privacy_acknowledged=s.enrichment_llm_privacy_acknowledged,
     )
 
     normalizer_llm = NormalizerLLMConfig(
-        api_key=_env("NORMALIZER_LLM_APIKEY", "sk-8b463750264e4d21b6265279baad9aba"),
-        model_id=_env("NORMALIZER_LLM_MODEL_ID", "deepseek-v4-flash"),
-        base_url=_env("NORMALIZER_LLM_BASE_URL", "https://api.deepseek.com/v2"),
-        timeout_ms=_int_env("NORMALIZER_LLM_TIMEOUT_MS", 30000),
-        max_retries=_int_env("NORMALIZER_LLM_MAX_RETRIES", 2),
+        api_key=s.normalizer_llm_apikey,
+        model_id=s.normalizer_llm_model_id,
+        base_url=s.normalizer_llm_base_url,
+        timeout_ms=s.normalizer_llm_timeout_ms,
+        max_retries=s.normalizer_llm_max_retries,
     )
 
     embedding = EmbeddingConfig(
-        api_key=_env(
-            "EMBEDDING_APIKEY",
-            "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0",
-        ),
-        model_id=_env("EMBEDDING_MODEL_ID", "bge-large-zh"),
-        base_url=_env("EMBEDDING_BASE_URL", "https://qianfan.baidubce.com/v2"),
-        timeout_ms=_int_env("EMBEDDING_TIMEOUT_MS", 60000),
-        max_retries=_int_env("EMBEDDING_MAX_RETRIES", 3),
-        vector_dimension=_int_env("EMBEDDING_VECTOR_DIMENSION", 1024),
-        pgvector_min_version=_env("EMBEDDING_PGVECTOR_MIN_VERSION", "0.8.2"),
-        privacy_acknowledged=_bool_env("EMBEDDING_PRIVACY_ACKNOWLEDGED", False),
-        index_timeout_ms=_int_env("EMBEDDING_INDEX_TIMEOUT_MS", 30000),
-        index_max_retries=_int_env("EMBEDDING_INDEX_MAX_RETRIES", 2),
-        search_timeout_ms=_int_env("EMBEDDING_SEARCH_TIMEOUT_MS", 5000),
-        search_max_retries=_int_env("EMBEDDING_SEARCH_MAX_RETRIES", 0),
-        vector_cleanup_interval_seconds=_int_env("VECTOR_CLEANUP_INTERVAL_SECONDS", 86400),
+        api_key=s.embedding_apikey,
+        model_id=s.embedding_model_id,
+        base_url=s.embedding_base_url,
+        timeout_ms=s.embedding_timeout_ms,
+        max_retries=s.embedding_max_retries,
+        vector_dimension=s.embedding_vector_dimension,
+        pgvector_min_version=s.embedding_pgvector_min_version,
+        privacy_acknowledged=s.embedding_privacy_acknowledged,
+        index_timeout_ms=s.embedding_index_timeout_ms,
+        index_max_retries=s.embedding_index_max_retries,
+        search_timeout_ms=s.embedding_search_timeout_ms,
+        search_max_retries=s.embedding_search_max_retries,
+        vector_cleanup_interval_seconds=s.vector_cleanup_interval_seconds,
     )
 
     reranker = RerankerConfig(
-        api_key=_env(
-            "RERANKER_APIKEY",
-            "bce-v3/ALTAK-tgcGXYeI49tASPCrdhCto/d0727a02df3238fc4f7c79bab603a1b5fba3dec0",
-        ),
-        model_id=_env("RERANKER_MODEL_ID", "qwen3-reranker-8b"),
-        base_url=_env("RERANKER_BASE_URL", "https://qianfan.baidubce.com/v2"),
-        timeout_ms=_int_env("RERANKER_TIMEOUT_MS", 45000),
-        max_retries=_int_env("RERANKER_MAX_RETRIES", 2),
+        api_key=s.reranker_apikey,
+        model_id=s.reranker_model_id,
+        base_url=s.reranker_base_url,
+        timeout_ms=s.reranker_timeout_ms,
+        max_retries=s.reranker_max_retries,
     )
 
     return AppConfig(
@@ -254,11 +304,10 @@ def load_app_config() -> AppConfig:
         normalizer_llm=normalizer_llm,
         embedding=embedding,
         reranker=reranker,
-        max_recommendation_candidates=_int_env("MAX_RECOMMENDATION_CANDIDATES", 10),
-        # --- cbr-retrieval-recommendation 配置 ---
-        retrieval_enabled=_bool_env("RETRIEVAL_ENABLED", True),
-        max_top_k=_int_env("RETRIEVAL_MAX_TOP_K", 20),
-        max_vector_candidates=_int_env("RETRIEVAL_MAX_VECTOR_CANDIDATES", 50),
+        max_recommendation_candidates=s.max_recommendation_candidates,
+        retrieval_enabled=s.retrieval_enabled,
+        max_top_k=s.retrieval_max_top_k,
+        max_vector_candidates=s.retrieval_max_vector_candidates,
         default_score_weights={
             "vector": 0.3,
             "semantic": 0.3,
@@ -268,9 +317,9 @@ def load_app_config() -> AppConfig:
         max_business_weight=1.0,
         contract_version="mvp-1",
         feedback=FeedbackConfig(
-            enabled=_bool_env("FEEDBACK_ENABLED", True),
-            comment_max_length=_int_env("FEEDBACK_COMMENT_MAX_LENGTH", 2000),
-            stats_default_range_days=_int_env("FEEDBACK_STATS_DEFAULT_RANGE_DAYS", 30),
+            enabled=s.feedback_enabled,
+            comment_max_length=s.feedback_comment_max_length,
+            stats_default_range_days=s.feedback_stats_default_range_days,
         ),
     )
 
