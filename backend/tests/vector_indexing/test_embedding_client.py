@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import openai
 import pytest
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.config import EmbeddingConfig
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_client import EmbeddingClient

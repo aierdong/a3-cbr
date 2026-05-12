@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from app.common.llm_client import LLMClientError
+    from app.core.llm_client import LLMClientError
     from app.enrichment.validators import OutputValidationException
 
 logger = logging.getLogger(__name__)
@@ -222,7 +222,7 @@ class ErrorMapper:
         Returns:
             HTTPException: 包含统一错误响应结构的 HTTP 异常。
         """
-        from app.common.llm_client import LLMClientError
+        from app.core.llm_client import LLMClientError
         from app.enrichment.validators import OutputValidationException
 
         if isinstance(exc, LLMClientError):

@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.common.llm_client import LLMClient, LLMClientError
+from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import NormalizerLLMConfig
 from app.core.errors import ErrorCode
 from app.enrichment.schemas import LLMCompletionRequest, RequestPurpose, TaskType

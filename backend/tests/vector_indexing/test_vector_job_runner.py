@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_input_composer import EmbeddingInputComposer
 from app.vector_indexing.embedding_input_models import (

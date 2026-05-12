@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.errors import ErrorCode
 from app.vector_indexing.embedding_client import EmbeddingClient
 from app.vector_indexing.job_runner import embedding_failure_retryable

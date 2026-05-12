@@ -25,7 +25,7 @@
   "implementation_prerequisites": [
     "建立 FastAPI 项目脚手架（backend/app/main.py）",
     "配置统一配置管理（backend/app/core/config.py）",
-    "实现共享 LLM 客户端（backend/app/common/llm_client.py）",
+    "实现共享 LLM 客户端（backend/app/core/llm_client.py）",
     "建立数据库基础设施（backend/app/db/）",
     "配置统一错误处理（backend/app/core/errors.py）"
   ]

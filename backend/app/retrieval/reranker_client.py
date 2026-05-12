@@ -19,7 +19,7 @@ from typing import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.common.llm_client import LLMClientError, RerankerClient as SharedRerankerClient
+from app.core.llm_client import LLMClientError, RerankerClient as SharedRerankerClient
 from app.core.config import RerankerConfig
 from app.core.errors import ErrorCode
 
@@ -112,7 +112,7 @@ class RerankerClient:
     4. 配置缺失时 fail-closed
     5. 记录调用耗时元数据
 
-    使用共享 LLMClient 的 RerankerClient（位于 app.common.llm_client.py）。
+    使用共享 LLMClient 的 RerankerClient（位于 app.core.llm_client.py）。
     """
 
     def __init__(

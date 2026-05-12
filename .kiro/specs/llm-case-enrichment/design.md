@@ -125,7 +125,7 @@
 2. **可并行推进**：以下模块不依赖上游实现，可与 `a3-case-management` 并行开发：
    - `backend/app/core/config.py` 中的模型配置类定义（见 §4.4 "多模型配置策略"）。
    - `backend/app/core/errors.py` 中的错误码映射。
-   - `backend/app/common/llm_client.py` 中的共享 LLM 客户端（使用 mock/fake HTTP 响应测试）。
+   - `backend/app/core/llm_client.py` 中的共享 LLM 客户端（使用 mock/fake HTTP 响应测试）。
    - `EnrichmentSchemas`、`OutputValidator`、`PromptCatalog` 的单元测试。
 
 ### Revalidation Triggers
@@ -196,8 +196,7 @@ backend/
 ├── app/
 │   ├── core/
 │   │   ├── config.py                         # 增加 LLM 供应商、模型、超时、隐私配置
-│   │   └── errors.py                         # 增加 LLM 增强错误码映射；ErrorMapper 统一错误响应逻辑亦在此文件
-│   ├── common/
+│   │   ├── errors.py                         # 增加 LLM 增强错误码映射；ErrorMapper 统一错误响应逻辑亦在此文件
 │   │   └── llm_client.py                     # 共享 LLM 客户端：HTTP 调用、重试、超时、错误映射等基础设施
 │   ├── cases/
 │   │   └── service.py                        # 被 CaseSnapshotProvider 读取案例详情
@@ -234,7 +233,7 @@ backend/
 - `backend/app/main.py` — 只追加注册 `EnrichmentRouter` 和 `EnrichmentCleanupService`（与 `docs/cascade-deletion-design.md` §4.3 对齐），不改应用入口基础实现。
 - `backend/app/core/config.py` — 只追加 LLM、Embedding、Reranker 三类模型各自的开关、供应商、模型、base_url、超时、重试、数据保留确认等配置项；新增全局共享配置 `max_recommendation_candidates`（供本规格与 `cbr-retrieval-recommendation` 共同引用）；不接管共享配置基础设施。
 - `backend/app/core/errors.py` — 只追加 `ENRICHMENT_*`、`LLM_*` 错误码映射，不接管 `ErrorMapper` 基础实现。
-- `backend/app/common/llm_client.py` — 共享 LLM 客户端基础设施，供本规格和 `cbr-retrieval-recommendation` 共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
+- `backend/app/core/llm_client.py` — 共享 LLM 客户端基础设施，供本规格和 `cbr-retrieval-recommendation` 共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
 - `backend/app/db/base.py` — 只追加 enrichment ORM metadata 导入，不接管数据库基础设施。
 - `backend/app/cases/service.py` — 不改案例契约，仅供 `CaseSnapshotProvider` 读详情。
 - `backend/config/cleanup.yaml` — 新增清理服务配置文件（与 `docs/cascade-deletion-design.md` §4.2 对齐），定义 `enrichment_cleanup` 配置段（`enabled`、`interval_seconds`、`batch_size`）。
@@ -519,7 +518,7 @@ class CaseSnapshotProvider:
 
 **实现方式与职责边界**
 
-- **共享实现**：`LLMClient` 位于 `backend/app/common/llm_client.py`，供 `llm-case-enrichment` 和 `cbr-retrieval-recommendation` 共同使用。
+- **共享实现**：`LLMClient` 位于 `backend/app/core/llm_client.py`，供 `llm-case-enrichment` 和 `cbr-retrieval-recommendation` 共同使用。
 - **配置独立**：本规格使用独立的「LLM enrichment」配置段（`api_key`、`model`、`base_url`、`timeout`、`privacy_acknowledged`），与 `cbr-retrieval-recommendation` 的「LLM normalizer」配置、embedding、reranker 配置彼此独立。配置通过依赖注入或配置命名空间传递给共享客户端（详见下文「多模型配置隔离策略」）。
 - **共享客户端职责**：HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
 - **本规格职责**：定义案例增强和推荐文案的 prompt 模板、输入输出 schema、结果校验逻辑；生产环境须确认供应商数据保留策略；**建立多模型配置隔离基础设施**（作为首个使用 LLM 的规格）。
@@ -534,7 +533,7 @@ class LLMClient:
 - 前置条件：LLM 配置中的 `api_key`、`model`、`base_url`、`timeout`、`privacy_acknowledged` 已配置；生产环境须确认供应商数据保留策略。Embedding 与 Reranker 由各自独立配置管理，不复用 LLM 接入参数。
 - 错误：`LLM_TIMEOUT`、`LLM_RATE_LIMITED`、`LLM_PROVIDER_ERROR`、`LLM_PRIVACY_CONFIG_MISSING`、`LLM_INVALID_RESPONSE`。
 - 日志：记供应商、模型、任务类型、状态与错误类型；不记完整案例正文。
-- **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/common/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
+- **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/core/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
 
 #### 多模型配置策略（本规格建立基础设施）
 
@@ -650,7 +649,7 @@ class LLMClient:
         assert response.status_code == 200
     ```
 
-3. **共享 LLMClient 的配置支持**（`backend/app/common/llm_client.py`）：
+3. **共享 LLMClient 的配置支持**（`backend/app/core/llm_client.py`）：
   ```python
    from typing import Union
 

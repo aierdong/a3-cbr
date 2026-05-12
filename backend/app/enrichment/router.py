@@ -54,7 +54,7 @@ def get_enrichment_job_runner(
     Returns:
         EnrichmentJobRunner: 增强运行生命周期管理器
     """
-    from app.common.llm_client import LLMClient
+    from app.core.llm_client import LLMClient
     from app.core.config import get_app_config
     from app.enrichment.case_snapshot import CaseSnapshotProvider
     from app.enrichment.jobs import EnrichmentJobRunner
@@ -109,7 +109,7 @@ def get_enrichment_service(
     Returns:
         EnrichmentService: 增强服务实例
     """
-    from app.common.llm_client import LLMClient
+    from app.core.llm_client import LLMClient
     from app.core.config import get_app_config
     from app.enrichment.prompts import PromptCatalog
     from app.enrichment.repository import EnrichmentRepository
@@ -146,7 +146,7 @@ def get_recommendation_copy_service(
     Returns:
         RecommendationCopyService: 推荐文案服务实例
     """
-    from app.common.llm_client import LLMClient
+    from app.core.llm_client import LLMClient
     from app.core.config import get_app_config
     from app.enrichment.prompts import PromptCatalog
     from app.enrichment.recommendation_copy import RecommendationCopyService

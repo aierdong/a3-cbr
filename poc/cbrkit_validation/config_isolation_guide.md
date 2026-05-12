@@ -127,7 +127,7 @@ RETRIEVAL__RERANKER__PRIVACY_ACKNOWLEDGED=true
 # backend/app/retrieval/service.py
 
 from app.core.config import settings
-from app.common.llm_client import LLMClient
+from app.core.llm_client import LLMClient
 
 
 class RecommendationService:
@@ -150,10 +150,10 @@ class RecommendationService:
 
 ### 4. 共享 LLM 客户端的配置隔离
 
-`backend/app/common/llm_client.py` 应支持配置命名空间：
+`backend/app/core/llm_client.py` 应支持配置命名空间：
 
 ```python
-# backend/app/common/llm_client.py
+# backend/app/core/llm_client.py
 
 from typing import Union
 from app.core.config import NormalizerLLMConfig, EmbeddingConfig, RerankerConfig

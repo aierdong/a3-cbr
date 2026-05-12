@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cases.repository import CaseRepository
 from app.cases.service import CaseService
 from app.cases.validators import CaseValidator
-from app.common.llm_client import LLMClient
+from app.core.llm_client import LLMClient
 from app.core.config import get_app_config
 from app.core.errors import (
     ErrorCode,

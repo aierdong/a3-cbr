@@ -31,7 +31,7 @@
 - [x] 2. 实现查询、向量候选消费和候选准备
 
 - [x] 2.1 实现 QueryNormalizer、过滤和业务权重校验
-  - 实现 **`QueryNormalizer`**：校验当前问题文本、Top-K、时间范围、过滤字段格式和业务权重范围；通过**共享 `LLMClient`**（位于 `backend/app/common/llm_client.py`，由 `llm-case-enrichment` 规格建立）执行单次 LLM normalizer 外呼，传入 `NormalizerLLMConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
+  - 实现 **`QueryNormalizer`**：校验当前问题文本、Top-K、时间范围、过滤字段格式和业务权重范围；通过**共享 `LLMClient`**（位于 `backend/app/core/llm_client.py`，由 `llm-case-enrichment` 规格建立）执行单次 LLM normalizer 外呼，传入 `NormalizerLLMConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
   - 单次 LLM normalizer 外呼返回可被 schema 校验的结构化结果，包含标准化检索文本与 `query_structured_suggestions`；失败路径严格执行 Requirement `1.7`（fail closed，不得用原始 `query_text` 兜底检索）。
   - 将品牌、门店、问题类型、标签、状态和创建时间范围映射为推荐流程可消费的硬过滤条件；对未列入上游契约的过滤字段返回字段级错误。
   - 完成后非法请求在调用向量搜索端口前返回字段级错误；合法请求产出 `NormalizedRetrievalQuery`（含同窗结构化画像），并回显规范化过滤条件与有效业务权重。
@@ -58,7 +58,7 @@
 - [x] 3. 实现分值聚合、重排和解释
 
 - [x] 3.1 (P) 实现远程 reranker 适配
-  - 接入默认 model `qwen3-reranker-8b`（可配置 api_key/base_url），通过**共享 `LLMClient`**（位于 `backend/app/common/llm_client.py`）或独立 HTTP 客户端执行重排调用，传入 `RerankerConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
+  - 接入默认 model `qwen3-reranker-8b`（可配置 api_key/base_url），通过**共享 `LLMClient`**（位于 `backend/app/core/llm_client.py`）或独立 HTTP 客户端执行重排调用，传入 `RerankerConfig` 配置对象（由 `llm-case-enrichment` 规格在 `backend/app/core/config.py` 中定义）。
   - 提交标准化查询和候选问题画像文档并接收每个候选的纯语义相关性分值。
   - 统一处理超时、限流、供应商失败、配置缺失和不可解析响应。
   - 完成后成功响应返回可排序语义分值，失败响应返回稳定错误和耗时元数据。

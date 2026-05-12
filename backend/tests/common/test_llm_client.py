@@ -9,7 +9,7 @@ import httpx
 import openai
 import pytest
 
-from app.common.llm_client import (
+from app.core.llm_client import (
     EmbeddingClient,
     LLMClient,
     LLMClientError,

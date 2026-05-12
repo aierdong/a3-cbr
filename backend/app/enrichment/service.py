@@ -13,7 +13,7 @@ import logging
 import uuid
 from typing import Optional
 
-from app.common.llm_client import LLMClient, LLMClientError
+from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import EnrichmentLLMConfig
 from app.core.errors import ErrorCode
 from app.enrichment.models import CaseEnrichmentResult

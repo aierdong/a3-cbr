@@ -1119,7 +1119,7 @@ class TestQueryNormalizerContract:
     async def test_normalizer_response_contains_required_fields(self):
         """LLM normalizer 响应必须包含 normalized_query_text 和 query_structured_suggestions。"""
         from app.retrieval.query import QueryNormalizer
-        from app.common.llm_client import LLMClient
+        from app.core.llm_client import LLMClient
 
         completion = _stub_normalizer_completion(
             normalized_text="门店客户投诉处理方法",
@@ -1167,7 +1167,7 @@ class TestQueryNormalizerContract:
     async def test_normalizer_failure_raises_specific_error_not_fallback(self):
         """LLM normalizer 失败时抛出特定异常，不使用原始 query_text 兜底。"""
         from app.retrieval.query import NormalizerTimeout, QueryNormalizer
-        from app.common.llm_client import LLMClient
+        from app.core.llm_client import LLMClient
         import openai
 
         async def raise_timeout(**kwargs):
@@ -1190,7 +1190,7 @@ class TestQueryNormalizerContract:
     async def test_normalizer_invalid_json_raises_specific_error(self):
         """LLM normalizer 返回无效 JSON 时抛出 NormalizerInvalidResponse。"""
         from app.retrieval.query import NormalizerInvalidResponse, QueryNormalizer
-        from app.common.llm_client import LLMClient
+        from app.core.llm_client import LLMClient
 
         bad_comp = SimpleNamespace(
             choices=[

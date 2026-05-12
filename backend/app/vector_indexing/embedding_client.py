@@ -9,7 +9,7 @@ from typing import Literal
 import openai
 from openai import AsyncOpenAI
 
-from app.common.llm_client import LLMClientError, _normalize_openai_base_url
+from app.core.llm_client import LLMClientError, _normalize_openai_base_url
 from app.core.config import EmbeddingConfig
 from app.core.errors import ErrorCode
 from app.vector_indexing.schemas import EmbeddingRequest, EmbeddingResult

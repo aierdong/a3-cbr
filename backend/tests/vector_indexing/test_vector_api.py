@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.errors import ErrorCode
 from app.main import app
 from app.vector_indexing.schemas import (

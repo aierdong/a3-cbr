@@ -21,7 +21,7 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.common.llm_client import LLMClient, LLMClientError
+from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import (
     AppConfig,
     EmbeddingConfig,
@@ -835,7 +835,7 @@ class TestPrivacyAndSecurity:
         )
 
         # 捕获日志
-        with patch("app.common.llm_client.logger") as mock_logger:
+        with patch("app.core.llm_client.logger") as mock_logger:
             # 调用 _log_call（不实际发送 HTTP 请求）
             client._log_call(request, status="success", attempt=1)
 

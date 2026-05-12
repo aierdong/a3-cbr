@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.common.llm_client import LLMClient
+from app.core.llm_client import LLMClient
 from app.core.config import NormalizerLLMConfig, RetrievalConfig, RerankerConfig
 from app.retrieval.query import (
     NormalizerConfigMissing,
@@ -29,7 +29,7 @@ from app.retrieval.query import (
     NormalizerTimeout,
     QueryNormalizer,
 )
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.retrieval.repository import RecommendationRepository
 from app.retrieval.schemas import (
     NormalizedRetrievalQuery,

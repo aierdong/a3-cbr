@@ -12,7 +12,7 @@ Boundary: ErrorMapper
 
 import pytest
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.errors import ErrorCode, ErrorMapper, ErrorResponse
 from app.enrichment.validators import OutputValidationException, ValidationErrorCode
 

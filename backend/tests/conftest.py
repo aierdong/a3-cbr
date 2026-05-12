@@ -117,7 +117,7 @@ async def mock_external_apis():
         latency_ms=150,
     )
 
-    with patch("app.common.llm_client.LLMClient.complete_json", new=AsyncMock(return_value=mock_llm_result)):
+    with patch("app.core.llm_client.LLMClient.complete_json", new=AsyncMock(return_value=mock_llm_result)):
         with patch("app.vector_indexing.embedding_client.EmbeddingClient.embed_for_query", new=AsyncMock(return_value=mock_embedding_result)):
             with patch("app.retrieval.reranker_client.RerankerClient.rerank", new=AsyncMock(return_value=mock_rerank_result)):
                 yield

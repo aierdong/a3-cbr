@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.common.llm_client import LLMClientError
+from app.core.llm_client import LLMClientError
 from app.core.config import EnrichmentLLMConfig
 from app.core.errors import ErrorCode
 from app.enrichment.case_snapshot import (

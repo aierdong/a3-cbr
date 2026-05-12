@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from app.common.llm_client import LLMClient, LLMClientError
+from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import NormalizerLLMConfig, RerankerConfig
 from app.core.errors import ErrorCode
 from app.retrieval.query import (

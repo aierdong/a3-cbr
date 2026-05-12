@@ -95,11 +95,11 @@
 
 #### Query Normalizer LLM 调用（使用共享 LLM 客户端）
 
-- **实现方式**：`QueryNormalizer` 通过 `backend/app/common/llm_client.py` 提供的共享 `LLMClient` 类执行 LLM 外呼。
+- **实现方式**：`QueryNormalizer` 通过 `backend/app/core/llm_client.py` 提供的共享 `LLMClient` 类执行 LLM 外呼。
 - **配置独立**：仅绑定「LLM normalizer」配置段（`api_key` / `model_id` / `base_url` / timeout / retry 等），与 `llm-case-enrichment` 的文案 LLM、embedding、reranker 三套配置彼此独立。**多模型配置隔离基础设施由 `llm-case-enrichment` 规格建立**（详见该规格的「多模型配置隔离策略」章节），本规格复用该基础设施并使用 `NormalizerLLMConfig` 配置类。
 - **共享客户端职责**：HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
 - **本规格职责**：定义 LLM normalizer 的 prompt 模板、输入输出 schema、结果校验逻辑；单次外呼返回可被 Pydantic 校验的结构化结果，包含标准化检索文本与 `query_structured_suggestions`；失败语义对齐 Requirement `1.7` / Failure Mode Matrix 中 LLM normalizer 失败路径。
-- **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/common/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
+- **边界说明**：共享 `LLMClient` 的实现细节（如 HTTP 库选型、重试算法）由 `backend/app/core/` 模块拥有；本规格只定义调用契约和配置命名空间，不拥有客户端实现。
 
 #### Version & Compatibility Policy
 
@@ -129,7 +129,7 @@
 **实施前提（由前置规格提供，必然就绪）**:
 - FastAPI 项目脚手架（应用入口、路由注册、中间件）
 - 统一配置管理（`backend/app/core/config.py`）
-- 共享 LLM 客户端基础设施（`backend/app/common/llm_client.py`）
+- 共享 LLM 客户端基础设施（`backend/app/core/llm_client.py`）
 - 数据库连接池与会话管理（`backend/app/db/`）
 - 统一错误映射与响应格式（`backend/app/core/errors.py`）
 - Alembic 迁移框架配置
@@ -189,8 +189,7 @@ backend/
 ├── app/
 │   ├── core/
 │   │   ├── config.py                         # 增加 retrieval、ScoreAggregator、LLM normalizer/reranker/embedding 独立配置、Top-K、超时、重试和隐私配置
-│   │   └── errors.py                         # 增加 RETRIEVAL_*、RERANKER_*、AGGREGATION_* 错误码
-│   ├── common/
+│   │   ├── errors.py                         # 增加 RETRIEVAL_*、RERANKER_*、AGGREGATION_* 错误码
 │   │   └── llm_client.py                     # 共享 LLM 客户端：HTTP 调用、重试、超时、错误映射等基础设施
 │   ├── db/
 │   │   └── base.py                           # 纳入 retrieval ORM metadata
@@ -234,7 +233,7 @@ backend/
 - `backend/app/main.py` — 仅追加注册 `RetrievalRouter`，不改写应用入口基础实现。
 - `backend/app/core/config.py` — 仅追加推荐检索开关、Top-K 上限、默认聚合权重，以及 `NormalizerLLMConfig` 和 `RerankerConfig` 配置类（复用 `llm-case-enrichment` 建立的多模型配置隔离基础设施）；不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加检索推荐、分值聚合和 reranker 错误码映射，不拥有 `ErrorMapper` 基础实现。
-- `backend/app/common/llm_client.py` — 共享 LLM 客户端基础设施，供 `llm-case-enrichment` 和本规格共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
+- `backend/app/core/llm_client.py` — 共享 LLM 客户端基础设施，供 `llm-case-enrichment` 和本规格共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
 - `backend/app/db/base.py` — 仅追加导入 `retrieval` ORM metadata，不拥有数据库基础设施。
 - `backend/app/vector_indexing/search.py` — 不改变向量搜索契约，仅供 `VectorSearchPort` 调用。
 - `backend/app/enrichment/recommendation_copy.py` — 不改变文案契约，仅供 `RecommendationExplainer` 调用。
@@ -835,7 +834,7 @@ class QueryNormalizer:
 
 - **前置条件**：请求已通过 `RetrievalRouter` 层 schema 校验（`query_text` 非空、`top_k` 在范围内、`filters` 与 `business_weights` 格式合法）；调用本方法前，`RecommendationRepository.create_run` 已成功返回 `recommendation_run_id`。
 - 校验 `query_text` 非空、`top_k` 在配置范围内。
-- **LLM normalizer（单次外呼）**：经 **`backend/app/common/llm_client.py`** 中的共享 `LLMClient` 调用，注入本规格「LLM normalizer」配置段（与 `llm-case-enrichment` 文案 LLM 配置隔离）。单次响应须同时给出：（1）向量搜索与 reranker 所用的标准化/摘要查询文本，写入 `NormalizedRetrievalQuery`；（2）与上述查询文本同窗绑定的查询侧结构化画像 `query_structured_suggestions`，供后续结构化局部相似度使用（MVP 可不纳入评分）。**禁止**拆成两次 LLM 调用分别生成摘要与结构化画像。
+- **LLM normalizer（单次外呼）**：经 **`backend/app/core/llm_client.py`** 中的共享 `LLMClient` 调用，注入本规格「LLM normalizer」配置段（与 `llm-case-enrichment` 文案 LLM 配置隔离）。单次响应须同时给出：（1）向量搜索与 reranker 所用的标准化/摘要查询文本，写入 `NormalizedRetrievalQuery`；（2）与上述查询文本同窗绑定的查询侧结构化画像 `query_structured_suggestions`，供后续结构化局部相似度使用（MVP 可不纳入评分）。**禁止**拆成两次 LLM 调用分别生成摘要与结构化画像。
 - LLM normalizer 若在任一路径失败（超时、限流、配置缺失或响应不可解析），本次检索整体 **fail closed**，**不得**回退用原始 `query_text` 继续检索。产品语义为「当前无法理解用户问题」，故不产生向量候选；**`RecommendationService`** 在已 `create_run` 的前提下调用 `fail_run`（或等价）收口，并向客户端返回稳定失败态、`recommendation_run_id` 及可读提示（脱敏规则见 Error Strategy / HTTP 映射）。
 - 过滤字段映射到向量搜索契约，保留应用后的过滤条件。
 - 校验业务权重参数在配置范围内，未提供时使用默认权重。
@@ -1600,7 +1599,7 @@ flowchart TD
 - [ ] 可扩展新的配置类（本规格需添加 `NormalizerLLMConfig`、`RerankerConfig`、推荐检索配置）
 
 #### 3. 共享 LLM 客户端（由前置规格提供）
-- [ ] `backend/app/common/llm_client.py` 存在并提供 `LLMClient` 类
+- [ ] `backend/app/core/llm_client.py` 存在并提供 `LLMClient` 类
 - [ ] 支持配置命名空间或依赖注入（可传入独立配置对象）
 - [ ] 提供 HTTP 调用、重试、超时、错误映射等基础能力
 - [ ] 错误映射至少包含：`timeout`、`rate-limited`、`provider-error`、`invalid-response`
@@ -1623,7 +1622,7 @@ flowchart TD
 **验收方式**：在开始实施本规格前，执行以下快速检查：
 1. 启动后端应用，确认无配置或导入错误
 2. 调用一个前置规格的 API 端点（如案例详情查询），确认响应格式符合预期
-3. 检查 `backend/app/core/config.py` 和 `backend/app/common/llm_client.py` 的接口，确认可扩展
+3. 检查 `backend/app/core/config.py` 和 `backend/app/core/llm_client.py` 的接口，确认可扩展
 
 ### 本规格迁移步骤
 

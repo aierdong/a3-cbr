@@ -273,7 +273,7 @@ class TestLLMNormalizerFailure:
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=mock_llm_failure,
         ):
             response = await test_client.post(
@@ -307,7 +307,7 @@ class TestLLMNormalizerFailure:
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=mock_llm_failure,
         ):
             response = await test_client.post(
@@ -350,7 +350,7 @@ class TestLLMNormalizerFailure:
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=mock_llm_failure,
         ):
             with patch(
@@ -395,7 +395,7 @@ class TestRerankerStatus:
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=mock_llm_failure,
         ):
             response = await test_client.post(
@@ -486,7 +486,7 @@ class TestRerankerStatus:
             raise openai.APITimeoutError("Vector search timeout")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=AsyncMock(return_value=mock_llm_result),
         ):
             with patch(
@@ -625,7 +625,7 @@ class TestContractVersion:
             raise openai.APITimeoutError("Request timed out")
 
         with patch(
-            "app.common.llm_client.LLMClient.complete_json",
+            "app.core.llm_client.LLMClient.complete_json",
             new=mock_llm_failure,
         ):
             response = await test_client.post(

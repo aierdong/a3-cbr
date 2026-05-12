@@ -15,7 +15,7 @@ import hashlib
 import logging
 import uuid
 
-from app.common.llm_client import LLMClient, LLMClientError
+from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import EnrichmentLLMConfig
 from app.enrichment.prompts import PromptCatalog
 from app.enrichment.repository import EnrichmentRepository
