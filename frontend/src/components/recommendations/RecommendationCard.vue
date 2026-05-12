@@ -82,17 +82,30 @@
         <li v-for="f in item.missing_fields" :key="f" class="mono">{{ f }}</li>
       </ul>
     </section>
+
+    <section v-if="item.recommendation_item_id && recommendationRunId && feedbackApi" class="section">
+      <FeedbackControls
+        :feedback-api="feedbackApi"
+        :recommendation-run-id="recommendationRunId"
+        :recommendation-item-id="item.recommendation_item_id"
+      />
+    </section>
   </article>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { FeedbackApiService } from '@/api/feedback'
 import type { DegradedReason, ExplanationStatus, RecommendationItem } from '@/api/recommendations'
+import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 
 const props = defineProps<{
   item: RecommendationItem
   /** 运行级降级原因，用于与 `explanation_status` 组合提示 */
   runDegradedReason?: DegradedReason | null
+  /** 与列表页传入一致，用于推荐项级反馈 */
+  recommendationRunId?: string
+  feedbackApi?: FeedbackApiService
 }>()
 
 function formatScore(n: number): string {

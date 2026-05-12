@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import RecommendationCard from '../../../src/components/recommendations/RecommendationCard.vue'
+import FeedbackControls from '../../../src/components/recommendations/FeedbackControls.vue'
 import type { RecommendationItem } from '../../../src/api/recommendations'
 
 const baseItem = (): RecommendationItem => ({
@@ -55,12 +56,21 @@ describe('RecommendationCard', () => {
     expect(w.find('[data-testid="card-missing"]').text()).toContain('outcome.notes')
   })
 
-  it('解释降级时可结合运行级 degraded_reason 展示提示', () => {
-    const item = baseItem()
-    item.explanation_status = 'fallback'
+  it('有推荐项标识且传入 feedback 依赖时应渲染反馈控件', () => {
+    const feedbackApi = { submit: vi.fn() } as unknown as import('../../../src/api/feedback').FeedbackApiService
     const w = mount(RecommendationCard, {
-      props: { item, runDegradedReason: 'explanation_fallback' },
+      props: { item: baseItem(), recommendationRunId: 'run-1', feedbackApi },
     })
-    expect(w.html()).toContain('explanation_fallback')
+    expect(w.find('[data-testid="feedback-item-it-1"]').exists()).toBe(true)
+  })
+
+  it('无 recommendation_item_id 时不渲染反馈控件', () => {
+    const item = baseItem()
+    item.recommendation_item_id = null
+    const feedbackApi = { submit: vi.fn() } as unknown as import('../../../src/api/feedback').FeedbackApiService
+    const w = mount(RecommendationCard, {
+      props: { item, recommendationRunId: 'run-1', feedbackApi },
+    })
+    expect(w.findComponent(FeedbackControls).exists()).toBe(false)
   })
 })

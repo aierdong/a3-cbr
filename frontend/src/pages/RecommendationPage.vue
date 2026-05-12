@@ -29,6 +29,12 @@
     <template v-if="lastResult && !submitting">
       <RecommendationSummary :response="lastResult" />
 
+      <FeedbackControls
+        class="run-feedback"
+        :feedback-api="feedbackApi"
+        :recommendation-run-id="lastResult.recommendation_run_id"
+      />
+
       <EmptyState
         v-if="lastResult.items.length === 0"
         title="暂无推荐项"
@@ -41,6 +47,8 @@
           :key="itemKey(it)"
           :item="it"
           :run-degraded-reason="lastResult.degraded_reason"
+          :recommendation-run-id="lastResult.recommendation_run_id"
+          :feedback-api="feedbackApi"
         />
       </div>
     </template>
@@ -50,8 +58,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { createApiClient } from '@/api/client'
+import { createFeedbackApiService } from '@/api/feedback'
 import { createRecommendationApiService, type RecommendationItem } from '@/api/recommendations'
 import RecommendationCard from '@/components/recommendations/RecommendationCard.vue'
+import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 import RecommendationSearchForm from '@/components/recommendations/RecommendationSearchForm.vue'
 import RecommendationSummary from '@/components/recommendations/RecommendationSummary.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -61,6 +71,7 @@ import { useRecommendations } from '@/composables/useRecommendations'
 
 const client = createApiClient()
 const recommendationApi = createRecommendationApiService(client)
+const feedbackApi = createFeedbackApiService(client)
 const { draft, lastResult, submitting, pageError, fieldErrors, search } = useRecommendations(recommendationApi)
 
 const emptyDescription = computed(() => {
