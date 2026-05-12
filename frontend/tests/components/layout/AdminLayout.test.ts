@@ -111,6 +111,15 @@ describe('AdminLayout', () => {
     expect(recommendationNav.classes()).toContain('active')
   })
 
+  it('应该在检索推荐页展示返回案例管理的面包屑入口（需求 1.2、5.1 闭环）', async () => {
+    const { wrapper } = await mountWithRoute('/recommendations')
+    const layout = wrapper.findComponent(AdminLayout)
+    const toCases = layout.find('[data-testid="breadcrumb-to-cases"]')
+    expect(toCases.exists()).toBe(true)
+    expect(toCases.text()).toContain('案例管理')
+    expect(toCases.attributes('href')).toContain('/cases')
+  })
+
   it('应该在案例新建页展示返回列表入口', async () => {
     const { wrapper } = await mountWithRoute('/cases/create')
     const layout = wrapper.findComponent(AdminLayout)

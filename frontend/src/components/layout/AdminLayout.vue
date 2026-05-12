@@ -36,6 +36,14 @@
         >
           返回列表
         </router-link>
+        <router-link
+          v-else-if="showCasesHomeFromRecommendations"
+          :to="{ name: 'case-list' }"
+          class="breadcrumb-back"
+          data-testid="breadcrumb-to-cases"
+        >
+          案例管理
+        </router-link>
         <span class="breadcrumb-text">{{ breadcrumbText }}</span>
       </div>
       <div class="page-container">
@@ -70,6 +78,9 @@ const showCaseBackLink = computed(() =>
   route.name === 'case-detail' ||
   route.name === 'case-edit'
 )
+
+/** 需求 1.2：从检索推荐返回案例闭环的明确入口 */
+const showCasesHomeFromRecommendations = computed(() => route.name === 'recommendations')
 </script>
 
 <style scoped>

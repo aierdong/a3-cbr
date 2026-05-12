@@ -114,6 +114,17 @@ describe('feedbackControlStateFromApiError', () => {
     expect(feedbackControlStateFromApiError(error).showRetry).toBe(true)
   })
 
+  it('控件错误状态仅含 message / fieldMessages / showRetry（需求 6.4）', () => {
+    const error: ApiError = {
+      kind: 'system',
+      code: 'INTERNAL_ERROR',
+      message: '系统异常',
+      status: 500,
+    }
+    const s = feedbackControlStateFromApiError(error)
+    expect(Object.keys(s).sort()).toEqual(['fieldMessages', 'message', 'showRetry'])
+  })
+
   it('网络错误应允许重试', () => {
     const error: ApiError = {
       kind: 'network',

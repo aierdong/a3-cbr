@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import router from '../../src/router'
+import AdminLayout from '../../src/components/layout/AdminLayout.vue'
 
 describe('Router Configuration', () => {
   it('应该配置案例列表路由', () => {
@@ -43,5 +44,13 @@ describe('Router Configuration', () => {
     await router.isReady()
     expect(router.currentRoute.value.name).toBe('case-list')
     expect(router.currentRoute.value.path).toBe('/cases')
+  })
+
+  it('案例与检索推荐顶级路由应复用 AdminLayout（任务 5.1 页面集成）', () => {
+    const routes = router.getRoutes()
+    const casesParent = routes.find((r) => r.path === '/cases' && r.children?.length)
+    const recParent = routes.find((r) => r.path === '/recommendations' && r.children?.length)
+    expect(casesParent?.components?.default).toBe(AdminLayout)
+    expect(recParent?.components?.default).toBe(AdminLayout)
   })
 })

@@ -96,6 +96,28 @@ describe('createApiClient', () => {
     }
   })
 
+  it('404：含 meta 的响应不得泄漏 meta 到 ApiError（需求 6.4）', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({
+        status: 404,
+        body: {
+          code: 'CASE_NOT_FOUND',
+          message: '未找到',
+          meta: { full_case_body: 'SECRET_BODY', embedding: [0.1, 0.2] },
+        },
+      })
+    )
+
+    const client = createApiClient({ baseUrl: '' })
+    const result = await client.get('/cases/x')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect('meta' in result.error).toBe(false)
+      expect(JSON.stringify(result.error)).not.toContain('SECRET_BODY')
+      expect(JSON.stringify(result.error)).not.toContain('embedding')
+    }
+  })
+
   it('409：应为 conflict 分类', async () => {
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse({

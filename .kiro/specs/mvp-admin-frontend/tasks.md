@@ -106,22 +106,22 @@
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
   - _Boundary: FeedbackControls, RecommendationCard, useFeedback_
 
-- [ ] 5. 完成页面集成与验证
-- [ ] 5.1 集成案例、推荐和反馈页面闭环
+- [x] 5. 完成页面集成与验证
+- [x] 5.1 集成案例、推荐和反馈页面闭环
   - 将案例页面、推荐页面和反馈控件接入后台布局与路由。
   - 确认案例创建、列表查看、详情查看、检索推荐和反馈提交可以连续操作。
   - 完成后，用户能从后台导航完成一次 MVP 验证闭环。
   - _Requirements: 1.1, 1.2, 2.1, 2.4, 3.3, 4.2, 5.3_
   - _Boundary: AdminLayout, CaseListPage, CaseCreatePage, CaseEditPage, CaseDetailPage, RecommendationPage, FeedbackControls_
 
-- [ ] 5.2 验证错误、隐私和边界行为
+- [x] 5.2 验证错误、隐私和边界行为
   - 覆盖字段校验失败、未找到、状态冲突、空结果、降级推荐、系统失败和反馈失败场景。
   - 确认页面、日志和浏览器持久化状态不暴露完整案例正文、完整查询文本、向量数组、完整备注或供应商原始错误。
   - 完成后，所有边界失败都有可观察页面反馈，且不会扩大前端职责。
   - _Requirements: 1.4, 2.5, 3.4, 4.4, 5.4, 6.2, 6.4, 6.5_
   - _Boundary: ApiClient, ErrorNotice, useAsyncState, useRecommendations, useFeedback_
 
-- [ ] 5.3 补充前端组件和页面测试
+- [x] 5.3 补充前端组件和页面测试
   - 覆盖 API 契约映射、案例表单、案例列表空状态、推荐项展示、降级提示和反馈控件。
   - 覆盖从检索推荐到反馈提交的页面级交互。
   - 完成后，测试能够证明所有需求编号至少被一个页面或组件行为覆盖。
@@ -134,3 +134,4 @@
 - 任务 2.2：列表 GET 查询将 UI 的 `created_from`/`created_to` 映射为后端当前使用的 `created_after`/`created_before`；OpenAPI 列表项尚无 `tags` 字段时表格显示「—」，标签关键词在已加载结果上做本地筛选（含预览文本回退），待契约支持服务端标签筛选后应改为纯服务端查询。
 - 任务 2.3–2.4：当前 `CaseDetailResponse` / `CreateCaseRequest` / `UpdateCaseRequest` 在 OpenAPI 中无 `tags`；详情页与表单对标签作「—」与说明文案，待契约增加 `tags` 后再做字段映射与提交。
 - Vitest + jsdom：`type="submit"` 按钮的 `trigger('click')` 可能不触发表单 `submit` 事件；组件测试中对表单使用 `wrapper.find('form').trigger('submit')`。
+- 任务 5.1：在 `AdminLayout` 为检索推荐页增加面包屑「案例管理」链回案例列表，与侧栏导航共同形成 MVP 闭环返回路径。

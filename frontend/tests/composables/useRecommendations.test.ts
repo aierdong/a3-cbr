@@ -69,6 +69,61 @@ describe('useRecommendations', () => {
     expect(lastResult.value).toBeNull()
   })
 
+  it('检索失败后应保留上一次成功结果以便继续查看与反馈（需求 4.4、5.4）', async () => {
+    const payload = {
+      recommendation_run_id: 'r-keep',
+      contract_version: 'v1',
+      status: 'succeeded' as const,
+      applied_filters: {},
+      score_weights: {},
+      query_metadata: {
+        query_hash: 'h',
+        requested_top_k: 2,
+        vector_candidate_count: 1,
+        returned_count: 1,
+        latency_ms: 1,
+      },
+      items: [
+        {
+          recommendation_item_id: 'i1',
+          case_id: 'c1',
+          rank: 1,
+          case_reference: {
+            title_preview: 't',
+            description_preview: 'd',
+            case_updated_at: '2026-01-01T00:00:00Z',
+          },
+          vector_similarity_score: 0.1,
+          final_score: 0.2,
+          score_breakdown: { final_score_source: 'aggregated' as const },
+          explanation_status: 'generated' as const,
+          missing_fields: [],
+        },
+      ],
+    }
+    const recommendSimilarCases = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: payload })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: 'system' as const,
+          code: 'INTERNAL_ERROR',
+          message: '系统异常',
+          status: 500,
+        },
+      })
+    const api = { recommendSimilarCases } as unknown as RecommendationApiService
+    const { draft, search, lastResult, pageError } = useRecommendations(api)
+    draft.value.query_text = '第一次'
+    await search()
+    expect(lastResult.value?.recommendation_run_id).toBe('r-keep')
+    draft.value.query_text = '第二次'
+    await search()
+    expect(lastResult.value?.recommendation_run_id).toBe('r-keep')
+    expect(pageError.value?.kind).toBe('system')
+  })
+
   it('成功时写入 lastResult', async () => {
     const payload = {
       recommendation_run_id: 'r1',
