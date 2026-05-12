@@ -2,9 +2,11 @@
 
 负责从环境变量读取数据库连接和应用运行配置。
 """
+import json
 from functools import lru_cache
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +43,22 @@ class Settings(BaseSettings):
     enrichment_llm_timeout_ms: int = 30000
     enrichment_llm_max_retries: int = 2
     enrichment_llm_privacy_acknowledged: bool = False
+    # 可选：JSON 对象，合并为 chat.completions.create 的顶层参数（禁止覆盖 model/messages）
+    enrichment_llm_chat_completions_extra_json: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA",
+            "enrichment_llm_chat_completions_extra_json",
+        ),
+    )
+    # 可选：JSON 对象，单独作为 extra_body 传入 create（后于上一项应用，可覆盖其中的 extra_body）
+    enrichment_llm_extra_body_json: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ENRICHMENT_LLM_EXTRA_BODY",
+            "enrichment_llm_extra_body_json",
+        ),
+    )
 
     # --- 查询规范化 LLM ---
     normalizer_llm_apikey: str = ""
@@ -48,6 +66,20 @@ class Settings(BaseSettings):
     normalizer_llm_base_url: str = "https://api.deepseek.com/v2"
     normalizer_llm_timeout_ms: int = 30000
     normalizer_llm_max_retries: int = 2
+    normalizer_llm_chat_completions_extra_json: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA",
+            "normalizer_llm_chat_completions_extra_json",
+        ),
+    )
+    normalizer_llm_extra_body_json: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "NORMALIZER_LLM_EXTRA_BODY",
+            "normalizer_llm_extra_body_json",
+        ),
+    )
 
     # --- 向量嵌入 ---
     embedding_apikey: str = ""
@@ -99,6 +131,22 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+def _parse_json_object_env(raw: str, *, label: str) -> dict[str, Any]:
+    """解析可选环境变量中的 JSON 对象（空字符串视为空对象）。"""
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    try:
+        val = json.loads(text)
+    except json.JSONDecodeError as exc:
+        msg = f"{label} 必须为合法 JSON 对象: {exc}"
+        raise ValueError(msg) from exc
+    if not isinstance(val, dict):
+        msg = f"{label} 必须为 JSON 对象（顶层为键值对），实际类型: {type(val).__name__}"
+        raise ValueError(msg)
+    return val
+
+
 # ---------------------------------------------------------------------------
 # 多模型配置基础设施
 # ---------------------------------------------------------------------------
@@ -119,6 +167,11 @@ class EnrichmentLLMConfig(BaseModel):
     timeout_ms: int = 30000
     max_retries: int = 2
     privacy_acknowledged: bool = False
+    #: 合并到 ``chat.completions.create`` 的额外顶层参数
+    #: （如 ``reasoning_effort``、``extra_body`` 等）
+    chat_completions_extra: dict[str, Any] = Field(default_factory=dict)
+    #: 若设置则始终作为 ``extra_body=...`` 传入，覆盖 ``chat_completions_extra`` 中的同名键
+    extra_body: dict[str, Any] | None = None
 
 
 class NormalizerLLMConfig(BaseModel):
@@ -129,6 +182,11 @@ class NormalizerLLMConfig(BaseModel):
     base_url: str
     timeout_ms: int = 30000
     max_retries: int = 2
+    #: 合并到 ``chat.completions.create`` 的额外顶层参数
+    #: （如 ``reasoning_effort``、``extra_body`` 等）
+    chat_completions_extra: dict[str, Any] = Field(default_factory=dict)
+    #: 若设置则始终作为 ``extra_body=...`` 传入，覆盖 ``chat_completions_extra`` 中的同名键
+    extra_body: dict[str, Any] | None = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -250,13 +308,26 @@ def load_app_config() -> AppConfig:
 
     环境变量命名约定（与字段名对应，不区分大小写）：
         ENRICHMENT_LLM_APIKEY, ENRICHMENT_LLM_MODEL_ID, ...
+        ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA（JSON 对象）, ENRICHMENT_LLM_EXTRA_BODY（JSON 对象）
         NORMALIZER_LLM_APIKEY, NORMALIZER_LLM_MODEL_ID, ...
+        NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA（JSON 对象）, NORMALIZER_LLM_EXTRA_BODY（JSON 对象）
         EMBEDDING_APIKEY, EMBEDDING_MODEL_ID, ...
         RERANKER_APIKEY, RERANKER_MODEL_ID, ...
         MAX_RECOMMENDATION_CANDIDATES
         FEEDBACK_ENABLED, FEEDBACK_COMMENT_MAX_LENGTH, FEEDBACK_STATS_DEFAULT_RANGE_DAYS
     """
     s = Settings()
+
+    chat_extra = _parse_json_object_env(
+        s.enrichment_llm_chat_completions_extra_json,
+        label="ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA",
+    )
+    extra_body: dict[str, Any] | None = None
+    if (s.enrichment_llm_extra_body_json or "").strip():
+        extra_body = _parse_json_object_env(
+            s.enrichment_llm_extra_body_json,
+            label="ENRICHMENT_LLM_EXTRA_BODY",
+        )
 
     enrichment_llm = EnrichmentLLMConfig(
         api_key=s.enrichment_llm_apikey,
@@ -265,7 +336,20 @@ def load_app_config() -> AppConfig:
         timeout_ms=s.enrichment_llm_timeout_ms,
         max_retries=s.enrichment_llm_max_retries,
         privacy_acknowledged=s.enrichment_llm_privacy_acknowledged,
+        chat_completions_extra=chat_extra,
+        extra_body=extra_body,
     )
+
+    norm_chat_extra = _parse_json_object_env(
+        s.normalizer_llm_chat_completions_extra_json,
+        label="NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA",
+    )
+    norm_extra_body: dict[str, Any] | None = None
+    if (s.normalizer_llm_extra_body_json or "").strip():
+        norm_extra_body = _parse_json_object_env(
+            s.normalizer_llm_extra_body_json,
+            label="NORMALIZER_LLM_EXTRA_BODY",
+        )
 
     normalizer_llm = NormalizerLLMConfig(
         api_key=s.normalizer_llm_apikey,
@@ -273,6 +357,8 @@ def load_app_config() -> AppConfig:
         base_url=s.normalizer_llm_base_url,
         timeout_ms=s.normalizer_llm_timeout_ms,
         max_retries=s.normalizer_llm_max_retries,
+        chat_completions_extra=norm_chat_extra,
+        extra_body=norm_extra_body,
     )
 
     embedding = EmbeddingConfig(

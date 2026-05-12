@@ -20,6 +20,7 @@ from app.core.config import (
     EnrichmentLLMConfig,
     NormalizerLLMConfig,
     RerankerConfig,
+    load_app_config,
 )
 from app.core.errors import ErrorCode
 from app.enrichment.schemas import (
@@ -213,10 +214,150 @@ class TestSuccessfulCompletion:
         assert "max_tokens" not in captured
         assert "temperature" not in captured
 
+    @pytest.mark.asyncio
+    async def test_enrichment_chat_completions_extra_passed_to_sdk(self):
+        """EnrichmentLLMConfig.chat_completions_extra 合并进 create（不覆盖 model/messages）。"""
+        captured: dict = {}
 
-# ---------------------------------------------------------------------------
-# Tests: Privacy config
-# ---------------------------------------------------------------------------
+        async def capture_create(**kwargs):
+            captured.update(kwargs)
+            return _stub_chat_completion()
+
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=capture_create)
+
+        cfg = _enrichment_config(
+            chat_completions_extra={
+                "reasoning_effort": "high",
+                "extra_body": {"thinking": {"type": "enabled"}},
+                "model": "should-not-override",
+                "messages": [{"role": "user", "content": "bad"}],
+            },
+        )
+        client = LLMClient(cfg, _async_client=mock)
+        await client.complete_json(_completion_request())
+
+        assert captured["reasoning_effort"] == "high"
+        assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
+        assert captured["model"] == "deepseek-v4-flash"
+        assert captured["messages"][0]["content"] == "请分析以下案例..."
+
+    @pytest.mark.asyncio
+    async def test_enrichment_extra_body_env_overrides_chat_extra(self):
+        """config.extra_body 覆盖 chat_completions_extra 中的 extra_body。"""
+        captured: dict = {}
+
+        async def capture_create(**kwargs):
+            captured.update(kwargs)
+            return _stub_chat_completion()
+
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=capture_create)
+
+        cfg = _enrichment_config(
+            chat_completions_extra={"extra_body": {"a": 1}},
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        client = LLMClient(cfg, _async_client=mock)
+        await client.complete_json(_completion_request())
+
+        assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
+
+    @pytest.mark.asyncio
+    async def test_normalizer_default_omits_optional_create_kwargs(self):
+        """Normalizer 默认无 chat 扩展时不传 reasoning_effort / extra_body。"""
+        captured: dict = {}
+
+        async def capture_create(**kwargs):
+            captured.update(kwargs)
+            return _stub_chat_completion()
+
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=capture_create)
+
+        client = LLMClient(_normalizer_config(), _async_client=mock)
+        await client.complete_json(_completion_request())
+
+        assert "extra_body" not in captured
+        assert "reasoning_effort" not in captured
+
+    @pytest.mark.asyncio
+    async def test_normalizer_chat_completions_extra_passed_to_sdk(self):
+        """NormalizerLLMConfig.chat_completions_extra / extra_body 合并进 create。"""
+        captured: dict = {}
+
+        async def capture_create(**kwargs):
+            captured.update(kwargs)
+            return _stub_chat_completion()
+
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=capture_create)
+
+        cfg = _normalizer_config(
+            chat_completions_extra={"reasoning_effort": "medium"},
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        client = LLMClient(cfg, _async_client=mock)
+        await client.complete_json(_completion_request())
+
+        assert captured["reasoning_effort"] == "medium"
+        assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+class TestLoadAppConfigEnrichmentChatExtras:
+    """load_app_config 解析富化 LLM 可选 JSON 环境变量。"""
+
+    def test_parses_enrichment_llm_extra_body_env(self, monkeypatch):
+        monkeypatch.setenv(
+            "ENRICHMENT_LLM_EXTRA_BODY",
+            '{"thinking": {"type": "enabled"}}',
+        )
+        monkeypatch.setenv(
+            "ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA",
+            '{"reasoning_effort": "high"}',
+        )
+        cfg = load_app_config()
+        assert cfg.enrichment_llm.chat_completions_extra == {"reasoning_effort": "high"}
+        assert cfg.enrichment_llm.extra_body == {"thinking": {"type": "enabled"}}
+
+    def test_invalid_extra_body_json_raises(self, monkeypatch):
+        monkeypatch.setenv("ENRICHMENT_LLM_EXTRA_BODY", "not-json")
+        with pytest.raises(ValueError, match="ENRICHMENT_LLM_EXTRA_BODY"):
+            load_app_config()
+
+    def test_invalid_chat_completions_extra_json_raises(self, monkeypatch):
+        monkeypatch.delenv("ENRICHMENT_LLM_EXTRA_BODY", raising=False)
+        monkeypatch.setenv("ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA", "[1,2]")
+        with pytest.raises(ValueError, match="ENRICHMENT_LLM_CHAT_COMPLETIONS_EXTRA"):
+            load_app_config()
+
+
+class TestLoadAppConfigNormalizerChatExtras:
+    """load_app_config 解析规范化 LLM 可选 JSON 环境变量。"""
+
+    def test_parses_normalizer_llm_extra_body_env(self, monkeypatch):
+        monkeypatch.setenv(
+            "NORMALIZER_LLM_EXTRA_BODY",
+            '{"thinking": {"type": "enabled"}}',
+        )
+        monkeypatch.setenv(
+            "NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA",
+            '{"reasoning_effort": "low"}',
+        )
+        cfg = load_app_config()
+        assert cfg.normalizer_llm.chat_completions_extra == {"reasoning_effort": "low"}
+        assert cfg.normalizer_llm.extra_body == {"thinking": {"type": "enabled"}}
+
+    def test_invalid_normalizer_extra_body_json_raises(self, monkeypatch):
+        monkeypatch.setenv("NORMALIZER_LLM_EXTRA_BODY", "not-json")
+        with pytest.raises(ValueError, match="NORMALIZER_LLM_EXTRA_BODY"):
+            load_app_config()
+
+    def test_invalid_normalizer_chat_completions_extra_json_raises(self, monkeypatch):
+        monkeypatch.delenv("NORMALIZER_LLM_EXTRA_BODY", raising=False)
+        monkeypatch.setenv("NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA", "[1,2]")
+        with pytest.raises(ValueError, match="NORMALIZER_LLM_CHAT_COMPLETIONS_EXTRA"):
+            load_app_config()
 
 
 class TestPrivacyConfig:

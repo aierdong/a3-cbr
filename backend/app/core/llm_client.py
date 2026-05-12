@@ -34,6 +34,7 @@ from app.enrichment.schemas import (
 logger = logging.getLogger(__name__)
 
 _BASE_HAS_VER_SUFFIX = re.compile(r"/v\d+$", re.IGNORECASE)
+_CHAT_CREATE_FORBIDDEN_KEYS = frozenset({"model", "messages"})
 
 T = TypeVar("T")
 
@@ -66,6 +67,7 @@ class LLMClientError(Exception):
 
 def _normalize_openai_base_url(raw_base: str) -> str:
     """将配置的 ``base_url`` 规范为 OpenAI SDK 所需前缀（含 /v1、/v2 等）。
+
     deepseek 不需要 /v1
     """
     base = raw_base.rstrip("/")
@@ -188,6 +190,17 @@ class LLMClient:
             config, "privacy_acknowledged", True,
         )
 
+    def _apply_llm_chat_completion_extras(self, payload: dict) -> None:
+        """将 Enrichment/Normalizer LLM 配置中的可选参数并入 ``chat.completions.create`` 载荷。"""
+        if not isinstance(self._config, (EnrichmentLLMConfig, NormalizerLLMConfig)):
+            return
+        for key, value in self._config.chat_completions_extra.items():
+            if key in _CHAT_CREATE_FORBIDDEN_KEYS:
+                continue
+            payload[key] = value
+        if self._config.extra_body is not None:
+            payload["extra_body"] = self._config.extra_body
+
     async def complete_json(
         self,
         request: LLMCompletionRequest,
@@ -251,6 +264,8 @@ class LLMClient:
             payload["max_tokens"] = request.max_tokens
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+
+        self._apply_llm_chat_completion_extras(payload)
 
         try:
             completion = await self._client.chat.completions.create(**payload)
