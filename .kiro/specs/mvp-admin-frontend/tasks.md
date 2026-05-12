@@ -31,7 +31,7 @@
   - _Boundary: package scripts, frontend/src/api/generated, CaseApiService, RecommendationApiService, FeedbackApiService_
 
 - [ ] 2. 实现案例管理页面
-- [ ] 2.1 (P) 实现案例 API 契约映射
+- [x] 2.1 (P) 实现案例 API 契约映射
   - 定义案例列表项、案例详情、创建请求、编辑请求、分页响应和字段错误类型。
   - 封装创建、编辑、详情和列表查询调用，并统一使用通用错误模型。
   - 完成后，页面可以通过单一案例服务消费案例管理接口。

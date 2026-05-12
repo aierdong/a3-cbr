@@ -9,6 +9,11 @@ import type { components, operations } from './generated/cases'
 
 const CASES_BASE = '/api/a3-cases'
 
+/** 列表行：对齐 OpenAPI `CaseListItem`（requirements 2.1 / design 数据模型） */
+export type CaseListItem = components['schemas']['CaseListItem']
+/** 契约中的字段错误项；结构与 `ApiError.fields` 的 `FieldError` 一致（422） */
+export type CaseFieldError = components['schemas']['ErrorField']
+
 export type CreateCaseRequest = components['schemas']['CreateCaseRequest']
 export type UpdateCaseRequest = components['schemas']['UpdateCaseRequest']
 export type CaseDetailResponse = components['schemas']['CaseDetailResponse']
@@ -28,7 +33,8 @@ export function createCaseApiService(client: ApiClient) {
       return client.post<CreateCaseRequest, CaseDetailResponse>(CASES_BASE, body)
     },
 
-    getById(caseId: string): Promise<ApiResult<CaseDetailResponse>> {
+    /** 案例详情：GET `/api/a3-cases/{case_id}` */
+    detail(caseId: string): Promise<ApiResult<CaseDetailResponse>> {
       const path = `${CASES_BASE}/${encodeURIComponent(caseId)}`
       return client.get<CaseDetailResponse>(path)
     },
