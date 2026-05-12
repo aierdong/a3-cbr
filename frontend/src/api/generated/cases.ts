@@ -45,10 +45,10 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
-         * @description 受控问题类型，具体枚举值在实现阶段可扩展
+         * @description 受控问题类型，与 `backend/app/cases/models.py` 中 `ProblemType` 枚举一致。 扩展时需同步迁移、列表筛选与向量索引侧存储格式。
          * @enum {string}
          */
-        ProblemType: "service" | "quality" | "operation" | "hygiene" | "staffing" | "other";
+        ProblemType: "customer_complaint" | "service_quality" | "operations" | "environment" | "product_quality" | "safety_hygiene" | "staff_training" | "equipment_maintenance" | "other";
         /**
          * @description 案例状态枚举。状态转换规则： draft → active（允许）； active → archived（允许）； draft → archived（禁止，草稿必须先提交为 active）； archived → 任意状态（禁止，归档后不可回滚）。
          * @enum {string}
@@ -96,6 +96,8 @@ export interface components {
             root_cause: string;
             solution_steps: components["schemas"]["SolutionStep"][];
             outcome: components["schemas"]["Outcome"];
+            /** @description 创建时的初始状态；省略时默认为 draft。仅允许 draft 或 active； archived 非法（须先创建为 draft/active 后再通过更新流转）。 */
+            status?: components["schemas"]["CaseStatus"];
         };
         /** @description 可编辑字段集合；不允许出现 case_id、created_at。 */
         UpdateCaseRequest: {
