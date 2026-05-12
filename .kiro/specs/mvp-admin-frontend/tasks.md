@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. 建立前端应用基础
+- [x] 1. 建立前端应用基础
 - [x] 1.1 创建 Vue 3 前端应用脚手架
   - 建立 TypeScript、构建、测试和基础入口配置。
   - 配置应用启动入口，使根组件可以挂载后台布局和路由。
@@ -22,7 +22,7 @@
   - _Requirements: 1.4, 6.2, 6.4_
   - _Boundary: ApiClient, LoadingState, EmptyState, ErrorNotice, useAsyncState_
 
-- [ ] 1.4 建立 OpenAPI 类型生成与契约同步机制
+- [x] 1.4 建立 OpenAPI 类型生成与契约同步机制
   - 配置 `openapi-typescript` 类型生成脚本，生成 `cases.ts`、`recommendations.ts`、`feedback.ts` 到 `frontend/src/api/generated/`。
   - 在前端 API service 中统一引用 generated 类型，避免手写重复契约类型。
   - 增加 CI 一致性检查：执行类型生成后校验 generated 目录无未提交差异。
@@ -127,3 +127,7 @@
   - 完成后，测试能够证明所有需求编号至少被一个页面或组件行为覆盖。
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5_
   - _Boundary: API service tests, component tests, page tests_
+
+## Implementation Notes
+
+- 任务 1.4：在 ESM 脚本中勿用 `createRequire(...).resolve('openapi-typescript/bin/cli.js')`（Node 可能解析到不存在的 `cli.mjs`）；应使用 `frontend/node_modules/openapi-typescript/bin/cli.js` 的绝对路径调用 CLI。
