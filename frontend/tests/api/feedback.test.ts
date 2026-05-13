@@ -7,7 +7,7 @@ import type { ApiError } from '../../src/api/errors'
 import type { ApiClient } from '../../src/api/client'
 
 describe('createFeedbackApiService', () => {
-  it('submit 应注入 actor_id 与 source_channel 并 POST /api/recommendation-feedback', async () => {
+  it('submit 应注入 X-Actor-Id 请求头与 source_channel body 并 POST /api/recommendation-feedback', async () => {
     const post = vi.fn().mockResolvedValue({ ok: true, data: {} })
     const client: ApiClient = { get: vi.fn(), post, put: vi.fn() }
     const api = createFeedbackApiService(client)
@@ -15,15 +15,18 @@ describe('createFeedbackApiService', () => {
       recommendation_run_id: 'run-1',
       usefulness: 'useful',
     })
-    expect(post).toHaveBeenCalledWith('/api/recommendation-feedback', {
-      recommendation_run_id: 'run-1',
-      usefulness: 'useful',
-      actor_id: 'anonymous_user',
-      source_channel: 'admin_web',
-    })
+    expect(post).toHaveBeenCalledWith(
+      '/api/recommendation-feedback',
+      {
+        recommendation_run_id: 'run-1',
+        usefulness: 'useful',
+        source_channel: 'admin_web',
+      },
+      { headers: { 'X-Actor-Id': 'anonymous_user' } }
+    )
   })
 
-  it('submit 在显式传入 actor_id 时应保留调用方值', async () => {
+  it('submit 在显式传入 actor_id 时应写入请求头 X-Actor-Id', async () => {
     const post = vi.fn().mockResolvedValue({ ok: true, data: {} })
     const client: ApiClient = { get: vi.fn(), post, put: vi.fn() }
     const api = createFeedbackApiService(client)
@@ -34,7 +37,8 @@ describe('createFeedbackApiService', () => {
     })
     expect(post).toHaveBeenCalledWith(
       '/api/recommendation-feedback',
-      expect.objectContaining({ actor_id: 'u-99', source_channel: 'admin_web' })
+      expect.objectContaining({ source_channel: 'admin_web', usefulness: 'unknown' }),
+      { headers: { 'X-Actor-Id': 'u-99' } }
     )
   })
 
@@ -48,14 +52,17 @@ describe('createFeedbackApiService', () => {
       usefulness: 'not_useful',
       comment: '备注一行',
     })
-    expect(post).toHaveBeenCalledWith('/api/recommendation-feedback', {
-      recommendation_run_id: 'run-1',
-      recommendation_item_id: 'item-9',
-      usefulness: 'not_useful',
-      comment: '备注一行',
-      actor_id: 'anonymous_user',
-      source_channel: 'admin_web',
-    })
+    expect(post).toHaveBeenCalledWith(
+      '/api/recommendation-feedback',
+      {
+        recommendation_run_id: 'run-1',
+        recommendation_item_id: 'item-9',
+        usefulness: 'not_useful',
+        comment: '备注一行',
+        source_channel: 'admin_web',
+      },
+      { headers: { 'X-Actor-Id': 'anonymous_user' } }
+    )
   })
 })
 

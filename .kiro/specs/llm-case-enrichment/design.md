@@ -45,25 +45,14 @@
 
 ### Allowed Dependencies
 
-- `a3-case-management` 的详情读取能力与基础字段契约：`case_id`、A3 基础字段、状态、过滤字段、`updated_at`。**字段名、JSON 形状、`CaseInputSnapshot` 与 `CaseDetailResponse` 的映射**以 `docs/contract-a3-case-detail-for-enrichment.md` 为准（跨规格引用，作为字段语义说明文档）。**增强触发条件**见该文档 §6。
+- `a3-case-management` 的详情读取能力与基础字段契约：`case_id`、A3 基础字段、状态、过滤字段、`updated_at`。**字段名、JSON 形状、`CaseInputSnapshot` 与 `CaseDetailResponse` 的映射**、**「提交且摘要」跨规格编排（含向量索引顺序、详情态 API 与重试）**均以 `docs/contract-a3-case-detail-for-enrichment.md` §6 及同文档相关小节为唯一正文，本规格不重述。
 - Python + FastAPI、Pydantic、SQLAlchemy、Alembic、PostgreSQL，与上游后端栈一致。
 - 云端 LLM：MVP 默认 `deepseek-v4-flash`，经 OpenAI 兼容或等价 HTTP 客户端接入。
 - **下游消费约定**：下游只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。本规格不实现自动过期检测或自动触发机制。
 
 ### Cross-Spec Transaction: "提交且摘要"
 
-用户在前端的"提交且摘要"操作是一个跨 `a3-case-management` 和 `llm-case-enrichment` 的业务事务，需要协调两个规格的实现：
-
-1. **事务语义**：用户点击"提交且摘要"按钮后，系统应完成案例保存（创建或更新）并异步触发 LLM 增强。案例保存失败时不触发增强；案例保存成功后立即返回客户端，增强在后台异步执行。
-2. **实现策略**：
-   - **案例保存优先**：前端先调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例，成功后（HTTP 200）前端再调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发增强。
-   - **客户端无需等待**：前端触发增强接口后立即返回成功状态（不等待增强完成，也无需轮询增强结果）。增强结果在后台生成后自动关联到案例，用户下次查看案例详情时可看到派生内容。
-   - **增强失败处理**：若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，增强运行记录标记为 `failed` 或 `validation_failed`。用户可通过管理后台或重试接口手动触发重新增强。
-   - **触发条件**：详见 `docs/contract-a3-case-detail-for-enrichment.md` §6 "增强触发条件"。
-3. **后端职责边界**：
-   - `a3-case-management` 不感知 LLM 增强，只负责案例 CRUD。
-   - `llm-case-enrichment` 不修改案例基础字段，只负责生成派生结果。
-   - 两个规格通过 API 调用解耦，不共享数据库事务。
+见 [`docs/contract-a3-case-detail-for-enrichment.md`](../../../docs/contract-a3-case-detail-for-enrichment.md) §6（跨 `a3-case-management`、`llm-case-enrichment` 与 `case-vector-indexing` 的前端编排与语义以该文档为唯一维护点）。
 
 ### Cross-Spec Coordination: "删除案例"
 

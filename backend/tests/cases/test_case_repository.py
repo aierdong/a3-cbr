@@ -165,6 +165,29 @@ class TestCaseRepositoryCreate:
         assert record.store.store_id == "store_for_create"
         assert record.store.store_name == "门店_store_for_create"
 
+    async def test_create_case_persists_active_status(
+        self, db_session: AsyncSession
+    ) -> None:
+        """创建时传入 status=active 应落库为 active。"""
+        create_test_store(db_session, store_id="store_active_create")
+        await db_session.flush()
+
+        repo = CaseRepository(db_session)
+        record = await repo.create(
+            A3CaseCreateData(
+                problem_description="立即生效",
+                store_id="store_active_create",
+                problem_type="customer_complaint",
+                context={"scene": "scene"},
+                root_cause="根因",
+                solution_steps=[{"order": 1, "content": "步骤"}],
+                outcome={"result": "improved", "notes": "备注"},
+                status="active",
+            )
+        )
+
+        assert record.status == "active"
+
     async def test_create_case_without_store_fails(
         self, db_session: AsyncSession
     ) -> None:

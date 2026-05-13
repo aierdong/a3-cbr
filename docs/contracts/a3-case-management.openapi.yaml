@@ -266,8 +266,19 @@ components:
   schemas:
     ProblemType:
       type: string
-      description: 受控问题类型，具体枚举值在实现阶段可扩展
-      enum: [service, quality, operation, hygiene, staffing, other]
+      description: >
+        受控问题类型，与 `backend/app/cases/models.py` 中 `ProblemType` 枚举一致。
+        扩展时需同步迁移、列表筛选与向量索引侧存储格式。
+      enum:
+        - customer_complaint
+        - service_quality
+        - operations
+        - environment
+        - product_quality
+        - safety_hygiene
+        - staff_training
+        - equipment_maintenance
+        - other
     CaseStatus:
       type: string
       description: >
@@ -373,6 +384,11 @@ components:
             $ref: '#/components/schemas/SolutionStep'
         outcome:
           $ref: '#/components/schemas/Outcome'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+          description: >
+            创建时的初始状态；省略时默认为 draft。仅允许 draft 或 active；
+            archived 非法（须先创建为 draft/active 后再通过更新流转）。
     UpdateCaseRequest:
       type: object
       minProperties: 1
@@ -414,6 +430,7 @@ components:
         - status
         - created_at
         - updated_at
+        - tag_suggestions
       properties:
         case_id:
           type: string
@@ -441,6 +458,12 @@ components:
         updated_at:
           type: string
           format: date-time
+        tag_suggestions:
+          type: array
+          items:
+            type: string
+          description: >
+            与 llm-case-enrichment 派生结果中的规范化标签一致；无有效增强结果时为空数组。
     CaseListItem:
       type: object
       required:

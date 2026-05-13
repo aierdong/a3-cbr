@@ -27,13 +27,13 @@
       </dd>
 
       <dt>查询哈希</dt>
-      <dd class="mono">{{ response.query_metadata.query_hash }}</dd>
+      <dd class="mono">{{ response.query_metadata.query_hash ?? '—' }}</dd>
 
       <dt>请求 Top-K</dt>
       <dd data-testid="sum-req-k">{{ response.query_metadata.requested_top_k }}</dd>
 
       <dt>向量候选数</dt>
-      <dd data-testid="sum-candidates">{{ response.query_metadata.vector_candidate_count }}</dd>
+      <dd data-testid="sum-candidates">{{ response.query_metadata.vector_candidate_count ?? '—' }}</dd>
 
       <dt>返回条数</dt>
       <dd data-testid="sum-returned">{{ response.query_metadata.returned_count }}</dd>
@@ -90,7 +90,8 @@ const statusHints: Partial<Record<RecommendationStatus, string>> = {
 
 const degradedHint = computed(() => {
   const r = props.response.degraded_reason
-  return r ? degradedHints[r] ?? '' : ''
+  if (!r) return ''
+  return degradedHints[r as DegradedReason] ?? ''
 })
 
 const statusHint = computed(() => statusHints[props.response.status] ?? '')

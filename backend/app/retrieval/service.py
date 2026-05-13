@@ -25,6 +25,11 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 from app.core.config import RetrievalConfig
 from app.retrieval.business_scoring import BusinessScore, BusinessScoreCalculator
 from app.retrieval.case_provider import RecommendationCaseProvider
+from app.retrieval.explainer import (
+    ExplanationResult,
+    RecommendationExplainer,
+    is_explainer_enabled,
+)
 from app.retrieval.query import QueryNormalizer
 from app.retrieval.repository import RecommendationRepository
 from app.retrieval.run_context import RecommendationRunContext
@@ -62,7 +67,6 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from app.retrieval.explainer import ExplanationResult
     from app.retrieval.reranker_client import RerankerClient
 
 
@@ -131,6 +135,7 @@ class RecommendationService:
         business_scorer: BusinessScoreCalculator,
         reranker: RerankerClient,
         aggregator: ScoreAggregator,
+        explainer: RecommendationExplainer,
         config: RetrievalConfig,
     ) -> None:
         """初始化 RecommendationService。
@@ -144,6 +149,7 @@ class RecommendationService:
             business_scorer: 业务参数评分器。
             reranker: 远程 reranker 客户端。
             aggregator: 分值聚合器。
+            explainer: 推荐解释生成器（RecommendationCopyService）。
             config: 推荐检索配置。
         """
         self._repo = repository
@@ -154,6 +160,7 @@ class RecommendationService:
         self._business_scorer = business_scorer
         self._reranker = reranker
         self._aggregator = aggregator
+        self._explainer = explainer
         self._config = config
 
     async def recommend_similar_cases(
@@ -340,11 +347,14 @@ class RecommendationService:
 
                 # 步骤 8: 推荐解释
                 explanation_result = await self._generate_explanation(
-                    normalized, ranked  # type: ignore
+                    normalized,
+                    ranked,  # type: ignore[arg-type]
+                    snapshots,
                 )
 
                 # 步骤 9: 组装推荐项
                 items = self._build_recommendation_items(
+                    run_id,
                     ranked=ranked,  # type: ignore
                     snapshots=snapshots,
                     structured_scores=structured_scores,
@@ -649,20 +659,30 @@ class RecommendationService:
         self,
         query: NormalizedRetrievalQuery,
         ranked: Sequence[AggregatedCandidate],
-    ) -> "ExplanationResult":
-        """生成推荐解释。"""
-        # 获取 ranked 的 case_id 列表
-        case_ids = [c.case_id for c in ranked]
-        if not case_ids:
+        snapshots: list[CandidateSnapshot],
+    ) -> ExplanationResult:
+        """生成推荐解释（调用 RecommendationExplainer → RecommendationCopyService）。"""
+        if not ranked:
             return ExplanationResult(items=[], status=ExplanationStatus.UNAVAILABLE)
 
-        # 构建查询上下文（需要获取快照）
-        # 这里暂时返回一个简单的降级解释
-        return ExplanationResult(
-            items=[],
-            status=ExplanationStatus.FALLBACK,
-            metadata={"reason": "explanation_deferred"},
-        )
+        if not is_explainer_enabled():
+            return ExplanationResult(
+                items=[],
+                status=ExplanationStatus.FALLBACK,
+                metadata={"reason": "explainer_disabled"},
+            )
+
+        snapshot_map = {s.case_id: s for s in snapshots}
+        ranked_snapshots: list[CandidateSnapshot] = []
+        for c in ranked:
+            snap = snapshot_map.get(c.case_id)
+            if snap is not None:
+                ranked_snapshots.append(snap)
+
+        if not ranked_snapshots:
+            return ExplanationResult(items=[], status=ExplanationStatus.UNAVAILABLE)
+
+        return await self._explainer.explain(query, ranked_snapshots)
 
     def _determine_degraded_reason(
         self,
@@ -694,13 +714,14 @@ class RecommendationService:
 
     def _build_recommendation_items(
         self,
+        run_id: str,
         ranked: Sequence[AggregatedCandidate],
         snapshots: list[CandidateSnapshot],
         structured_scores: list[StructuredSimilarityScore],
         business_scores: list[BusinessScore],
         explanation_result: "ExplanationResult",
     ) -> list[RecommendationItemRecord]:
-        """构建推荐项记录列表。"""
+        """构建推荐项记录列表（写入 ``run_id``，与快照持久化及反馈解析一致）。"""
         # 构建 case_id -> snapshot 映射
         snapshot_map = {s.case_id: s for s in snapshots}
 
@@ -724,7 +745,7 @@ class RecommendationService:
 
             item = RecommendationItemRecord(
                 recommendation_item_id=self._generate_item_id(),
-                recommendation_run_id="",  # 稍后填充
+                recommendation_run_id=run_id,
                 case_id=aggregated.case_id,
                 vector_id=snapshot.vector_id,
                 rank=i + 1,
@@ -739,7 +760,7 @@ class RecommendationService:
                 final_score=aggregated.final_score,
                 score_breakdown=aggregated.score_breakdown,
                 explanation_status=(
-                    ExplanationStatus.FALLBACK
+                    explanation.status
                     if explanation
                     else ExplanationStatus.UNAVAILABLE
                 ),

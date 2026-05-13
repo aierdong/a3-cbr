@@ -42,12 +42,9 @@
           <span class="label">问题类型</span>
           <select v-model="localDraft.problem_type">
             <option value="">不限</option>
-            <option value="service">服务</option>
-            <option value="quality">质量</option>
-            <option value="operation">运营</option>
-            <option value="hygiene">卫生</option>
-            <option value="staffing">人力</option>
-            <option value="other">其他</option>
+            <option v-for="opt in CASE_PROBLEM_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
           </select>
         </label>
         <label class="field">
@@ -106,6 +103,7 @@
 import { reactive, watch } from 'vue'
 import type { RecommendationSearchDraft } from '@/composables/useRecommendations'
 import { defaultRecommendationSearchDraft } from '@/composables/useRecommendations'
+import { CASE_PROBLEM_TYPE_OPTIONS } from '@/domain/caseProblemType'
 
 const props = defineProps<{
   modelValue: RecommendationSearchDraft

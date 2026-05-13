@@ -135,7 +135,7 @@ class TestCaseServiceCreate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = []
+        mock_validator.validate_create = AsyncMock(return_value=[])
 
         request = create_test_request()
 
@@ -157,7 +157,7 @@ class TestCaseServiceCreate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = []
+        mock_validator.validate_create = AsyncMock(return_value=[])
 
         request = create_test_request()
         record = create_case_record(status="draft")
@@ -179,7 +179,7 @@ class TestCaseServiceCreate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = []
+        mock_validator.validate_create = AsyncMock(return_value=[])
 
         request = create_test_request()
         now = make_utc_now()
@@ -203,9 +203,9 @@ class TestCaseServiceCreate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = [
+        mock_validator.validate_create = AsyncMock(return_value=[
             FieldError(field="store_id", message="store_id does not exist")
-        ]
+        ])
 
         request = create_test_request(store_id="nonexistent_store")
 
@@ -226,9 +226,9 @@ class TestCaseServiceCreate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = []
+        mock_validator.validate_create = AsyncMock(return_value=[])
 
-        # request schema 本身就禁止了 case_id, status, created_at, updated_at
+        # request schema 禁止 case_id, created_at, updated_at；status 为合法创建字段
         request = create_test_request()
 
         record = create_case_record()
@@ -257,7 +257,7 @@ class TestCaseServiceUpdate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_update.return_value = []
+        mock_validator.validate_update = AsyncMock(return_value=[])
 
         original_record = create_case_record(
             case_id="case_update_001",
@@ -367,9 +367,9 @@ class TestCaseServiceUpdate:
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
         # 校验失败 - 使用 store_id 不存在的情况
-        mock_validator.validate_update.return_value = [
+        mock_validator.validate_update = AsyncMock(return_value=[
             FieldError(field="store_id", message="store_id does not exist")
-        ]
+        ])
 
         original_record = create_case_record(
             case_id="case_original",
@@ -398,9 +398,9 @@ class TestCaseServiceUpdate:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_update.return_value = [
+        mock_validator.validate_update = AsyncMock(return_value=[
             FieldError(field="store_id", message="store_id does not exist")
-        ]
+        ])
 
         original_record = create_case_record(
             case_id="case_store_update",
@@ -430,7 +430,7 @@ class TestCaseServiceStatusTransitions:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_update.return_value = []
+        mock_validator.validate_update = AsyncMock(return_value=[])
 
         original_record = create_case_record(
             case_id="case_d2a",
@@ -460,7 +460,7 @@ class TestCaseServiceStatusTransitions:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_update.return_value = []
+        mock_validator.validate_update = AsyncMock(return_value=[])
 
         original_record = create_case_record(
             case_id="case_a2ar",
@@ -482,6 +482,40 @@ class TestCaseServiceStatusTransitions:
         result = await service.update_case("case_a2ar", request)
 
         assert result.status == SchemaCaseStatus.ARCHIVED
+
+    @pytest.mark.asyncio
+    async def test_active_to_active_allowed(self):
+        """active -> active（回传当前状态）应允许，以便编辑保存。"""
+        from app.cases.service import CaseService
+
+        mock_repo = AsyncMock()
+        mock_validator = MagicMock()
+        mock_validator.validate_update = AsyncMock(return_value=[])
+
+        original_record = create_case_record(
+            case_id="case_a2a",
+            status="active",
+        )
+        updated_record = create_case_record(
+            case_id="case_a2a",
+            status="active",
+            problem_description="已更新描述",
+        )
+        mock_repo.get_by_id.return_value = original_record
+        mock_repo.update.return_value = updated_record
+
+        async def mock_store_exists(store_id: str) -> bool:
+            return True
+
+        service = CaseService(mock_repo, mock_validator)
+
+        request = UpdateCaseRequest(
+            status=SchemaCaseStatus.ACTIVE,
+            problem_description="已更新描述",
+        )
+        result = await service.update_case("case_a2a", request)
+
+        assert result.status == SchemaCaseStatus.ACTIVE
 
     @pytest.mark.asyncio
     async def test_draft_to_archived_not_allowed(self):
@@ -614,6 +648,29 @@ class TestCaseServiceGetCase:
 
         assert result.case_id == "case_get_001"
         assert result.problem_description == "详情测试"
+        assert result.tag_suggestions == []
+
+    @pytest.mark.asyncio
+    async def test_get_case_includes_tag_suggestions_from_enrichment(self):
+        """存在增强结果时，详情中的 tag_suggestions 与派生表一致。"""
+        from app.cases.service import CaseService
+
+        mock_repo = AsyncMock()
+        mock_validator = MagicMock()
+
+        record = create_case_record(case_id="case_tag_001")
+        mock_repo.get_by_id.return_value = record
+
+        mock_enr = AsyncMock()
+        row = MagicMock()
+        row.tag_suggestions = ["服务", "投诉"]
+        mock_enr.get_enrichment_result_for_case = AsyncMock(return_value=row)
+
+        service = CaseService(mock_repo, mock_validator, mock_enr)
+
+        result = await service.get_case("case_tag_001")
+
+        assert result.tag_suggestions == ["服务", "投诉"]
 
     @pytest.mark.asyncio
     async def test_get_case_nonexistent_returns_none(self):
@@ -699,9 +756,9 @@ class TestCaseServiceErrorMapping:
 
         mock_repo = AsyncMock()
         mock_validator = MagicMock()
-        mock_validator.validate_create.return_value = [
+        mock_validator.validate_create = AsyncMock(return_value=[
             FieldError(field="store_id", message="store_id does not exist")
-        ]
+        ])
 
         async def mock_store_exists(store_id: str) -> bool:
             return False

@@ -22,6 +22,7 @@ from app.enrichment.repository import EnrichmentRepository
 from app.enrichment.schemas import (
     EnrichmentStatus,
     LLMCompletionRequest,
+    LLM_RESPONSE_FORMAT_JSON_OBJECT,
     RecommendationCopyRequest,
     RecommendationCopyResponse,
     RecommendationCopyRunCreate,
@@ -139,6 +140,7 @@ class RecommendationCopyService:
             model_id=self._config.model_id,
             task_type=TaskType.CASE_ENRICHMENT,
             request_purpose=RequestPurpose.RECOMMENDATION_COPY,
+            response_format=LLM_RESPONSE_FORMAT_JSON_OBJECT,
         )
 
         # -----------------------------------------------------------
@@ -148,9 +150,13 @@ class RecommendationCopyService:
             llm_result = await self._llm_client.complete_json(llm_request)
         except LLMClientError as exc:
             logger.warning(
-                "推荐文案 LLM 调用失败: copy_run_id=%s, error_code=%s",
+                "推荐文案 LLM 调用失败: copy_run_id=%s, error_code=%s, "
+                "retryable=%s, http_status=%s, message=%s",
                 copy_run_id,
                 exc.error_code,
+                exc.retryable,
+                exc.status_code,
+                exc.message,
             )
             await self._persist_failed_run(
                 copy_run_id=copy_run_id,

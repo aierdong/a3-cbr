@@ -3,8 +3,10 @@
 校验必填字段、枚举值、解决步骤顺序内容和 store_id 存在性。
 校验输出映射到字段级错误。
 """
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Callable
+from typing import TypeAlias
 
 from app.cases.schemas import (
     CreateCaseRequest,
@@ -20,14 +22,25 @@ class FieldError:
     message: str
 
 
+StoreExistsFn: TypeAlias = Callable[[str], bool | Awaitable[bool]]
+
+
+async def _resolve_store_exists(store_exists: StoreExistsFn, store_id: str) -> bool:
+    """执行 store 存在性检查，支持同步或异步回调。"""
+    result = store_exists(store_id)
+    if inspect.isawaitable(result):
+        return bool(await result)
+    return bool(result)
+
+
 # =============================================================================
 # 校验函数
 # =============================================================================
 
 
-def validate_create_case(
+async def validate_create_case(
     request: CreateCaseRequest,
-    store_exists: Callable[[str], bool],
+    store_exists: StoreExistsFn,
 ) -> list[FieldError]:
     """校验创建案例请求。
 
@@ -41,7 +54,7 @@ def validate_create_case(
 
     Args:
         request: 创建案例请求
-        store_exists: 门店存在性检查函数
+        store_exists: 门店存在性检查（同步 ``(str) -> bool`` 或异步 ``(str) -> Awaitable[bool]``）
 
     Returns:
         字段级错误列表
@@ -116,7 +129,7 @@ def validate_create_case(
 
     # 5. 校验 store_id 存在性
     if request.store_id and request.store_id != "":
-        if not store_exists(request.store_id):
+        if not await _resolve_store_exists(store_exists, request.store_id):
             errors.append(FieldError(
                 field="store_id",
                 message=f"store_id '{request.store_id}' does not exist",
@@ -125,9 +138,9 @@ def validate_create_case(
     return errors
 
 
-def validate_update_case(
+async def validate_update_case(
     request: UpdateCaseRequest,
-    store_exists: Callable[[str], bool],
+    store_exists: StoreExistsFn,
 ) -> list[FieldError]:
     """校验更新案例请求。
 
@@ -140,7 +153,7 @@ def validate_update_case(
 
     Args:
         request: 更新案例请求
-        store_exists: 门店存在性检查函数
+        store_exists: 门店存在性检查（同步或异步，见 ``validate_create_case``）
 
     Returns:
         字段级错误列表
@@ -163,7 +176,7 @@ def validate_update_case(
 
     # 3. 校验 store_id 存在性（如果提供）
     if request.store_id is not None and request.store_id != "":
-        if not store_exists(request.store_id):
+        if not await _resolve_store_exists(store_exists, request.store_id):
             errors.append(FieldError(
                 field="store_id",
                 message=f"store_id '{request.store_id}' does not exist",
@@ -216,17 +229,17 @@ class CaseValidator:
     """
 
     @staticmethod
-    def validate_create(
+    async def validate_create(
         request: CreateCaseRequest,
-        store_exists: Callable[[str], bool],
+        store_exists: StoreExistsFn,
     ) -> list[FieldError]:
         """校验创建案例请求。"""
-        return validate_create_case(request, store_exists)
+        return await validate_create_case(request, store_exists)
 
     @staticmethod
-    def validate_update(
+    async def validate_update(
         request: UpdateCaseRequest,
-        store_exists: Callable[[str], bool],
+        store_exists: StoreExistsFn,
     ) -> list[FieldError]:
         """校验更新案例请求。"""
-        return validate_update_case(request, store_exists)
+        return await validate_update_case(request, store_exists)

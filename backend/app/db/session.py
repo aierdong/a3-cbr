@@ -2,6 +2,8 @@
 
 Provides database session lifecycle management.
 """
+import logging
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -9,6 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import declarative_base
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+# 会话依赖中非 handler 阶段耗时 INFO 阈值（毫秒）：连接池等待或 commit 异常长时便于排查
+_SESSION_SLOW_MS = 500.0
 
 # 创建异步引擎
 engine = create_async_engine(
@@ -37,10 +44,23 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
     For request-level session management in FastAPI routes.
     """
+    t_enter = time.perf_counter()
     async with async_session_maker() as session:
+        pool_acquire_ms = (time.perf_counter() - t_enter) * 1000.0
         try:
             yield session
+            t_commit = time.perf_counter()
             await session.commit()
+            commit_ms = (time.perf_counter() - t_commit) * 1000.0
+            msg = "get_db timings pool_acquire_ms=%.1f commit_ms=%.1f"
+            args = (pool_acquire_ms, commit_ms)
+            if (
+                pool_acquire_ms >= _SESSION_SLOW_MS
+                or commit_ms >= _SESSION_SLOW_MS
+            ):
+                logger.info(msg, *args)
+            else:
+                logger.debug(msg, *args)
         except Exception:
             await session.rollback()
             raise

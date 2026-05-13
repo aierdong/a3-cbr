@@ -426,7 +426,7 @@ class EmbeddingInputComposer:
 | 场景上下文 | `a3-case-management` | `A3Case.context` | JSON 对象；Composer 仅做稳定序列化（键顺序、空格、换行规则固定），不改写业务语义。 |
 | 根因分类 | `llm-case-enrichment` + `a3-case-management` | `CaseEnrichmentResult.structured_suggestions.root_cause_category`；`A3Case.root_cause`（可选） | **同一段落**：结构化「根因分类」建议为主；是否将人工根因叙述 `root_cause` 并入该段落由实现固定（同属问题侧，非解法/效果）。 |
 | 适用场景 | `llm-case-enrichment` | `CaseEnrichmentResult.structured_suggestions.applicable_scenarios` | LLM 适用场景建议。 |
-| 标签 | `llm-case-enrichment` | `CaseEnrichmentResult.tag_suggestions` | 规范化标签字符串数组；展开为稳定文本格式（分隔符、排序规则固定）。 |
+| 标签 | `llm-case-enrichment` | `CaseEnrichmentResult.tag_suggestions`；详情 API `GET /api/a3-cases/{case_id}` 同步暴露为 `CaseDetailResponse.tag_suggestions` | 规范化标签字符串数组；展开为稳定文本格式（分隔符、排序规则固定）。 |
 
 **明确排除（不得进入主召回组合文本）**：`A3Case.solution_steps`、`A3Case.outcome`、`CaseEnrichmentResult.solution_summary`、推荐文案类载荷（如 `RecommendationCopyRun` 相关）、推荐分值与反馈字段；与上文 Invariants 一致。
 

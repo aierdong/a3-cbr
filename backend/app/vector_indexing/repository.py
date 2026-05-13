@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from sqlalchemy import cast, delete, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.vector_indexing.models import (
     CaseVector,
@@ -62,8 +63,23 @@ class VectorRepository:
         """
         self._db = db
 
-    def _row_to_case_vector(self, row: CaseVector) -> CaseVectorPersisted:
-        """内部工具：CaseVector ORM → CaseVectorPersisted。"""
+    def _row_to_case_vector(
+        self,
+        row: CaseVector,
+        *,
+        embedding_override: list[float] | None = None,
+    ) -> CaseVectorPersisted:
+        """内部工具：CaseVector ORM → CaseVectorPersisted。
+
+        Args:
+            row: ORM 行。
+            embedding_override: 若提供则不再读取 ``row.embedding_vector``
+                （用于 defer 列，避免二次查询）。
+        """
+        if embedding_override is not None:
+            emb = embedding_override
+        else:
+            emb = _float_vector(row.embedding_vector)
         return CaseVectorPersisted(
             vector_id=row.vector_id,
             case_id=row.case_id,
@@ -72,7 +88,7 @@ class VectorRepository:
             enrichment_status=row.enrichment_status,
             embedding_model_id=row.embedding_model_id,
             embedding_dimension=row.embedding_dimension,
-            embedding_vector=_float_vector(row.embedding_vector),
+            embedding_vector=emb,
             brand_id=row.brand_id,
             store_id=row.store_id,
             problem_type=row.problem_type,
@@ -287,6 +303,29 @@ class VectorRepository:
         if row is None:
             return None
         return self._row_to_case_vector(row)
+
+    async def get_current_vector_for_status(self, case_id: str) -> CaseVectorPersisted | None:
+        """读取案例当前向量元数据（不加载 ``embedding_vector`` 列）。
+
+        ``GET /vector-index`` 状态接口不需要坐标数组；
+        跳过大型 pgvector 列可减少 IO 与 Python 侧转换耗时。
+
+        Args:
+            case_id: 案例标识。
+
+        Returns:
+            向量快照（``embedding_vector`` 为空列表占位）；不存在则为 ``None``。
+        """
+        stmt = (
+            select(CaseVector)
+            .where(CaseVector.case_id == case_id)
+            .options(defer(CaseVector.embedding_vector))
+        )
+        res = await self._db.execute(stmt)
+        row = res.scalar_one_or_none()
+        if row is None:
+            return None
+        return self._row_to_case_vector(row, embedding_override=[])
 
     async def delete_case_vector(
         self,

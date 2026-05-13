@@ -62,8 +62,10 @@ def load_cleanup_config(
     """
     path = Path(config_path)
     if not path.exists():
-        logger.warning("清理配置文件不存在: %s，使用默认配置", config_path)
-        return EnrichmentCleanupConfig()
+        path = Path("backend/" + config_path)
+        if not path.exists():
+            logger.warning("清理配置文件不存在: %s，使用默认配置", config_path)
+            return EnrichmentCleanupConfig()
 
     try:
         with open(path, encoding="utf-8") as f:

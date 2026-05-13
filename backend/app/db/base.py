@@ -5,6 +5,9 @@
 """
 from app.db.session import Base
 
+# 导入案例 ORM，使其注册到 Base.metadata（测试夹具 create_all / drop_all 依赖完整元数据）
+from app.cases import models as cases_models  # noqa: F401
+
 # 导入增强 ORM 模型，使其注册到 Base.metadata
 from app.enrichment import models as enrichment_models  # noqa: F401
 

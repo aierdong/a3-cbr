@@ -232,8 +232,13 @@ components:
       additionalProperties: false
     CaseReference:
       type: object
-      required: [title_preview, description_preview, case_updated_at]
+      description: >
+        案例引用快照（对应后端 `RecommendationItemResponse.case_reference: dict`）。
+        相似案例检索成功路径常仅返回 `case_id`；详情完整时可包含标题/描述预览等字段。
       properties:
+        case_id:
+          type: string
+          description: 案例标识（最小引用时常仅返回此项）。
         title_preview:
           type: string
         description_preview:
@@ -250,21 +255,47 @@ components:
         case_updated_at:
           type: string
           format: date-time
-      additionalProperties: false
-    ScoreBreakdown:
+      additionalProperties: true
+    ScoreMetadata:
       type: object
-      required: [final_score_source]
+      description: 分值明细元数据（后端字段名 `score_metadata`，模型 `ScoreBreakdownResponse`）。
+      required:
+        - vector_similarity_score
+        - final_score
+        - final_score_source
+        - normalized_scores
+        - effective_weights
       properties:
+        vector_similarity_score:
+          type: number
+          format: float
+        semantic_similarity_score:
+          type: number
+          format: float
+          nullable: true
+        structured_similarity_score:
+          type: number
+          format: float
+          nullable: true
+        business_score:
+          type: number
+          format: float
+          nullable: true
+        final_score:
+          type: number
+          format: float
         final_score_source:
           $ref: '#/components/schemas/ScoreFinalSource'
-        weights:
+        normalized_scores:
           type: object
           additionalProperties:
             type: number
             format: float
-        factors:
+        effective_weights:
           type: object
-          additionalProperties: true
+          additionalProperties:
+            type: number
+            format: float
       additionalProperties: false
     RecommendationItem:
       type: object
@@ -275,16 +306,13 @@ components:
         - case_reference
         - vector_similarity_score
         - final_score
-        - score_breakdown
+        - score_metadata
         - explanation_status
         - missing_fields
       properties:
         recommendation_item_id:
           type: string
-          description: >
-            推荐项唯一标识。nullable 表示运行级推荐（无具体推荐项）。
-            注意：历史设计中曾使用字面值 "RUN" 表示运行级，现已废弃，统一使用 null。
-          nullable: true
+          description: 推荐项唯一标识。
         case_id:
           type: string
         rank:
@@ -293,15 +321,17 @@ components:
         case_reference:
           $ref: '#/components/schemas/CaseReference'
         core_solution_steps:
-          type: array
-          items:
-            type: string
+          type: string
+          nullable: true
+          description: 核心解决步骤文本（后端为 Optional[str]，非字符串数组）。
         outcome_summary:
           type: string
           nullable: true
         structured_suggestions_summary:
-          type: string
+          type: object
           nullable: true
+          additionalProperties: true
+          description: 结构化建议摘要（后端为 Optional[dict]）。
         vector_similarity_score:
           type: number
           format: float
@@ -321,8 +351,8 @@ components:
           type: number
           format: float
           description: 未聚合或降级路径下可为 0.0
-        score_breakdown:
-          $ref: '#/components/schemas/ScoreBreakdown'
+        score_metadata:
+          $ref: '#/components/schemas/ScoreMetadata'
         recommendation_reason:
           type: string
           nullable: true
@@ -347,24 +377,27 @@ components:
       additionalProperties: false
     QueryMetadata:
       type: object
+      description: >
+        POST `/similar-cases` 响应中的查询元数据（后端类型为 `dict[str, Any]`）。
+        当前实现至少包含 requested_top_k、returned_count、latency_ms；其余键可选且可扩展。
       required:
-        - query_hash
         - requested_top_k
-        - vector_candidate_count
         - returned_count
         - latency_ms
       properties:
         query_hash:
           type: string
+          description: 查询文本哈希（若服务端写入）。
         requested_top_k:
           type: integer
         vector_candidate_count:
           type: integer
+          description: 向量候选数量（若服务端写入）。
         returned_count:
           type: integer
         latency_ms:
           type: integer
-      additionalProperties: false
+      additionalProperties: true
     RecommendationResponse:
       type: object
       required:
@@ -389,9 +422,10 @@ components:
           type: string
           nullable: true
         degraded_reason:
-          allOf:
-            - $ref: '#/components/schemas/DegradedReason'
+          type: string
           nullable: true
+          description: >
+            降级原因（后端 `Optional[str]`；取值常与 DegradedReason 枚举一致）。
         applied_filters:
           type: object
           additionalProperties: true
@@ -409,15 +443,18 @@ components:
       additionalProperties: false
     RecommendationRunResponse:
       type: object
+      description: GET `/recommendations/runs/{run_id}` 响应（对应后端 `RecommendationRunResponse`）。
       required:
         - recommendation_run_id
         - contract_version
-        - status
+        - query_text_hash
         - applied_filters
         - score_weights
         - requested_top_k
         - returned_count
         - vector_candidate_count
+        - status
+        - reranker_model_id
         - reranker_status
         - aggregation_status
         - latency_ms
@@ -429,18 +466,9 @@ components:
           type: string
         contract_version:
           type: string
-        status:
-          $ref: '#/components/schemas/RecommendationStatus'
-        message:
+        query_text_hash:
           type: string
-          nullable: true
-        error_code:
-          type: string
-          nullable: true
-        degraded_reason:
-          allOf:
-            - $ref: '#/components/schemas/DegradedReason'
-          nullable: true
+          description: 查询文本哈希。
         applied_filters:
           type: object
           additionalProperties: true
@@ -449,23 +477,30 @@ components:
           additionalProperties:
             type: number
             format: float
-        query_hash:
-          type: string
         requested_top_k:
           type: integer
         returned_count:
           type: integer
         vector_candidate_count:
           type: integer
+        status:
+          $ref: '#/components/schemas/RecommendationStatus'
+        degraded_reason:
+          type: string
+          nullable: true
         reranker_model_id:
           type: string
         reranker_status:
           type: string
-          enum: [pending, succeeded, failed]
+          enum: [pending, succeeded, failed, skipped]
         aggregation_status:
           type: string
+          enum: [succeeded, failed, skipped]
         latency_ms:
           type: integer
+        error_code:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time

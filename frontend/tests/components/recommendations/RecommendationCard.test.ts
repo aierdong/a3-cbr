@@ -4,6 +4,22 @@ import RecommendationCard from '../../../src/components/recommendations/Recommen
 import FeedbackControls from '../../../src/components/recommendations/FeedbackControls.vue'
 import type { RecommendationItem } from '../../../src/api/recommendations'
 
+function baseScoreMetadata(
+  overrides: Partial<RecommendationItem['score_metadata']> = {}
+): RecommendationItem['score_metadata'] {
+  return {
+    vector_similarity_score: 0.81,
+    semantic_similarity_score: 0.72,
+    structured_similarity_score: 0.65,
+    business_score: 0.1,
+    final_score: 0.77,
+    final_score_source: 'aggregated',
+    normalized_scores: {},
+    effective_weights: {},
+    ...overrides,
+  }
+}
+
 const baseItem = (): RecommendationItem => ({
   recommendation_item_id: 'it-1',
   case_id: 'case-1',
@@ -13,14 +29,14 @@ const baseItem = (): RecommendationItem => ({
     description_preview: '描述预览',
     case_updated_at: '2026-01-01T00:00:00Z',
   },
-  core_solution_steps: ['步骤一'],
+  core_solution_steps: '步骤一',
   outcome_summary: '效果好',
   vector_similarity_score: 0.81,
   semantic_similarity_score: 0.72,
   structured_similarity_score: 0.65,
   business_score: 0.1,
   final_score: 0.77,
-  score_breakdown: { final_score_source: 'aggregated' },
+  score_metadata: baseScoreMetadata(),
   recommendation_reason: '理由',
   reference_points: ['点 A'],
   cautions: ['注意 B'],
@@ -34,6 +50,7 @@ describe('RecommendationCard', () => {
     const w = mount(RecommendationCard, { props: { item: baseItem() } })
     const html = w.html()
     expect(html).toContain('case-1')
+    expect(html).toContain('步骤一')
     expect(html).toContain('向量相似度')
     expect(html).toContain('语义相似度')
     expect(html).toContain('推荐理由')
@@ -64,13 +81,19 @@ describe('RecommendationCard', () => {
     expect(w.find('[data-testid="feedback-item-it-1"]').exists()).toBe(true)
   })
 
-  it('无 recommendation_item_id 时不渲染反馈控件', () => {
+  it('score_metadata.final_score_source 应展示在分值来源', () => {
     const item = baseItem()
-    item.recommendation_item_id = null
-    const feedbackApi = { submit: vi.fn() } as unknown as import('../../../src/api/feedback').FeedbackApiService
-    const w = mount(RecommendationCard, {
-      props: { item, recommendationRunId: 'run-1', feedbackApi },
-    })
-    expect(w.findComponent(FeedbackControls).exists()).toBe(false)
+    item.score_metadata = baseScoreMetadata({ final_score_source: 'default_zero_not_aggregated' })
+    const w = mount(RecommendationCard, { props: { item } })
+    expect(w.html()).toContain('default_zero_not_aggregated')
+  })
+
+  it('case_reference 仅含 case_id 时应展示回退标题', () => {
+    const item = {
+      ...baseItem(),
+      case_reference: { case_id: 'case_only_id' } as RecommendationItem['case_reference'],
+    }
+    const w = mount(RecommendationCard, { props: { item } })
+    expect(w.html()).toContain('案例 case_only_id')
   })
 })

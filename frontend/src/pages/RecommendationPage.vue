@@ -69,7 +69,8 @@ import ErrorNotice from '@/components/common/ErrorNotice.vue'
 import LoadingState from '@/components/common/LoadingState.vue'
 import { useRecommendations } from '@/composables/useRecommendations'
 
-const client = createApiClient()
+/** 相似案例链路含多次 LLM 调用，默认 30s 易触发 AbortError */
+const client = createApiClient({ timeout: 180000 })
 const recommendationApi = createRecommendationApiService(client)
 const feedbackApi = createFeedbackApiService(client)
 const { draft, lastResult, submitting, pageError, fieldErrors, search } = useRecommendations(recommendationApi)

@@ -196,6 +196,26 @@ class TestSuccessfulCompletion:
         assert captured["temperature"] == 0.7
 
     @pytest.mark.asyncio
+    async def test_response_format_passed_when_set(self):
+        """request.response_format 传入 SDK（如 DeepSeek JSON Output）。"""
+        captured: dict = {}
+
+        async def capture_create(**kwargs):
+            captured.update(kwargs)
+            return _stub_chat_completion()
+
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=capture_create)
+
+        client = LLMClient(_enrichment_config(), _async_client=mock)
+        req = _completion_request(
+            response_format={"type": "json_object"},
+        )
+        await client.complete_json(req)
+
+        assert captured["response_format"] == {"type": "json_object"}
+
+    @pytest.mark.asyncio
     async def test_omits_max_tokens_when_none(self):
         """max_tokens=None 时不传入 SDK。"""
         captured: dict = {}

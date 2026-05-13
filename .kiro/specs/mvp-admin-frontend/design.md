@@ -10,6 +10,7 @@
 
 - 建立 Vue 3 MVP 后台应用结构、路由、布局和基础状态处理。
 - 提供案例列表、详情、创建和编辑页面。
+- 在「提交且摘要」操作中协调案例保存（`a3-case-management`）与增强运行创建（`llm-case-enrichment`）：先完成 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}`，成功后再调用 `POST /api/a3-cases/{case_id}/enrichment-runs`；不等待增强任务完成，也不轮询增强结果。
 - 提供相似案例检索页面，展示后端返回的 Top-K 推荐、分值、解释和降级状态。
 - 提供运行级和推荐项级反馈控件，反馈失败不影响推荐结果可见性。
 - 用 TypeScript 类型和 API service 集中对齐上游契约。
@@ -44,12 +45,13 @@
 - `a3-case-management` API：`/api/a3-cases` 创建、编辑、详情和列表查询。
 - `cbr-retrieval-recommendation` API：`/api/recommendations/similar-cases` 推荐检索。
 - `recommendation-feedback` API：`/api/recommendation-feedback` 反馈提交。
-- `llm-case-enrichment` 只通过推荐响应中的解释字段间接展示，不由前端直接生成。
+- `llm-case-enrichment` API：仅消费「创建增强运行」等与后台管理相关的端点（当前 MVP 为 `POST /api/a3-cases/{case_id}/enrichment-runs`），用于在案例保存成功后触发异步增强；前端不实现摘要生成、校验或轮询，推荐页对增强产物的消费仍以后端聚合/详情契约为准。
 - Vue 3、TypeScript、Vite、Vue Router；可选轻量状态管理库仅用于跨页面状态。
 
 ### Revalidation Triggers
 
 - 上游 API 路径、请求字段、响应字段、枚举、状态或错误结构变化。
+- `llm-case-enrichment` 中与案例表单联动的触发类端点（如 `enrichment-runs`）契约变化。
 - 推荐响应中 `recommendation_run_id`、`recommendation_item_id`、分值或解释状态语义变化。
 - 反馈提交字段、有用性或幂等规则变化。
 - 产品要求新增权限、多租户、看板、消息推送或移动端优先体验。
@@ -70,10 +72,12 @@ flowchart TB
     Layout --> CasePages[CasePages]
     Layout --> RetrievalPage[RetrievalPage]
     CasePages --> CaseService[CaseApiService]
+    CasePages --> EnrichmentService[EnrichmentApiService]
     RetrievalPage --> RecommendationService[RecommendationApiService]
     RetrievalPage --> FeedbackControls[FeedbackControls]
     FeedbackControls --> FeedbackService[FeedbackApiService]
     CaseService --> ApiClient[ApiClient]
+    EnrichmentService --> ApiClient
     RecommendationService --> ApiClient
     FeedbackService --> ApiClient
     ApiClient --> Backend[BackendAPI]
@@ -81,7 +85,7 @@ flowchart TB
 
 **Architecture Integration**:
 - Selected pattern: Vue 3 单页应用 + 页面组件 + 领域 API service。页面负责交互，service 负责契约映射，通用组件负责状态展示。
-- Domain/feature boundaries: 案例页面只消费案例 API；推荐页面只展示推荐响应；反馈控件只提交反馈，不改变推荐结果。
+- Domain/feature boundaries: 案例页面以 `CaseApiService` 为权威来源消费案例 CRUD；在用户显式选择「提交且摘要」时，由案例创建/编辑页在保存成功后调用 `EnrichmentApiService` 触发增强运行（与 `a3-case-management`、`llm-case-enrichment` 设计中的跨规格事务语义一致）。推荐页面只展示推荐响应；反馈控件只提交反馈，不改变推荐结果。
 - Existing patterns preserved: 延续 roadmap 的 Vue 3 前端约束和 MVP 轻量原则。
 - New components rationale: 需要集中 API 客户端和类型定义，避免页面直接散落后端字段。
 - Dependency direction: `types → apiClient → domain api services → composables/stores → pages/components → router/app`。页面不得绕过 service 直接拼接上游契约。
@@ -117,12 +121,14 @@ frontend/
 │   │   ├── generated/                   # openapi-typescript 生成的类型（禁止手动编辑）
 │   │   │   ├── cases.ts                 # 来源：a3-case-management.openapi.yaml
 │   │   │   ├── recommendations.ts       # 来源：cbr-retrieval-recommendation.openapi.yaml
-│   │   │   └── feedback.ts             # 来源：recommendation-feedback.openapi.yaml
+│   │   │   ├── feedback.ts              # 来源：recommendation-feedback.openapi.yaml
+│   │   │   └── enrichment.ts            # 来源：llm-case-enrichment.openapi.yaml
 │   │   ├── client.ts                    # fetch 封装、错误映射和请求配置
 │   │   ├── errors.ts                    # API 错误类型、字段错误和状态分类
 │   │   ├── cases.ts                     # 案例 API service（引用 generated 类型）
 │   │   ├── recommendations.ts           # 推荐检索 API service（引用 generated 类型）
-│   │   └── feedback.ts                  # 推荐反馈 API service（引用 generated 类型）
+│   │   ├── feedback.ts                  # 推荐反馈 API service（引用 generated 类型）
+│   │   └── enrichment.ts                # 案例增强触发 API service（引用 generated 类型）
 │   ├── components/
 │   │   ├── layout/
 │   │   │   └── AdminLayout.vue          # 案例与推荐导航、页面容器
@@ -157,6 +163,7 @@ frontend/
 └── tests/
     ├── api/
     │   ├── cases.test.ts                # 案例 API 映射测试
+    │   ├── enrichment.test.ts           # 增强触发 API 映射测试
     │   ├── recommendations.test.ts      # 推荐响应映射测试
     │   └── feedback.test.ts             # 反馈请求映射测试
     ├── components/
@@ -189,6 +196,36 @@ sequenceDiagram
     CaseService-->>CasePage: typed result
     CasePage-->>User: render data or field errors
 ```
+
+### 「提交且摘要」跨规格流程
+
+与 `.kiro/specs/a3-case-management/design.md`、`llm-case-enrichment/design.md` 对齐：用户点击「提交且摘要」后，前端须先完成案例持久化，再触发增强运行；两个后端规格无共享数据库事务，由前端编排 HTTP 调用顺序。
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CasePage as CaseCreateOrEditPage
+    participant CaseSvc as CaseApiService
+    participant EnrichSvc as EnrichmentApiService
+    participant CasesAPI as POST_or_PUT_/api/a3-cases
+    participant EnrichAPI as POST_/api/a3-cases/{id}/enrichment-runs
+    User->>CasePage: 提交且摘要
+    CasePage->>CaseSvc: create / update
+    CaseSvc->>CasesAPI: 保存案例
+    CasesAPI-->>CaseSvc: 200 CaseDetailResponse
+    CaseSvc-->>CasePage: 保存成功
+    CasePage->>EnrichSvc: createEnrichmentRun(case_id)
+    EnrichSvc->>EnrichAPI: POST（请求体可为空对象）
+    EnrichAPI-->>EnrichSvc: 200 EnrichmentRunResponse 或错误
+    EnrichSvc-->>CasePage: 触发结果
+    CasePage-->>User: 保存成功；增强触发失败时单独提示并可重试触发
+```
+
+**语义约束**：
+
+- 案例保存失败（非 2xx）：不得调用 `enrichment-runs`；向用户展示保存/校验错误。
+- 案例保存成功：再调用 `POST /api/a3-cases/{case_id}/enrichment-runs`；仅等待该 HTTP 响应表示「已接受运行」，**不**轮询增强完成、**不**阻塞 UI 直至 LLM 产出写入。
+- 增强触发失败（4xx/5xx/网络）：案例已落库仍可查看；页面展示「摘要生成触发失败」类提示，并允许用户重试触发（再次 POST `enrichment-runs`），与上游「增强失败可稍后重试」一致。
 
 ### 推荐与反馈流程
 
@@ -233,7 +270,8 @@ sequenceDiagram
 | 3.2 | 编辑字段保护 | CaseForm, CaseEditPage | UpdateCaseRequest | 案例管理流程 |
 | 3.3 | 提交成功展示 | useCases, CaseForm | CaseDetailResponse | 案例管理流程 |
 | 3.4 | 字段级错误 | ErrorNotice, CaseForm | ValidationError | 案例管理流程 |
-| 3.5 | 不等待 AI 或推荐 | CaseForm, CaseApiService | module boundary | 案例管理流程 |
+| 3.5 | 不等待 AI 完成或轮询增强 | CaseForm, CaseCreatePage, CaseEditPage, CaseApiService, EnrichmentApiService | module boundary | 案例管理流程、「提交且摘要」跨规格流程 |
+| 3.6 | 「提交且摘要」编排 | CaseForm, CaseCreatePage, CaseEditPage, EnrichmentApiService | POST enrichment-runs | 「提交且摘要」跨规格流程 |
 | 4.1 | 检索输入 | RecommendationSearchForm | RecommendationRequest | 推荐与反馈流程 |
 | 4.2 | 推荐元数据展示 | RecommendationSummary | RecommendationResponse | 推荐与反馈流程 |
 | 4.3 | 推荐项展示 | RecommendationCard | RecommendationItem | 推荐与反馈流程 |
@@ -244,7 +282,7 @@ sequenceDiagram
 | 5.3 | 反馈成功状态 | useFeedback, FeedbackControls | FeedbackResponse | 推荐与反馈流程 |
 | 5.4 | 反馈失败不影响推荐 | FeedbackControls, ErrorNotice | ApiError | 推荐与反馈流程 |
 | 5.5 | 反馈不改变推荐 | useFeedback, RecommendationPage | module boundary | 推荐与反馈流程 |
-| 6.1 | 只用定义接口 | CaseApiService, RecommendationApiService, FeedbackApiService | API services | All |
+| 6.1 | 只用定义接口 | CaseApiService, EnrichmentApiService, RecommendationApiService, FeedbackApiService | API services | All |
 | 6.2 | 状态可观察 | LoadingState, EmptyState, ErrorNotice, useAsyncState | UiAsyncState | All |
 | 6.3 | 上游变化重校验 | API types | contract mapping | All |
 | 6.4 | 敏感信息保护 | ApiClient, ErrorNotice | safe error model | All |
@@ -257,7 +295,8 @@ sequenceDiagram
 | AdminLayout | UI Layout | 提供基础导航、页面容器和当前位置 | 1.1, 1.2, 1.3, 1.5 | Vue Router P0 | State |
 | ApiClient | Integration | 统一 HTTP 调用、错误解析和脱敏错误模型 | 1.4, 6.1, 6.2, 6.4 | fetch P0 | Service |
 | CaseApiService | Integration | 消费案例 CRUD 和查询 API（Keyset 分页） | 2.1, 2.2, 2.4, 3.3, 6.1 | ApiClient P0 | API |
-| CaseForm | UI Form | 创建和编辑 A3 案例基础字段 | 3.1, 3.2, 3.4, 3.5 | CaseApiService P0 | State |
+| EnrichmentApiService | Integration | 消费 `llm-case-enrichment` 中与案例保存编排相关的 API（MVP：`POST /api/a3-cases/{case_id}/enrichment-runs`） | 3.5, 3.6, 6.1 | ApiClient P0 | API |
+| CaseForm | UI Form | 创建和编辑 A3 案例基础字段；提供「提交且摘要」等提交意图 | 3.1, 3.2, 3.4, 3.5, 3.6 | CaseApiService P0（提交由页面编排） | State |
 | CaseTable | UI Display | 展示案例列表、Keyset 分页结果和"加载更多"按钮 | 2.1, 2.3, 2.5 | CaseApiService P0 | State |
 | CaseDetailPanel | UI Display | 展示案例完整基础字段 | 2.4, 2.5 | CaseApiService P0 | State |
 | RecommendationApiService | Integration | 消费相似案例推荐 API | 4.1, 4.2, 4.3, 4.4, 4.5 | ApiClient P0 | API |
@@ -275,7 +314,7 @@ sequenceDiagram
 - **全匿名（产品决策）**：MVP 阶段后端 API 不要求认证，前端不实现登录、会话续期、Token 或角色权限框架；请求不附带 Bearer、API Key 或其它鉴权 Header。所有需要用户标识的场景（如反馈提交的 `actor_id`）统一使用匿名占位符 `anonymous_user`。这是 MVP 产品边界决策，不是设计缺陷。
   - **MVP 实现策略**：`FeedbackApiService` 在提交反馈时统一注入 `actor_id: "anonymous_user"`，前端组件无需关心该字段。
   - **后续演进路径**：若后续产品规格要求真实用户认证，需单独立项为"用户认证规格"，届时 `FeedbackApiService` 将从鉴权逻辑（如认证上下文、Vuex store 或 Composition API）中读取真实用户标识，前端无需修改反馈提交的业务逻辑。
-- **前后端一体化架构（重要设计原则）**：本系统前后端作为单一产品一体开发和部署，前后端是内部模块的相互调用关系，不是外部系统集成。API 类型定义以后端规格文档（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`）中的 OpenAPI 契约为权威来源，通过 `openapi-typescript` 自动生成前端 TypeScript 类型，并结合代码审查和集成测试保证字段映射的正确性。详见下方「Contract Synchronization」小节。
+- **前后端一体化架构（重要设计原则）**：本系统前后端作为单一产品一体开发和部署，前后端是内部模块的相互调用关系，不是外部系统集成。API 类型定义以后端规格文档（`a3-case-management`、`cbr-retrieval-recommendation`、`recommendation-feedback`、`llm-case-enrichment`）中的 OpenAPI 契约为权威来源，通过 `openapi-typescript` 自动生成前端 TypeScript 类型，并结合代码审查和集成测试保证字段映射的正确性。详见下方「Contract Synchronization」小节。
 - **开发环境代理**：本地联调通过 Vite `server.proxy` 将约定前缀（例如 `/api`）转发到本机或内网后端地址，由开发服务器代发同源请求。代理目标可用环境变量（例如 `VITE_API_PROXY_TARGET`）注入构建/开发环境，**不得**把密钥类凭据写入仓库或打包进静态资源。
 - **MVP 部署策略（单节点同源部署）**：MVP 阶段前后端部署在同一节点上，前端静态资源由后端 FastAPI 应用托管（通过 `StaticFiles` 中间件或 Nginx 反向代理），前端请求后端 API 为同源请求，无需配置 CORS。具体部署方式：
   - **方式 1（FastAPI 托管）**：FastAPI 应用挂载 `StaticFiles` 中间件，将前端构建产物（`frontend/dist`）托管在根路径或 `/admin` 路径下，API 路由保持 `/api` 前缀，前端通过相对路径访问 API。
@@ -299,13 +338,14 @@ docs/contracts/*.openapi.yaml  →  openapi-typescript  →  frontend/src/api/ge
 | 目录 | 用途 | 维护方式 |
 |------|------|---------|
 | `frontend/src/api/generated/` | 从 OpenAPI 契约生成的类型定义 | 自动生成，禁止手动编辑 |
-| `frontend/src/api/*.ts` (cases, recommendations, feedback) | API service 层，引用 generated 类型 | 手动编写，消费生成类型 |
+| `frontend/src/api/*.ts` (cases, recommendations, feedback, enrichment) | API service 层，引用 generated 类型 | 手动编写，消费生成类型 |
 
 生成的类型文件按契约来源分文件：
 
 - `generated/cases.ts` — 来源：`a3-case-management.openapi.yaml`
 - `generated/recommendations.ts` — 来源：`cbr-retrieval-recommendation.openapi.yaml`
 - `generated/feedback.ts` — 来源：`recommendation-feedback.openapi.yaml`
+- `generated/enrichment.ts` — 来源：`llm-case-enrichment.openapi.yaml`
 
 **生成命令**
 
@@ -314,6 +354,7 @@ docs/contracts/*.openapi.yaml  →  openapi-typescript  →  frontend/src/api/ge
 npx openapi-typescript docs/contracts/a3-case-management.openapi.yaml -o frontend/src/api/generated/cases.ts
 npx openapi-typescript docs/contracts/cbr-retrieval-recommendation.openapi.yaml -o frontend/src/api/generated/recommendations.ts
 npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o frontend/src/api/generated/feedback.ts
+npx openapi-typescript docs/contracts/llm-case-enrichment.openapi.yaml -o frontend/src/api/generated/enrichment.ts
 ```
 
 `package.json` 中注册为 npm script：
@@ -321,7 +362,7 @@ npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o fr
 ```json
 {
   "scripts": {
-    "generate:types": "npx openapi-typescript docs/contracts/a3-case-management.openapi.yaml -o frontend/src/api/generated/cases.ts && npx openapi-typescript docs/contracts/cbr-retrieval-recommendation.openapi.yaml -o frontend/src/api/generated/recommendations.ts && npx openapi-typescript docs/contracts/recommendation-feedback.openapi.yaml -o frontend/src/api/generated/feedback.ts"
+    "generate:types": "node ./scripts/generate-types.mjs"
   }
 }
 ```
@@ -401,7 +442,8 @@ interface ApiClient {
 **Implementation Notes**
 - `CaseForm` 将 `context`、`solution_steps`、`outcome` 作为结构化输入区域处理，提交前转换为上游请求结构。
 - 编辑模式禁止向 `UpdateCaseRequest` 发送 `case_id` 和 `created_at`。
-- 列表和详情展示不映射 embedding、相似度、推荐运行或反馈字段。
+- 列表和详情展示不映射 embedding、相似度、推荐运行或反馈内部字段。
+- **「提交且摘要」**：由 `CaseForm` 发出 `submit` 事件的 `intent: 'submit-with-summary'`（与「保存并关闭」相同，案例 `status` 为 `active`）；`CaseCreatePage` / `CaseEditPage` 在 `CaseApiService` 返回成功后调用 `EnrichmentApiService.createEnrichmentRun(case_id)`，不得在未保存成功时调用增强接口。
 - **Keyset 分页策略**：后端使用 Keyset 分页（`cursor_created_at`、`cursor_case_id`、`limit`），前端维护当前页最后一条记录的 `created_at` 和 `case_id` 作为下一页 cursor。UI 使用"加载更多"按钮触发下一页加载（MVP 优先保证可控性和测试覆盖），不实现"上一页"功能，不提供页码跳转。根据 `next_cursor_created_at` 是否为 null 判断 `has_next_page` 并控制按钮可见性。
 
 **"加载更多"按钮状态机**
@@ -427,13 +469,30 @@ interface ApiClient {
 
 | Field | Detail |
 |-------|--------|
-| Intent | 创建和编辑 A3 案例基础字段 |
-| Requirements | 3.1, 3.2, 3.3, 3.4, 3.5 |
+| Intent | 创建和编辑 A3 案例基础字段；通过 `submit` 的 meta.intent 区分「存为草稿」「保存并关闭 / 创建并关闭」「提交且摘要」 |
+| Requirements | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 |
 
 **State Management**
 - State model: 表单草稿、字段错误、提交中、提交成功、提交失败。
 - Persistence: 不把完整表单草稿写入 localStorage。
-- Invariants: 表单只提交案例基础字段；LLM、向量和推荐状态不是表单前置条件。
+- Invariants: 表单只提交案例基础字段；「提交且摘要」在保存成功后的增强触发由页面层完成，表单组件不直接调用 `EnrichmentApiService`。
+- Submit intents: `save-draft`（`status: draft`）、`save-and-close`（`status: active`）、`submit-with-summary`（`status: active`，由页面在保存成功后触发 `POST .../enrichment-runs`）。
+
+#### EnrichmentApiService（案例增强触发）
+
+| Field | Detail |
+|-------|--------|
+| Intent | 封装 `llm-case-enrichment` 中与案例保存编排相关的 API（MVP 仅 `createEnrichmentRun`） |
+| Requirements | 3.5, 3.6, 6.1 |
+
+**API Contract**
+
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| POST | `/api/a3-cases/{case_id}/enrichment-runs` | `CreateEnrichmentRunRequest`（可为 `{}`） | `EnrichmentRunResponse` | 404, 409, 422, 503 |
+
+**Implementation Notes**
+- 由案例创建/编辑页在案例 `POST`/`PUT` 成功之后调用；调用方只关心 HTTP 结果是否表示运行已创建/已接受，不解析或展示完整增强产物（详情页若展示派生字段，由案例详情契约与后端聚合策略决定）。
 
 ### Retrieval and Recommendation UI
 
@@ -791,7 +850,7 @@ ApiClient 构造 `ApiError` 时遵循以下脱敏规则（对应需求 6.4）：
 
 - `ApiClient` 映射成功响应、字段级错误、404、409、503 和系统错误。
 - `CaseApiService` 正确处理 Keyset 分页参数（cursor_created_at、cursor_case_id）和响应（next_cursor）。
-- `CaseForm` 提交创建和编辑字段，禁止编辑 `case_id` 与 `created_at`，并展示字段错误。
+- `CaseForm` 提交创建和编辑字段，提供「提交且摘要」意图（`submit-with-summary`），禁止编辑 `case_id` 与 `created_at`，并展示字段错误。
 - `CaseTable` 根据 `next_cursor_created_at` 是否为 null 判断 `has_next_page`，正确传递 cursor 参数，"加载更多"按钮根据 `has_next_page` 控制可见性。
 - `RecommendationCard` 展示分值明细、解释状态、缺失字段和语义/结构化评分为空的降级提示。
 - `FeedbackApiService` 统一注入 `actor_id: "anonymous_user"` 和 `source_channel: "admin_web"`（MVP 产品决策：后端 API 不要求认证）。
@@ -833,6 +892,7 @@ git diff --exit-code frontend/src/api/generated/
 | 案例详情响应映射 | `CaseApiService.detail()` 返回的对象包含 `problem_description`、`context`、`solution_steps`、`outcome` 等详情字段 |
 | 推荐响应映射 | `RecommendationApiService.recommend()` 返回的 `items` 数组中每个元素包含 `rank`、`final_score`、`recommendation_reason` 等字段 |
 | 反馈请求映射 | `FeedbackApiService.submit()` 发送的请求体包含 `recommendation_run_id`、`usefulness`、`actor_id`、`source_channel` 字段 |
+| 增强触发请求 | `EnrichmentApiService.createEnrichmentRun()` 对 `POST /api/a3-cases/{case_id}/enrichment-runs` 发送符合 `CreateEnrichmentRunRequest` 的请求体（MVP 可为 `{}`） |
 | 枚举值覆盖 | 响应中的 `status`、`problem_type`、`explanation_status` 等枚举字段值在生成类型中有对应定义 |
 
 ### E2E/UI Tests

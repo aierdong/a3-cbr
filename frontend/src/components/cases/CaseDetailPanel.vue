@@ -12,26 +12,26 @@
 
     <section class="block">
       <h3>门店与品牌</h3>
-      <dl class="kv">
-        <div><dt>门店标识</dt><dd class="mono">{{ detail.store_profile.store_id }}</dd></div>
-        <div><dt>门店名称</dt><dd>{{ detail.store_profile.store_name }}</dd></div>
-        <div><dt>品牌标识</dt><dd class="mono">{{ detail.store_profile.brand_id }}</dd></div>
-        <div><dt>品牌名称</dt><dd>{{ detail.store_profile.brand_name }}</dd></div>
-        <div><dt>业态</dt><dd>{{ detail.store_profile.business_type }}</dd></div>
-        <div><dt>门店规模</dt><dd>{{ detail.store_profile.store_scale }}</dd></div>
-        <div><dt>加盟类型</dt><dd>{{ detail.store_profile.franchise_type }}</dd></div>
-        <div><dt>城市</dt><dd>{{ detail.store_profile.city }}</dd></div>
-        <div><dt>城市层级</dt><dd>{{ detail.store_profile.city_tier }}</dd></div>
+      <dl v-if="storeFields" class="kv">
+        <div><dt>门店标识</dt><dd class="mono">{{ storeFields.store_id }}</dd></div>
+        <div><dt>门店名称</dt><dd>{{ storeFields.store_name }}</dd></div>
+        <div><dt>品牌标识</dt><dd class="mono">{{ storeFields.brand_id }}</dd></div>
+        <div><dt>品牌名称</dt><dd>{{ storeFields.brand_name }}</dd></div>
+        <div><dt>业态</dt><dd>{{ storeFields.business_type }}</dd></div>
+        <div><dt>门店规模</dt><dd>{{ storeFields.store_scale }}</dd></div>
+        <div><dt>加盟类型</dt><dd>{{ storeFields.franchise_type }}</dd></div>
+        <div><dt>城市</dt><dd>{{ storeFields.city }}</dd></div>
+        <div><dt>城市层级</dt><dd>{{ storeFields.city_tier }}</dd></div>
       </dl>
+      <p v-else class="hint">缺少门店信息</p>
     </section>
 
     <section class="block">
       <h3>分类与状态</h3>
       <dl class="kv">
-        <div><dt>问题类型</dt><dd>{{ formatProblemType(detail.problem_type) }}</dd></div>
+        <div><dt>问题类型</dt><dd>{{ formatCaseProblemType(detail.problem_type) }}</dd></div>
         <div><dt>状态</dt><dd>{{ formatStatus(detail.status) }}</dd></div>
         <div><dt>标签</dt><dd>{{ tagsLine }}</dd></div>
-        <p v-if="!contractTags.length" class="hint">当前 OpenAPI 契约未包含标签字段；列表「标签」列待契约扩展后对齐。</p>
       </dl>
     </section>
 
@@ -85,19 +85,23 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { CaseDetailResponse } from '@/api/cases'
+import { detailStore, type CaseDetailResponseApi } from '@/domain/caseListDisplay'
+import { formatCaseProblemType } from '@/domain/caseProblemType'
 
 const props = defineProps<{
   detail: CaseDetailResponse
 }>()
 
-type DetailWithTags = CaseDetailResponse & { tags?: string[] }
+const storeFields = computed(() => detailStore(props.detail as CaseDetailResponseApi))
 
-const contractTags = computed(() => {
-  const t = (props.detail as DetailWithTags).tags
+const tagSuggestions = computed(() => {
+  const t = props.detail.tag_suggestions
   return Array.isArray(t) ? t : []
 })
 
-const tagsLine = computed(() => (contractTags.value.length ? contractTags.value.join('、') : '—'))
+const tagsLine = computed(() =>
+  tagSuggestions.value.length ? tagSuggestions.value.join('、') : '—'
+)
 
 const sortedSteps = computed(() =>
   [...props.detail.solution_steps].sort((a, b) => a.order - b.order)
@@ -115,15 +119,6 @@ const contextExtras = computed(() => {
   return rows
 })
 
-const problemLabels: Record<string, string> = {
-  service: '服务',
-  quality: '质量',
-  operation: '运营',
-  hygiene: '卫生',
-  staffing: '人力',
-  other: '其他',
-}
-
 const statusLabels: Record<string, string> = {
   draft: '草稿',
   active: '生效',
@@ -134,10 +129,6 @@ const outcomeLabels: Record<string, string> = {
   improved: '改善',
   no_change: '无变化',
   unknown: '未知',
-}
-
-function formatProblemType(v: string): string {
-  return problemLabels[v] ?? v
 }
 
 function formatStatus(v: string): string {
@@ -210,7 +201,8 @@ dd {
 
 .steps {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 0;
+  list-style: none;
 }
 
 .step-order {

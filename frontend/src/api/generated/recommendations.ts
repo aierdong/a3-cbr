@@ -91,33 +91,53 @@ export interface components {
             filters?: components["schemas"]["RecommendationFilters"];
             business_weights?: components["schemas"]["BusinessWeights"];
         };
+        /** @description 案例引用快照（对应后端 `RecommendationItemResponse.case_reference: dict`）。 相似案例检索成功路径常仅返回 `case_id`；详情完整时可包含标题/描述预览等字段。 */
         CaseReference: {
-            title_preview: string;
-            description_preview: string;
+            /** @description 案例标识（最小引用时常仅返回此项）。 */
+            case_id?: string;
+            title_preview?: string;
+            description_preview?: string;
             brand_summary?: string | null;
             store_summary?: string | null;
             filter_summary?: string | null;
             /** Format: date-time */
-            case_updated_at: string;
+            case_updated_at?: string;
+        } & {
+            [key: string]: unknown;
         };
-        ScoreBreakdown: {
+        /** @description 分值明细元数据（后端字段名 `score_metadata`，模型 `ScoreBreakdownResponse`）。 */
+        ScoreMetadata: {
+            /** Format: float */
+            vector_similarity_score: number;
+            /** Format: float */
+            semantic_similarity_score?: number | null;
+            /** Format: float */
+            structured_similarity_score?: number | null;
+            /** Format: float */
+            business_score?: number | null;
+            /** Format: float */
+            final_score: number;
             final_score_source: components["schemas"]["ScoreFinalSource"];
-            weights?: {
+            normalized_scores: {
                 [key: string]: number;
             };
-            factors?: {
-                [key: string]: unknown;
+            effective_weights: {
+                [key: string]: number;
             };
         };
         RecommendationItem: {
-            /** @description 推荐项唯一标识。nullable 表示运行级推荐（无具体推荐项）。 注意：历史设计中曾使用字面值 "RUN" 表示运行级，现已废弃，统一使用 null。 */
-            recommendation_item_id: string | null;
+            /** @description 推荐项唯一标识。 */
+            recommendation_item_id: string;
             case_id: string;
             rank: number;
             case_reference: components["schemas"]["CaseReference"];
-            core_solution_steps?: string[];
+            /** @description 核心解决步骤文本（后端为 Optional[str]，非字符串数组）。 */
+            core_solution_steps?: string | null;
             outcome_summary?: string | null;
-            structured_suggestions_summary?: string | null;
+            /** @description 结构化建议摘要（后端为 Optional[dict]）。 */
+            structured_suggestions_summary?: {
+                [key: string]: unknown;
+            } | null;
             /** Format: float */
             vector_similarity_score: number;
             /** Format: float */
@@ -131,7 +151,7 @@ export interface components {
              * @description 未聚合或降级路径下可为 0.0
              */
             final_score: number;
-            score_breakdown: components["schemas"]["ScoreBreakdown"];
+            score_metadata: components["schemas"]["ScoreMetadata"];
             recommendation_reason?: string | null;
             reference_points?: string[];
             cautions?: string[];
@@ -139,12 +159,17 @@ export interface components {
             explanation_status: components["schemas"]["ExplanationStatus"];
             missing_fields: string[];
         };
+        /** @description POST `/similar-cases` 响应中的查询元数据（后端类型为 `dict[str, Any]`）。 当前实现至少包含 requested_top_k、returned_count、latency_ms；其余键可选且可扩展。 */
         QueryMetadata: {
-            query_hash: string;
+            /** @description 查询文本哈希（若服务端写入）。 */
+            query_hash?: string;
             requested_top_k: number;
-            vector_candidate_count: number;
+            /** @description 向量候选数量（若服务端写入）。 */
+            vector_candidate_count?: number;
             returned_count: number;
             latency_ms: number;
+        } & {
+            [key: string]: unknown;
         };
         RecommendationResponse: {
             recommendation_run_id: string;
@@ -152,7 +177,8 @@ export interface components {
             status: components["schemas"]["RecommendationStatus"];
             message?: string | null;
             error_code?: string | null;
-            degraded_reason?: components["schemas"]["DegradedReason"] | null;
+            /** @description 降级原因（后端 `Optional[str]`；取值常与 DegradedReason 枚举一致）。 */
+            degraded_reason?: string | null;
             applied_filters: {
                 [key: string]: unknown;
             };
@@ -162,28 +188,30 @@ export interface components {
             query_metadata: components["schemas"]["QueryMetadata"];
             items: components["schemas"]["RecommendationItem"][];
         };
+        /** @description GET `/recommendations/runs/{run_id}` 响应（对应后端 `RecommendationRunResponse`）。 */
         RecommendationRunResponse: {
             recommendation_run_id: string;
             contract_version: string;
-            status: components["schemas"]["RecommendationStatus"];
-            message?: string | null;
-            error_code?: string | null;
-            degraded_reason?: components["schemas"]["DegradedReason"] | null;
+            /** @description 查询文本哈希。 */
+            query_text_hash: string;
             applied_filters: {
                 [key: string]: unknown;
             };
             score_weights: {
                 [key: string]: number;
             };
-            query_hash?: string;
             requested_top_k: number;
             returned_count: number;
             vector_candidate_count: number;
-            reranker_model_id?: string;
+            status: components["schemas"]["RecommendationStatus"];
+            degraded_reason?: string | null;
+            reranker_model_id: string;
             /** @enum {string} */
-            reranker_status: "pending" | "succeeded" | "failed";
-            aggregation_status: string;
+            reranker_status: "pending" | "succeeded" | "failed" | "skipped";
+            /** @enum {string} */
+            aggregation_status: "succeeded" | "failed" | "skipped";
             latency_ms: number;
+            error_code?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

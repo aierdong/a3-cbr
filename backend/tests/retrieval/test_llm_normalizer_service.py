@@ -31,7 +31,9 @@ from app.retrieval.query import (
 )
 from app.core.llm_client import LLMClientError
 from app.retrieval.repository import RecommendationRepository
+from app.retrieval.explainer import ExplanationResult
 from app.retrieval.schemas import (
+    ExplanationStatus,
     NormalizedRetrievalQuery,
     QueryStructuredSuggestions,
     RetrievalRequest,
@@ -389,6 +391,13 @@ class TestServiceNormalizerFailurePath:
         mock_reranker = MagicMock()
         mock_aggregator = MagicMock()
 
+        mock_explainer = MagicMock()
+        mock_explainer.explain = AsyncMock(
+            return_value=ExplanationResult(
+                items=[], status=ExplanationStatus.GENERATED
+            )
+        )
+
         config = _make_retrieval_config()
         service = RecommendationService(
             repository=mock_repo,
@@ -399,6 +408,7 @@ class TestServiceNormalizerFailurePath:
             business_scorer=mock_business_scorer,
             reranker=mock_reranker,
             aggregator=mock_aggregator,
+            explainer=mock_explainer,
             config=config,
         )
 
@@ -451,6 +461,13 @@ class TestServiceNormalizerFailurePath:
         mock_reranker = MagicMock()
         mock_aggregator = MagicMock()
 
+        mock_explainer = MagicMock()
+        mock_explainer.explain = AsyncMock(
+            return_value=ExplanationResult(
+                items=[], status=ExplanationStatus.GENERATED
+            )
+        )
+
         config = _make_retrieval_config()
         service = RecommendationService(
             repository=mock_repo,
@@ -461,6 +478,7 @@ class TestServiceNormalizerFailurePath:
             business_scorer=mock_business_scorer,
             reranker=mock_reranker,
             aggregator=mock_aggregator,
+            explainer=mock_explainer,
             config=config,
         )
 

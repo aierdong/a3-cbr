@@ -1,5 +1,5 @@
 <template>
-  <form class="case-form" @submit.prevent="onSubmit">
+  <form class="case-form" @submit.prevent>
     <template v-if="mode === 'edit' && initialDetail">
       <section class="readonly-block">
         <h3>只读信息</h3>
@@ -54,7 +54,7 @@
         data-testid="select-problem-type"
         :disabled="submitting"
       >
-        <option v-for="opt in problemOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        <option v-for="opt in CASE_PROBLEM_TYPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <p v-if="fieldErrors?.problem_type" class="field-error">{{ fieldErrors.problem_type }}</p>
     </section>
@@ -64,7 +64,7 @@
       <textarea
         id="pf-scene"
         v-model="draft.scene"
-        rows="3"
+        rows="1"
         data-testid="input-scene"
         :disabled="submitting"
       />
@@ -84,37 +84,18 @@
     </section>
 
     <section class="field-block">
-      <div class="steps-head">
-        <label>解决步骤 <span class="req">*</span></label>
-        <button
-          v-if="draft.solution_steps.length < 20"
-          type="button"
-          class="btn-ghost"
-          :disabled="submitting"
-          @click="addStep"
-        >
-          添加步骤
-        </button>
-      </div>
-      <div v-for="(step, idx) in draft.solution_steps" :key="idx" class="step-row">
-        <span class="step-label">步骤 {{ idx + 1 }}</span>
-        <textarea
-          v-model="step.content"
-          rows="2"
-          :data-testid="'input-step-' + idx"
-          :disabled="submitting"
-        />
-        <button
-          v-if="draft.solution_steps.length > 1"
-          type="button"
-          class="btn-ghost"
-          :disabled="submitting"
-          @click="removeStep(idx)"
-        >
-          删除
-        </button>
-        <p v-if="fieldErrors?.[stepErrorKey(idx)]" class="field-error">{{ fieldErrors[stepErrorKey(idx)] }}</p>
-      </div>
+      <label for="pf-steps">解决步骤 <span class="req">*</span></label>
+      <p class="field-hint">每行一个步骤；最多 20 步。提交时仍按接口要求的步骤列表上传。</p>
+      <textarea
+        id="pf-steps"
+        v-model="solutionStepsText"
+        rows="3"
+        data-testid="input-solution-steps"
+        :disabled="submitting"
+      />
+      <template v-for="item in solutionStepFieldErrors" :key="item.key">
+        <p class="field-error">{{ item.label }}：{{ item.message }}</p>
+      </template>
     </section>
 
     <section class="field-block">
@@ -138,32 +119,49 @@
       <p v-if="fieldErrors?.['outcome.notes']" class="field-error">{{ fieldErrors['outcome.notes'] }}</p>
     </section>
 
-    <section v-if="mode === 'edit'" class="field-block">
-      <label for="pf-status">案例状态</label>
-      <select id="pf-status" v-model="draft.status" data-testid="select-status" :disabled="submitting">
-        <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <p v-if="fieldErrors?.status" class="field-error">{{ fieldErrors.status }}</p>
-    </section>
-
     <section class="field-block muted">
       <h4>标签</h4>
       <p>当前 API 契约不包含标签字段；无法在表单中保存标签。</p>
     </section>
 
     <div class="actions">
-      <button type="submit" class="btn-primary" data-testid="submit-form" :disabled="submitting">
-        {{ mode === 'create' ? '创建案例' : '保存修改' }}
+      <button
+        type="button"
+        class="btn-primary"
+        data-testid="submit-with-summary"
+        :disabled="submitting"
+        @click="emitSubmit('submit-with-summary')"
+      >
+        提交且摘要
+      </button>
+      <button
+        type="button"
+        class="btn-secondary"
+        data-testid="submit-save-and-close"
+        :disabled="submitting"
+        @click="emitSubmit('save-and-close')"
+      >
+        {{ mode === 'create' ? '创建并关闭' : '保存并关闭' }}
+      </button>
+      <button
+        type="button"
+        class="btn-secondary"
+        data-testid="submit-save-draft"
+        :disabled="submitting"
+        @click="emitSubmit('save-draft')"
+      >
+        存为草稿
       </button>
     </div>
   </form>
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { CaseDetailResponse, CreateCaseRequest, UpdateCaseRequest } from '@/api/cases'
+import { detailStore, type CaseDetailResponseApi } from '@/domain/caseListDisplay'
+import { CASE_PROBLEM_TYPE_OPTIONS, type CaseProblemType } from '@/domain/caseProblemType'
 
-type ProblemType = CaseDetailResponse['problem_type']
 type CaseStatus = CaseDetailResponse['status']
 
 const props = withDefaults(
@@ -180,18 +178,11 @@ const props = withDefaults(
   }
 )
 
-const emit = defineEmits<{
-  submit: [payload: CreateCaseRequest | UpdateCaseRequest]
-}>()
+export type CaseFormSubmitIntent = 'save-draft' | 'save-and-close' | 'submit-with-summary'
 
-const problemOptions: { value: ProblemType; label: string }[] = [
-  { value: 'service', label: '服务' },
-  { value: 'quality', label: '质量' },
-  { value: 'operation', label: '运营' },
-  { value: 'hygiene', label: '卫生' },
-  { value: 'staffing', label: '人力' },
-  { value: 'other', label: '其他' },
-]
+const emit = defineEmits<{
+  submit: [payload: CreateCaseRequest | UpdateCaseRequest, meta: { intent: CaseFormSubmitIntent }]
+}>()
 
 const outcomeOptions = [
   { value: 'improved' as const, label: '改善' },
@@ -199,19 +190,12 @@ const outcomeOptions = [
   { value: 'unknown' as const, label: '未知' },
 ]
 
-const statusOptions: { value: CaseStatus; label: string }[] = [
-  { value: 'draft', label: '草稿' },
-  { value: 'active', label: '生效' },
-  { value: 'archived', label: '归档' },
-]
-
 interface Draft {
   problem_description: string
   store_id: string
-  problem_type: ProblemType
+  problem_type: CaseProblemType
   scene: string
   root_cause: string
-  solution_steps: { order: number; content: string }[]
   outcome: { result: CaseDetailResponse['outcome']['result']; notes: string }
   status: CaseStatus
 }
@@ -223,22 +207,26 @@ function emptyDraft(): Draft {
     problem_type: 'other',
     scene: '',
     root_cause: '',
-    solution_steps: [{ order: 1, content: '' }],
     outcome: { result: 'unknown', notes: '' },
     status: 'draft',
   }
 }
 
 const draft = reactive<Draft>(emptyDraft())
+/** 每行一步；提交时解析为 solution_steps 数组 */
+const solutionStepsText = ref('')
 
 function applyDetail(d: CaseDetailResponse): void {
   draft.problem_description = d.problem_description
-  draft.store_id = d.store_profile.store_id
+  const s = detailStore(d as CaseDetailResponseApi)
+  draft.store_id = s?.store_id ?? ''
   draft.problem_type = d.problem_type
   draft.scene = d.context.scene
   draft.root_cause = d.root_cause
-  draft.solution_steps = d.solution_steps.map((s) => ({ order: s.order, content: s.content }))
-  if (draft.solution_steps.length === 0) draft.solution_steps = [{ order: 1, content: '' }]
+  solutionStepsText.value =
+    d.solution_steps.length > 0
+      ? [...d.solution_steps].sort((a, b) => a.order - b.order).map((s) => s.content).join('\n')
+      : ''
   draft.outcome = { result: d.outcome.result, notes: d.outcome.notes ?? '' }
   draft.status = d.status
 }
@@ -250,7 +238,7 @@ function resetCreateDraft(): void {
   draft.problem_type = e.problem_type
   draft.scene = e.scene
   draft.root_cause = e.root_cause
-  draft.solution_steps.splice(0, draft.solution_steps.length, ...e.solution_steps.map((s) => ({ ...s })))
+  solutionStepsText.value = ''
   draft.outcome.result = e.outcome.result
   draft.outcome.notes = e.outcome.notes
   draft.status = e.status
@@ -268,26 +256,36 @@ watch(
   { immediate: true }
 )
 
-function stepErrorKey(idx: number): string {
-  return `solution_steps.${idx}.content`
+/** 与提交逻辑一致：按行解析，去掉行尾空行，每行 trim，最多 20 步；全空则一步空串 */
+function parseSolutionStepsFromText(text: string): { order: number; content: string }[] {
+  let lines = text.split('\n').map((line) => line.trim())
+  while (lines.length > 1 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  if (lines.length === 0) lines = ['']
+  lines = lines.slice(0, 20)
+  return lines.map((content, i) => ({ order: i + 1, content }))
 }
 
-function addStep(): void {
-  const next = draft.solution_steps.length + 1
-  draft.solution_steps.push({ order: next, content: '' })
-}
+const solutionStepFieldErrors = computed(() => {
+  const fe = props.fieldErrors
+  if (!fe) return []
+  const out: { key: string; idx: number; label: string; message: string }[] = []
+  for (const [k, v] of Object.entries(fe)) {
+    const m = /^solution_steps\.(\d+)\.content$/.exec(k)
+    if (m && v) {
+      const idx = Number(m[1])
+      out.push({ key: k, idx, label: `第 ${idx + 1} 步`, message: v })
+    }
+  }
+  out.sort((a, b) => a.idx - b.idx)
+  return out.map(({ key, label, message }) => ({ key, label, message }))
+})
 
-function removeStep(idx: number): void {
-  if (draft.solution_steps.length <= 1) return
-  draft.solution_steps.splice(idx, 1)
-}
-
-function onSubmit(): void {
-  const steps = draft.solution_steps.map((s, i) => ({
-    order: i + 1,
-    content: s.content.trim(),
-  }))
+function emitSubmit(intent: CaseFormSubmitIntent): void {
+  const steps = parseSolutionStepsFromText(solutionStepsText.value)
   const context: CaseDetailResponse['context'] = { scene: draft.scene.trim() }
+  const targetStatus = intent === 'save-draft' ? 'draft' : 'active'
   if (props.mode === 'create') {
     const body: CreateCaseRequest = {
       problem_description: draft.problem_description.trim(),
@@ -300,8 +298,9 @@ function onSubmit(): void {
         result: draft.outcome.result,
         notes: draft.outcome.notes.trim(),
       },
+      status: targetStatus,
     }
-    emit('submit', body)
+    emit('submit', body, { intent })
     return
   }
   const body: UpdateCaseRequest = {
@@ -315,9 +314,9 @@ function onSubmit(): void {
       result: draft.outcome.result,
       notes: draft.outcome.notes.trim(),
     },
-    status: draft.status,
+    status: targetStatus,
   }
-  emit('submit', body)
+  emit('submit', body, { intent })
 }
 </script>
 
@@ -372,34 +371,10 @@ select {
   color: #c62828;
 }
 
-.steps-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.step-row {
-  margin-bottom: 12px;
-  padding: 10px;
-  border: 1px solid #eee;
-  border-radius: 4px;
-}
-
-.step-label {
-  display: block;
+.field-hint {
+  margin: 0 0 8px;
   font-size: 12px;
   color: #666;
-  margin-bottom: 4px;
-}
-
-.btn-ghost {
-  padding: 4px 10px;
-  border: 1px solid #bbb;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 12px;
 }
 
 .btn-primary {
@@ -418,6 +393,24 @@ select {
 
 .actions {
   margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.btn-secondary {
+  padding: 10px 20px;
+  background: #fff;
+  color: #333;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+  cursor: pointer;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .kv > div {

@@ -19,7 +19,7 @@ function makeDetail(id: string): CaseDetailResponse {
       city: '上海',
       city_tier: 'tier1',
     },
-    problem_type: 'service',
+    problem_type: 'service_quality',
     context: { scene: '高峰排队' },
     root_cause: '人手不足',
     solution_steps: [
@@ -30,6 +30,7 @@ function makeDetail(id: string): CaseDetailResponse {
     status: 'draft',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-02T00:00:00Z',
+    tag_suggestions: [],
   }
 }
 

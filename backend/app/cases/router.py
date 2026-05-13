@@ -11,7 +11,7 @@ Responsibilities:
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.cases.coordinator import CaseDeleteCoordinator
 from app.cases.schemas import (
@@ -34,6 +34,7 @@ from app.cases.service import (
 )
 from app.core.errors import ErrorCode, ErrorDetail, ErrorResponse, create_error_response
 from app.db.session import AsyncSession, get_db
+from app.enrichment.repository import EnrichmentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,8 @@ def get_case_service(
 
     repository = CaseRepository(session)
     validator = CaseValidator()
-    return CaseService(repository, validator)
+    enrichment_repository = EnrichmentRepository(session)
+    return CaseService(repository, validator, enrichment_repository)
 
 
 def get_case_delete_coordinator(
@@ -75,7 +77,8 @@ def get_case_delete_coordinator(
 
     repository = CaseRepository(session)
     validator = CaseValidator()
-    service = CaseService(repository, validator)
+    enrichment_repository = EnrichmentRepository(session)
+    service = CaseService(repository, validator, enrichment_repository)
     return CaseDeleteCoordinator(service)
 
 
@@ -374,7 +377,7 @@ async def get_case(
     description="支持门店信息维度过滤、分页和稳定排序。列表项只返回摘要字段，不返回向量、推荐分值或反馈信息。",
 )
 async def list_cases(
-    query: CaseListQuery,
+    query: Annotated[CaseListQuery, Query()],
     service: Annotated[CaseService, Depends(get_case_service)],
 ) -> PaginatedCaseListResponse:
     """查询案例列表。

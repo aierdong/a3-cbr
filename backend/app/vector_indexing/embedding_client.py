@@ -16,6 +16,37 @@ from app.vector_indexing.schemas import EmbeddingRequest, EmbeddingResult
 
 logger = logging.getLogger(__name__)
 
+_LOG_DETAIL_MAX = 900
+
+
+def _truncate_detail(text: str, limit: int = _LOG_DETAIL_MAX) -> str:
+    """截断冗长诊断串，避免日志撑爆。"""
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
+
+def _format_raw_openai_exception(exc: BaseException) -> str:
+    """从 OpenAI SDK 异常提取可诊断摘要（不含请求正文或向量）。"""
+    parts: list[str] = [type(exc).__name__]
+    if isinstance(exc, openai.APIStatusError):
+        parts.append(f"http={exc.status_code}")
+        body = getattr(exc, "body", None)
+        if body is not None:
+            parts.append(f"body={_truncate_detail(str(body), 600)}")
+    raw = str(exc).strip()
+    if raw:
+        parts.append(_truncate_detail(raw, 500))
+    return " | ".join(parts)
+
+
+def _diagnostic_tail(exc: BaseException, limit: int = 400) -> str:
+    """人类可读的一小段异常摘要，写入 LLMClientError.message。"""
+    s = str(exc).strip()
+    if not s:
+        return ""
+    return f": {_truncate_detail(s, limit)}"
+
 
 def _map_openai_exception(
     exc: BaseException,
@@ -34,28 +65,28 @@ def _map_openai_exception(
     if isinstance(exc, openai.APITimeoutError):
         return LLMClientError(
             error_code=ErrorCode.EMBEDDING_TIMEOUT,
-            message="Embedding 调用超时",
+            message=f"Embedding 调用超时{_diagnostic_tail(exc)}",
             retryable=treat_as_transient_retryable,
             status_code=503,
         )
     if isinstance(exc, openai.RateLimitError):
         return LLMClientError(
             error_code=ErrorCode.EMBEDDING_RATE_LIMITED,
-            message="Embedding 限流",
+            message=f"Embedding 限流{_diagnostic_tail(exc)}",
             retryable=treat_as_transient_retryable,
             status_code=_dep_status(429),
         )
     if isinstance(exc, openai.APIConnectionError):
         return LLMClientError(
             error_code=ErrorCode.EMBEDDING_PROVIDER_ERROR,
-            message="Embedding 网关连接失败",
+            message=f"Embedding 网关连接失败{_diagnostic_tail(exc)}",
             retryable=treat_as_transient_retryable,
             status_code=dep_http,
         )
     if isinstance(exc, openai.AuthenticationError):
         return LLMClientError(
             error_code=ErrorCode.EMBEDDING_PROVIDER_ERROR,
-            message="Embedding 网关鉴权失败",
+            message=f"Embedding 网关鉴权失败{_diagnostic_tail(exc)}",
             retryable=False,
             status_code=_dep_status(getattr(exc, "status_code", None)),
         )
@@ -70,20 +101,20 @@ def _map_openai_exception(
         )
         return LLMClientError(
             error_code=code,
-            message=f"Embedding 网关错误 HTTP {status_code}",
+            message=f"Embedding 网关错误 HTTP {status_code}{_diagnostic_tail(exc)}",
             retryable=retryable,
             status_code=_dep_status(status_code),
         )
     if isinstance(exc, openai.OpenAIError):
         return LLMClientError(
             error_code=ErrorCode.EMBEDDING_PROVIDER_ERROR,
-            message="Embedding 网关错误",
+            message=f"Embedding 网关错误{_diagnostic_tail(exc)}",
             retryable=treat_as_transient_retryable,
             status_code=dep_http,
         )
     return LLMClientError(
         error_code=ErrorCode.EMBEDDING_PROVIDER_ERROR,
-        message="Embedding 未知错误",
+        message=f"Embedding 未知错误{_diagnostic_tail(exc)}",
         retryable=False,
         status_code=dep_http,
     )
@@ -156,6 +187,10 @@ class EmbeddingClient:
     ) -> None:
         """初始化 EmbeddingClient。
 
+        ``AsyncOpenAI`` 采用懒创建：仅在实际调用 ``embed_for_*`` 时构造，
+        避免只读状态类 API（如 ``GET /vector-index``）在依赖注入阶段被
+        同步 DNS/httpx 初始化拖慢数秒。
+
         Args:
             config: 嵌入模型与索引/搜索路径超时配置。
             _async_client_index: 可选注入索引路径 ``AsyncOpenAI``（单测）。
@@ -164,19 +199,35 @@ class EmbeddingClient:
         self._config = config
         self._model_id = config.model_id
         self._expected_dim = config.vector_dimension
-        base_url = _normalize_openai_base_url(config.base_url)
-        timeout_index = config.index_timeout_ms / 1000.0
-        timeout_search = config.search_timeout_ms / 1000.0
-        self._client_index = _async_client_index or AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=base_url,
-            timeout=timeout_index,
-        )
-        self._client_search = _async_client_search or AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=base_url,
-            timeout=timeout_search,
-        )
+        self._base_url = _normalize_openai_base_url(config.base_url)
+        self._timeout_index_s = config.index_timeout_ms / 1000.0
+        self._timeout_search_s = config.search_timeout_ms / 1000.0
+        self._injected_index = _async_client_index
+        self._injected_search = _async_client_search
+        self._lazy_index: AsyncOpenAI | None = None
+        self._lazy_search: AsyncOpenAI | None = None
+
+    def _get_client_index(self) -> AsyncOpenAI:
+        if self._injected_index is not None:
+            return self._injected_index
+        if self._lazy_index is None:
+            self._lazy_index = AsyncOpenAI(
+                api_key=self._config.api_key,
+                base_url=self._base_url,
+                timeout=self._timeout_index_s,
+            )
+        return self._lazy_index
+
+    def _get_client_search(self) -> AsyncOpenAI:
+        if self._injected_search is not None:
+            return self._injected_search
+        if self._lazy_search is None:
+            self._lazy_search = AsyncOpenAI(
+                api_key=self._config.api_key,
+                base_url=self._base_url,
+                timeout=self._timeout_search_s,
+            )
+        return self._lazy_search
 
     async def embed_for_index(self, request: EmbeddingRequest) -> EmbeddingResult:
         """索引刷新路径：使用 ``index_timeout_ms`` / ``index_max_retries``。
@@ -192,7 +243,7 @@ class EmbeddingClient:
         """
         return await self._embed_with_retries(
             request,
-            client=self._client_index,
+            client=self._get_client_index(),
             max_retries=self._config.index_max_retries,
             treat_as_transient_retryable=True,
             task_kind="index",
@@ -213,7 +264,7 @@ class EmbeddingClient:
         """
         return await self._embed_with_retries(
             request,
-            client=self._client_search,
+            client=self._get_client_search(),
             max_retries=self._config.search_max_retries,
             treat_as_transient_retryable=False,
             task_kind="search",
@@ -228,6 +279,7 @@ class EmbeddingClient:
         status: str,
         attempt: int,
         error_code: str | None,
+        error_message: str | None = None,
     ) -> None:
         extra = {
             "embedding_task_kind": task_kind,
@@ -240,6 +292,8 @@ class EmbeddingClient:
         }
         if error_code:
             extra["error_code"] = error_code
+        if error_message:
+            extra["error_message"] = _truncate_detail(error_message, 1024)
         msg = "向量索引 embedding 调用"
         if status == "success":
             logger.info(msg, extra=extra)
@@ -281,6 +335,7 @@ class EmbeddingClient:
                     status="error",
                     attempt=attempt + 1,
                     error_code=exc.error_code,
+                    error_message=exc.message,
                 )
                 if not exc.retryable or attempt >= max_retries:
                     raise
@@ -304,6 +359,18 @@ class EmbeddingClient:
                 input=[request.text],
             )
         except Exception as exc:
+            detail = _format_raw_openai_exception(exc)
+            logger.warning(
+                "向量索引 embedding 供应商原始异常: %s",
+                detail,
+                extra={
+                    "embedding_model_id": self._model_id,
+                    "case_id": request.case_id,
+                    "correlation_id": request.correlation_id,
+                    "content_fingerprint": request.content_fingerprint,
+                    "search_path": search_path,
+                },
+            )
             raise _map_openai_exception(
                 exc,
                 treat_as_transient_retryable=treat_as_transient_retryable,

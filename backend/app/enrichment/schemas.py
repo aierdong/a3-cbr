@@ -471,6 +471,10 @@ class RecommendationCopyRunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# OpenAI 兼容网关的 JSON Output（DeepSeek 等）：见官方 response_format=json_object 说明。
+LLM_RESPONSE_FORMAT_JSON_OBJECT: dict[str, str] = {"type": "json_object"}
+
+
 class LLMCompletionRequest(BaseModel):
     """LLM 调用请求。"""
 
@@ -481,6 +485,10 @@ class LLMCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(None, ge=1, description="最大输出 token 数")
     temperature: Optional[float] = Field(
         None, ge=0.0, le=2.0, description="采样温度",
+    )
+    response_format: Optional[dict[str, Any]] = Field(
+        None,
+        description="chat.completions 的 response_format（如 json_object 结构化输出）",
     )
 
     model_config = ConfigDict(extra="forbid")

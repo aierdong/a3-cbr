@@ -3,7 +3,7 @@
 编排创建、编辑、删除、详情和列表查询的业务流程。
 """
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from app.cases.models import CaseStatus as ModelCaseStatus
 from app.cases.repository import (
@@ -25,6 +25,9 @@ from app.cases.schemas import (
     UpdateCaseRequest,
 )
 from app.cases.validators import CaseValidator, FieldError
+
+if TYPE_CHECKING:
+    from app.enrichment.repository import EnrichmentRepository
 
 
 class CaseValidationError(Exception):
@@ -93,8 +96,13 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-def _record_to_detail_response(record: A3CaseRecord) -> CaseDetailResponse:
+def _record_to_detail_response(
+    record: A3CaseRecord,
+    *,
+    tag_suggestions: Optional[list[str]] = None,
+) -> CaseDetailResponse:
     """将案例记录转换为详情响应。"""
+    tags: list[str] = [] if tag_suggestions is None else list(tag_suggestions)
     return CaseDetailResponse(
         case_id=record.case_id,
         problem_description=record.problem_description,
@@ -123,6 +131,7 @@ def _record_to_detail_response(record: A3CaseRecord) -> CaseDetailResponse:
             city_tier=record.store.city_tier,
             updated_at=record.store.updated_at,
         ),
+        tag_suggestions=tags,
     )
 
 
@@ -169,20 +178,39 @@ class CaseService:
     - 拒绝把 AI 派生字段写入案例基础模型
     """
 
-    def __init__(self, repository: CaseRepository, validator: CaseValidator) -> None:
+    def __init__(
+        self,
+        repository: CaseRepository,
+        validator: CaseValidator,
+        enrichment_repository: Optional["EnrichmentRepository"] = None,
+    ) -> None:
         """初始化服务。
 
         Args:
             repository: 案例仓储实例
             validator: 案例校验器实例
+            enrichment_repository: 可选；提供时详情/更新会附带当前增强的标签建议
         """
         self._repo = repository
         self._validator = validator
+        self._enrichment_repo = enrichment_repository
+
+    async def _tag_suggestions_for_case(self, case_id: str) -> list[str]:
+        """读取案例当前增强结果中的规范化标签列表。"""
+        if self._enrichment_repo is None:
+            return []
+        row = await self._enrichment_repo.get_enrichment_result_for_case(case_id)
+        if row is None:
+            return []
+        raw = row.tag_suggestions
+        if not isinstance(raw, list):
+            return []
+        return [str(x) for x in raw]
 
     async def create_case(self, request: CreateCaseRequest) -> CaseDetailResponse:
         """创建新案例。
 
-        创建时生成稳定案例标识、基础状态（draft）和时间戳。
+        创建时生成稳定案例标识、初始状态（默认可为 draft 或请求指定 active）和时间戳。
         校验 store_id 在 store_infos 中存在。
 
         Args:
@@ -200,7 +228,7 @@ class CaseService:
             store = await self._repo._get_store_by_id(store_id)
             return store is not None
 
-        errors = self._validator.validate_create(request, store_exists_check)
+        errors = await self._validator.validate_create(request, store_exists_check)
         if errors:
             raise CaseValidationError(errors)
 
@@ -211,6 +239,11 @@ class CaseService:
             """提取步骤数据。"""
             return s.model_dump() if hasattr(s, "model_dump") else s
 
+        status_val = (
+            request.status.value
+            if hasattr(request.status, "value")
+            else request.status
+        )
         create_data = A3CaseCreateData(
             problem_description=request.problem_description,
             store_id=request.store_id,
@@ -231,12 +264,13 @@ class CaseService:
                 if hasattr(request.outcome, "model_dump")
                 else request.outcome
             ),
+            status=status_val,
         )
 
         # 调用 repository 创建
         record = await self._repo.create(create_data)
 
-        return _record_to_detail_response(record)
+        return _record_to_detail_response(record, tag_suggestions=[])
 
     async def update_case(
         self, case_id: str, request: UpdateCaseRequest
@@ -279,23 +313,26 @@ class CaseService:
                 ),
             )
 
-        # 3. 校验状态流转（如果请求修改 status）
+        # 3. 校验状态流转（如果请求携带 status 且与当前不同）
         if request.status is not None:
             target_status = (
                 request.status.value
                 if hasattr(request.status, "value")
                 else request.status
             )
-            allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
-            if target_status not in allowed:
-                raise CaseStateConflictError(
-                    current_status=current_status,
-                    message=(
-                        f"CASE_STATE_CONFLICT: transition from "
-                        f"'{current_status}' to '{target_status}' "
-                        f"is not allowed. Allowed: {list(allowed) if allowed else 'none'}"
-                    ),
-                )
+            # 编辑时前端常回传当前状态；同值不是“流转”，应允许
+            if target_status != current_status:
+                allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
+                if target_status not in allowed:
+                    raise CaseStateConflictError(
+                        current_status=current_status,
+                        message=(
+                            f"CASE_STATE_CONFLICT: transition from "
+                            f"'{current_status}' to '{target_status}' "
+                            f"is not allowed. Allowed: "
+                            f"{list(allowed) if allowed else 'none'}"
+                        ),
+                    )
 
         # 4. 使用 validator 校验请求
         async def store_exists_check(store_id: str) -> bool:
@@ -303,7 +340,7 @@ class CaseService:
             store = await self._repo._get_store_by_id(store_id)
             return store is not None
 
-        errors = self._validator.validate_update(request, store_exists_check)
+        errors = await self._validator.validate_update(request, store_exists_check)
         if errors:
             raise CaseValidationError(errors)
 
@@ -350,7 +387,8 @@ class CaseService:
         if updated is None:
             raise CaseNotFoundError(case_id)
 
-        return _record_to_detail_response(updated)
+        tags = await self._tag_suggestions_for_case(case_id)
+        return _record_to_detail_response(updated, tag_suggestions=tags)
 
     async def delete_case(self, case_id: str) -> DeleteCaseResponse:
         """删除案例。
@@ -395,7 +433,8 @@ class CaseService:
         if record is None:
             raise CaseNotFoundError(case_id)
 
-        return _record_to_detail_response(record)
+        tags = await self._tag_suggestions_for_case(case_id)
+        return _record_to_detail_response(record, tag_suggestions=tags)
 
     async def list_cases(self, query: CaseListQuery) -> PaginatedCaseListResponse:
         """查询案例列表。

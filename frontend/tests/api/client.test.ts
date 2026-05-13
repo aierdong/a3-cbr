@@ -49,6 +49,29 @@ describe('createApiClient', () => {
     )
   })
 
+  it('post：可附加自定义请求头并与 Content-Type 合并', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ status: 200, body: { ok: true } }))
+
+    const client = createApiClient({ baseUrl: '' })
+    await client.post<unknown, { ok: boolean }>(
+      '/api/recommendation-feedback',
+      { recommendation_run_id: 'r1', usefulness: 'useful' },
+      { headers: { 'X-Actor-Id': 'anonymous_user' } }
+    )
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Actor-Id': 'anonymous_user',
+        }),
+      })
+    )
+  })
+
   it('422 且含 fields：应映射为校验类 ApiError（含字段错误）且不携带 meta/raw body', async () => {
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse({
@@ -196,6 +219,35 @@ describe('createApiClient', () => {
     if (!result.ok) {
       expect(result.error.kind).toBe('network')
       expect(result.error.status).toBe(0)
+    }
+  })
+
+  it('超时中止：应返回 REQUEST_TIMEOUT 与中文超时提示', async () => {
+    vi.useFakeTimers()
+    vi.mocked(fetch).mockImplementation((_url, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined
+        if (signal?.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'))
+          return
+        }
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    })
+
+    const client = createApiClient({ baseUrl: '', timeout: 50 })
+    const reqPromise = client.get('/x')
+    await vi.advanceTimersByTimeAsync(100)
+    const result = await reqPromise
+    vi.useRealTimers()
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('network')
+      expect(result.error.code).toBe('REQUEST_TIMEOUT')
+      expect(result.error.message).toContain('超时')
     }
   })
 })

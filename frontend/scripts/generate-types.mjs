@@ -23,6 +23,8 @@ const jobs = [
   [join(repoRoot, 'docs', 'contracts', 'a3-case-management.openapi.yaml'), join(outDir, 'cases.ts')],
   [join(repoRoot, 'docs', 'contracts', 'cbr-retrieval-recommendation.openapi.yaml'), join(outDir, 'recommendations.ts')],
   [join(repoRoot, 'docs', 'contracts', 'recommendation-feedback.openapi.yaml'), join(outDir, 'feedback.ts')],
+  [join(repoRoot, 'docs', 'contracts', 'llm-case-enrichment.openapi.yaml'), join(outDir, 'enrichment.ts')],
+  [join(repoRoot, 'docs', 'contracts', 'case-vector-indexing.openapi.yaml'), join(outDir, 'vectorIndexing.ts')],
 ]
 
 for (const [input, output] of jobs) {

@@ -15,13 +15,26 @@ export interface ApiClientConfig {
   timeout?: number;
 }
 
+/** POST/PUT 可选附加请求头（如反馈提交的 X-Actor-Id） */
+export interface ApiClientWriteOptions {
+  headers?: Record<string, string>;
+}
+
 /**
  * API Client 接口
  */
 export interface ApiClient {
   get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<ApiResult<T>>;
-  post<TRequest, TResponse>(path: string, body: TRequest): Promise<ApiResult<TResponse>>;
-  put<TRequest, TResponse>(path: string, body: TRequest): Promise<ApiResult<TResponse>>;
+  post<TRequest, TResponse>(
+    path: string,
+    body: TRequest,
+    options?: ApiClientWriteOptions,
+  ): Promise<ApiResult<TResponse>>;
+  put<TRequest, TResponse>(
+    path: string,
+    body: TRequest,
+    options?: ApiClientWriteOptions,
+  ): Promise<ApiResult<TResponse>>;
 }
 
 /**
@@ -119,6 +132,7 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
     options: {
       query?: Record<string, string | number | boolean | undefined>;
       body?: unknown;
+      headers?: Record<string, string>;
     } = {}
   ): Promise<ApiResult<T>> {
     const url = `${baseUrl}${path}${buildQueryString(options.query)}`;
@@ -132,6 +146,7 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
         headers: {
           'Accept': 'application/json',
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...options.headers,
         },
         body: options.body ? JSON.stringify(options.body) : undefined,
         signal: controller.signal,
@@ -150,13 +165,26 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
     } catch (err) {
       clearTimeout(timeoutId);
 
-      // 网络错误或超时
+      const aborted =
+        (typeof DOMException !== 'undefined' &&
+          err instanceof DOMException &&
+          err.name === 'AbortError') ||
+        (err instanceof Error &&
+          (err.name === 'AbortError' ||
+            /aborted/i.test(err.message)));
+
+      const message = aborted
+        ? '请求超时（相似案例检索耗时较长），请稍后重试'
+        : err instanceof Error
+          ? err.message
+          : '网络请求失败';
+
       return {
         ok: false,
         error: {
           kind: 'network',
-          code: 'NETWORK_ERROR',
-          message: err instanceof Error ? err.message : '网络请求失败',
+          code: aborted ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+          message,
           status: 0,
         },
       };
@@ -168,12 +196,20 @@ export function createApiClient(config: ApiClientConfig = {}): ApiClient {
       return request<T>('GET', path, { query });
     },
 
-    post<TRequest, TResponse>(path: string, body: TRequest): Promise<ApiResult<TResponse>> {
-      return request<TResponse>('POST', path, { body });
+    post<TRequest, TResponse>(
+      path: string,
+      body: TRequest,
+      options?: ApiClientWriteOptions,
+    ): Promise<ApiResult<TResponse>> {
+      return request<TResponse>('POST', path, { body, headers: options?.headers });
     },
 
-    put<TRequest, TResponse>(path: string, body: TRequest): Promise<ApiResult<TResponse>> {
-      return request<TResponse>('PUT', path, { body });
+    put<TRequest, TResponse>(
+      path: string,
+      body: TRequest,
+      options?: ApiClientWriteOptions,
+    ): Promise<ApiResult<TResponse>> {
+      return request<TResponse>('PUT', path, { body, headers: options?.headers });
     },
   };
 }

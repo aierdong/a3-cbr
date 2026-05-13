@@ -31,7 +31,7 @@ describe('CaseListPage', () => {
     })
   })
 
-  it('空列表成功时应展示空状态与分页元信息', async () => {
+  it('无筛选且空列表成功时应展示「暂无案例」、创建入口与分页元信息', async () => {
     const w = mount(CaseListPage, {
       global: {
         stubs: { RouterLink: true },
@@ -40,8 +40,28 @@ describe('CaseListPage', () => {
     await flushPromises()
 
     expect(apiClient.get).toHaveBeenCalled()
-    expect(w.text()).toContain('暂无匹配案例')
+    expect(w.text()).toContain('暂无案例')
+    expect(w.find('[data-testid="case-create-nav"]').exists()).toBe(true)
+    expect(w.find('[data-testid="case-create-empty-cta"]').exists()).toBe(true)
     expect(w.find('[data-testid="empty-page-meta"]').exists()).toBe(true)
     expect(w.find('[data-testid="empty-page-meta"]').text()).toContain('每页 20 条')
+  })
+
+  it('已提交服务端筛选条件但仍为空时应展示「暂无匹配案例」', async () => {
+    const w = mount(CaseListPage, {
+      global: {
+        stubs: { RouterLink: true },
+      },
+    })
+    await flushPromises()
+
+    const brandInput = w.find('.case-filter-bar .field input[type="text"]')
+    expect(brandInput.exists()).toBe(true)
+    await brandInput.setValue('brand-x')
+    await w.find('[data-testid="filter-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledTimes(2)
+    expect(w.text()).toContain('暂无匹配案例')
   })
 })

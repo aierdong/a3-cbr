@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Awaitable, Callable, Sequence, TypeVar, Union
 
 import openai
@@ -207,6 +208,9 @@ class LLMClient:
     ) -> LLMCompletionResult:
         """调用 LLM 并返回结构化结果。
 
+        对需要解析为 JSON 的调用方，应在 ``LLMCompletionRequest.response_format`` 中
+        设置 ``{"type": "json_object"}``（OpenAI 兼容，DeepSeek 等网关的 JSON Output）。
+
         Args:
             request: LLM 调用请求，包含 prompt、model_id、task_type 等。
 
@@ -239,6 +243,9 @@ class LLMClient:
                     status="error",
                     attempt=attempt + 1,
                     error_code=exc.error_code,
+                    error_message=exc.message,
+                    http_status=exc.status_code,
+                    retryable=exc.retryable,
                 )
                 if not exc.retryable:
                     raise
@@ -266,13 +273,44 @@ class LLMClient:
             payload["temperature"] = request.temperature
 
         self._apply_llm_chat_completion_extras(payload)
+        if request.response_format is not None:
+            payload["response_format"] = request.response_format
 
+        t0 = time.perf_counter()
         try:
             completion = await self._client.chat.completions.create(**payload)
         except LLMClientError:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                "LLM chat.completions 单次 HTTP 耗时(异常): model=%s task_type=%s "
+                "request_purpose=%s elapsed_ms=%.1f",
+                request.model_id,
+                request.task_type,
+                request.request_purpose,
+                elapsed_ms,
+            )
             raise
         except Exception as exc:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.info(
+                "LLM chat.completions 单次 HTTP 耗时(异常): model=%s task_type=%s "
+                "request_purpose=%s elapsed_ms=%.1f",
+                request.model_id,
+                request.task_type,
+                request.request_purpose,
+                elapsed_ms,
+            )
             raise _map_openai_exception(exc) from exc
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            "LLM chat.completions 单次 HTTP 耗时: model=%s task_type=%s "
+            "request_purpose=%s elapsed_ms=%.1f",
+            request.model_id,
+            request.task_type,
+            request.request_purpose,
+            elapsed_ms,
+        )
 
         return self._completion_result_from_sdk(completion, request.model_id)
 
@@ -334,6 +372,9 @@ class LLMClient:
         status: str,
         attempt: int,
         error_code: str | None = None,
+        error_message: str | None = None,
+        http_status: int | None = None,
+        retryable: bool | None = None,
     ) -> None:
         """结构化日志：记录供应商、模型、任务类型、状态和错误类型。
 
@@ -346,9 +387,16 @@ class LLMClient:
             "request_purpose": request.request_purpose,
             "status": status,
             "attempt": attempt,
+            "gateway_base_url": self._openai_base_url,
         }
         if error_code:
             extra["error_code"] = error_code
+        if error_message is not None:
+            extra["error_message"] = error_message
+        if http_status is not None:
+            extra["http_status"] = http_status
+        if retryable is not None:
+            extra["retryable"] = retryable
 
         if status == "success":
             logger.info("LLM 调用成功", extra=extra)
@@ -494,9 +542,12 @@ class RerankerClient:
             if top_n is not None:
                 body["top_n"] = top_n
             try:
+                # 不可使用裸 ``dict``：openai SDK ``construct_type`` 会对 ``dict`` 做
+                # ``_, items_type = get_args(dict)``，而 ``get_args(dict) == ()``，触发
+                # ``ValueError: not enough values to unpack (expected 2, got 0)``。
                 data = await self._client.post(
                     "/rerank",
-                    cast_to=dict,
+                    cast_to=object,
                     body=body,
                 )
             except Exception as exc:

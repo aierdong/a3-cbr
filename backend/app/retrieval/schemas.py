@@ -7,7 +7,7 @@
 
 设计约束：
 - recommendation_item_id 不得等于字面 'RUN'（下游 recommendation-feedback 哨兵保留）
-- final_score=0 在 score_breakdown.final_score_source='default_zero_not_aggregated' 时表示未聚合
+- final_score=0 在 score_metadata.final_score_source='default_zero_not_aggregated' 时表示未聚合
 """
 
 from datetime import datetime

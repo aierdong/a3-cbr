@@ -81,7 +81,16 @@ function makeItem(
     },
     vector_similarity_score: 0.5,
     final_score: 0.5,
-    score_breakdown: { final_score_source: 'aggregated' },
+    score_metadata: {
+      vector_similarity_score: 0.5,
+      semantic_similarity_score: null,
+      structured_similarity_score: null,
+      business_score: null,
+      final_score: 0.5,
+      final_score_source: 'aggregated',
+      normalized_scores: {},
+      effective_weights: {},
+    },
     explanation_status: 'generated',
     missing_fields: [],
   }

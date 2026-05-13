@@ -13,6 +13,7 @@ from app.cases.schemas import (
     CaseDetailResponse,
     CaseListItem,
     CaseListQuery,
+    CaseStatus,
     CreateCaseRequest,
     DeleteCaseReason,
     DeleteCaseRequest,
@@ -64,8 +65,35 @@ class TestCreateCaseRequest:
         errors = exc_info.value.errors()
         assert any("case_id" in str(e) for e in errors)
 
-    def test_excludes_status(self):
-        """不应包含 status。"""
+    def test_status_optional_defaults_to_draft(self):
+        """未传 status 时默认为 draft。"""
+        request = CreateCaseRequest(
+            problem_description="test",
+            store_id="store_001",
+            problem_type="customer_complaint",
+            context={"scene": "test"},
+            root_cause="test",
+            solution_steps=[{"order": 1, "content": "test"}],
+            outcome={"result": "improved", "notes": "test"},
+        )
+        assert request.status == CaseStatus.DRAFT
+
+    def test_status_active_allowed_on_create(self):
+        """创建时可指定 active。"""
+        request = CreateCaseRequest(
+            problem_description="test",
+            store_id="store_001",
+            problem_type="customer_complaint",
+            context={"scene": "test"},
+            root_cause="test",
+            solution_steps=[{"order": 1, "content": "test"}],
+            outcome={"result": "improved", "notes": "test"},
+            status="active",
+        )
+        assert request.status == CaseStatus.ACTIVE
+
+    def test_rejects_archived_on_create(self):
+        """创建时不可直接 archived。"""
         with pytest.raises(ValidationError) as exc_info:
             CreateCaseRequest(
                 problem_description="test",
@@ -75,10 +103,10 @@ class TestCreateCaseRequest:
                 root_cause="test",
                 solution_steps=[{"order": 1, "content": "test"}],
                 outcome={"result": "improved", "notes": "test"},
-                status="active",  # 不应存在
+                status="archived",
             )
         errors = exc_info.value.errors()
-        assert any("status" in str(e) for e in errors)
+        assert any("archived" in str(e).lower() for e in errors)
 
     def test_excludes_created_at(self):
         """不应包含 created_at。"""
@@ -249,6 +277,7 @@ class TestCaseDetailResponse:
         assert response.case_id == "case_001"
         assert response.problem_description == "顾客投诉"
         assert response.status.value == "active"
+        assert response.tag_suggestions == []
 
     def test_excludes_derived_fields(self):
         """应排除派生字段。"""

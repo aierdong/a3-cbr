@@ -19,10 +19,10 @@
         <tbody>
           <tr v-for="row in rows" :key="row.case_id">
             <td class="mono">{{ row.case_id }}</td>
-            <td class="preview">{{ row.problem_description_preview }}</td>
-            <td>{{ row.store_profile.brand_name }} ({{ row.store_profile.brand_id }})</td>
-            <td>{{ row.store_profile.store_name }} ({{ row.store_profile.store_id }})</td>
-            <td>{{ formatProblemType(row.problem_type) }}</td>
+            <td class="preview">{{ listItemProblemPreview(row) }}</td>
+            <td>{{ formatBrandCell(row) }}</td>
+            <td>{{ formatStoreCell(row) }}</td>
+            <td>{{ formatCaseProblemType(row.problem_type) }}</td>
             <td>{{ formatStatus(row.status) }}</td>
             <td>{{ formatTags(row) }}</td>
             <td class="nowrap">{{ formatDt(row.created_at) }}</td>
@@ -59,10 +59,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CaseListItem, PaginatedCaseListResponse } from '@/api/cases'
+import type { PaginatedCaseListResponse } from '@/api/cases'
 import ErrorNotice from '@/components/common/ErrorNotice.vue'
+import {
+  listItemProblemPreview,
+  listItemStore,
+  type CaseListRowApi,
+} from '@/domain/caseListDisplay'
+import { formatCaseProblemType } from '@/domain/caseProblemType'
 
-type CaseListRow = CaseListItem & { tags?: string[] }
+type CaseListRow = CaseListRowApi & { tags?: string[] }
 
 const props = defineProps<{
   rows: CaseListRow[]
@@ -100,23 +106,10 @@ const pageMetaLine = computed(() => {
   return `每页 ${m.limit} 条 · ${next} · 排序：${m.sort}`
 })
 
-const problemLabels: Record<string, string> = {
-  service: '服务',
-  quality: '质量',
-  operation: '运营',
-  hygiene: '卫生',
-  staffing: '人力',
-  other: '其他',
-}
-
 const statusLabels: Record<string, string> = {
   draft: '草稿',
   active: '生效',
   archived: '归档',
-}
-
-function formatProblemType(v: string): string {
-  return problemLabels[v] ?? v
 }
 
 function formatStatus(v: string): string {
@@ -126,6 +119,18 @@ function formatStatus(v: string): string {
 function formatTags(row: CaseListRow): string {
   if (row.tags?.length) return row.tags.join('、')
   return '—'
+}
+
+function formatBrandCell(row: CaseListRow): string {
+  const s = listItemStore(row)
+  if (!s) return '—'
+  return `${s.brand_name} (${s.brand_id})`
+}
+
+function formatStoreCell(row: CaseListRow): string {
+  const s = listItemStore(row)
+  if (!s) return '—'
+  return `${s.store_name} (${s.store_id})`
 }
 
 function formatDt(iso: string): string {

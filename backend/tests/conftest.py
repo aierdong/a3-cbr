@@ -1,23 +1,98 @@
 """测试配置文件。.
 
 提供测试夹具和测试应用。
+
+安全说明（重要）：
+    ``db_session`` 会在 teardown 时对该库执行 ``metadata.drop_all()``。
+    若连接串指向日常开发库（例如默认的 ``a3_cases``），一次 ``pytest`` 即可删光
+    业务表；``alembic_version`` 不在 ORM metadata 中，往往会单独留下。
+    因此仅允许在「明显为测试用途」的库上执行破坏性 DDL，见
+    ``_resolve_destructive_test_database_url``。
 """
 import asyncio
+import os
 from typing import AsyncGenerator
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.db.session import Base
 from app.main import app
-from app.retrieval.router import get_recommendation_service
+
+# 加载全部 ORM，确保 Base.metadata 与 Alembic 建表范围一致（create_all / drop_all）
+import app.db.base  # noqa: F401, E402
 
 # 共享库上并发 create_all/drop_all 会触发 PostgreSQL pg_type 唯一约束冲突；序列化 DDL。
 _db_schema_lock = asyncio.Lock()
+
+_UNSAFE_DB_CONFIRM = "I_ACCEPT_PYTEST_WILL_DROP_ALL_ORM_TABLES_HERE"
+
+
+def _resolve_destructive_test_database_url() -> str:
+    """返回允许执行 create_all / drop_all 的数据库 URL。
+
+    优先级：
+        1. 环境变量 ``TEST_DATABASE_URL``（须仍通过安全规则，或配合显式免责变量）
+        2. ``settings.database_url``（须通过安全规则）
+
+    安全规则（满足其一即可）：
+        - URL 中的数据库名以 ``_test`` 结尾（推荐：独立测试库如 ``a3_cases_test``）
+        - 内存 SQLite（``sqlite`` + ``:memory:``）
+        - 设置 ``I_ACCEPT_PYTEST_WILL_DROP_ALL_ORM_TABLES_HERE=1`` 且目标库名不在拒绝列表
+          （仅用于本地确知风险的临时场景，勿用于共享/生产库）
+
+    Raises:
+        RuntimeError: 未通过校验时，避免误删开发库。
+    """
+    raw = (os.environ.get("TEST_DATABASE_URL") or "").strip() or settings.database_url
+    try:
+        url = make_url(raw)
+    except Exception as exc:  # noqa: BLE001 — 给出可读错误
+        raise RuntimeError(f"无法解析测试数据库 URL: {raw!r}") from exc
+
+    database = (url.database or "").strip()
+    driver = (url.drivername or "").lower()
+    lowered = raw.lower()
+
+    def _fail(msg: str) -> None:
+        raise RuntimeError(
+            msg
+            + "\n\n处理方式：\n"
+            "  1) 在 PostgreSQL 中创建仅用于测试的库（名称建议以 _test 结尾），"
+            "并设置环境变量 TEST_DATABASE_URL=postgresql+asyncpg://.../你的库_test\n"
+            "  2) 或将 .env 中 database_url 指向该测试库后再运行 pytest\n"
+            "应用运行时不会自动执行迁移或 drop_all；危险操作仅来自本测试夹具。\n"
+        )
+
+    if "sqlite" in driver and ":memory:" in lowered:
+        return raw
+
+    if not database:
+        _fail("测试数据库 URL 未包含数据库名（database），拒绝执行 drop_all。")
+
+    if database.endswith("_test"):
+        return raw
+
+    unsafe_allowed = os.environ.get(_UNSAFE_DB_CONFIRM, "").strip() == "1"
+    denied = {"postgres", "template0", "template1", "a3_cases"}
+    if database in denied and not unsafe_allowed:
+        _fail(
+            f"拒绝在库 {database!r} 上执行 pytest 的 drop_all（该名常见于开发/系统库）。"
+            "请改用名称以 _test 结尾的独立测试库。"
+        )
+
+    if unsafe_allowed:
+        return raw
+
+    _fail(
+        f"拒绝在库 {database!r} 上执行 drop_all：库名须以 _test 结尾，或改用内存 SQLite。"
+        f"\n若你完全清楚后果，可临时设置 {_UNSAFE_DB_CONFIRM}=1（强烈不推荐）。"
+    )
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -27,9 +102,10 @@ async def db_session() -> AsyncGenerator:
     每个测试函数使用独立的数据库引擎和会话，避免事件循环关闭问题。
     """
     async with _db_schema_lock:
+        test_db_url = _resolve_destructive_test_database_url()
         # 为每个测试创建独立的引擎
         test_engine = create_async_engine(
-            settings.database_url,
+            test_db_url,
             echo=settings.app_debug,
             pool_pre_ping=True,
             pool_size=5,

@@ -48,21 +48,7 @@
 
 ### Cross-Spec Coordination: "提交且摘要"
 
-用户在前端的"提交且摘要"操作是一个跨 `a3-case-management` 和 `llm-case-enrichment` 的业务事务，需要前端协调两个规格的 API 调用：
-
-1. **职责边界**：
-   - 本规格（`a3-case-management`）只负责案例 CRUD，不感知 LLM 增强。
-   - `llm-case-enrichment` 只负责生成派生结果，不修改案例基础字段。
-   - 两个规格通过 API 调用解耦，不共享数据库事务。
-
-2. **前端调用顺序**：
-   - 用户点击"提交且摘要"按钮后，前端先调用 `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例。
-   - 案例保存成功后，后台返回前端 HTTP 200，然后异步调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发 LLM 增强。
-   - 若 LLM 增强失败（超时、供应商错误、校验失败），案例已保存且可查看，前端向用户展示"摘要生成失败"的提示，并提供重试入口。
-
-3. **降级策略**：
-   - 案例保存失败时，前端不触发 LLM 增强，直接向用户展示保存失败原因。
-   - LLM 增强失败时，案例已保存，用户可稍后通过后台管理页面重新触发增强或手动审核。
+前端跨规格编排（保存案例 → 触发增强 → 条件触发向量索引）、请求内终态语义、详情态查询与重试入口等，**以 [`docs/contract-a3-case-detail-for-enrichment.md`](../../../docs/contract-a3-case-detail-for-enrichment.md) §6 为唯一正文**，本规格不重述。
 
 ### Cross-Spec Coordination: "删除案例"
 

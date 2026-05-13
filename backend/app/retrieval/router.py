@@ -30,9 +30,13 @@ from app.core.errors import (
     create_error_response,
 )
 from app.db.session import get_db
+from app.enrichment.prompts import PromptCatalog
+from app.enrichment.recommendation_copy import RecommendationCopyService
 from app.enrichment.repository import EnrichmentRepository
+from app.enrichment.validators import OutputValidator
 from app.retrieval.business_scoring import BusinessScoreCalculator
 from app.retrieval.case_provider import RecommendationCaseProvider
+from app.retrieval.explainer import RecommendationExplainer
 from app.retrieval.query import QueryNormalizer
 from app.retrieval.repository import RecommendationRepository
 from app.retrieval.reranker_client import RerankerClient
@@ -59,7 +63,7 @@ router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
 def get_recommendation_service(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RecommendationService:
-    """构造 ``RecommendationService`` 实例（注入全部 9 个依赖）。
+    """构造 ``RecommendationService`` 实例（注入全部依赖，含 Explainer）。
 
     Args:
         session: 数据库会话。
@@ -93,8 +97,10 @@ def get_recommendation_service(
     # Case + Enrichment providers
     case_repository = CaseRepository(session)
     case_validator = CaseValidator()
-    case_service = CaseService(case_repository, case_validator)
     enrichment_repository = EnrichmentRepository(session)
+    case_service = CaseService(
+        case_repository, case_validator, enrichment_repository
+    )
     case_provider = RecommendationCaseProvider(
         case_service=case_service,
         enrichment_repository=enrichment_repository,
@@ -112,6 +118,16 @@ def get_recommendation_service(
         default_weights=retrieval_config.default_score_weights,
     )
 
+    # RecommendationCopy + Explainer（llm-case-enrichment）
+    recommendation_copy_service = RecommendationCopyService(
+        llm_client=LLMClient(config=config.enrichment_llm),
+        prompt_catalog=PromptCatalog(),
+        validator=OutputValidator(),
+        repository=enrichment_repository,
+        config=config.enrichment_llm,
+    )
+    explainer = RecommendationExplainer(copy_service=recommendation_copy_service)
+
     return RecommendationService(
         repository=repository,
         normalizer=normalizer,
@@ -121,6 +137,7 @@ def get_recommendation_service(
         business_scorer=business_scorer,
         reranker=reranker,
         aggregator=aggregator,
+        explainer=explainer,
         config=retrieval_config,
     )
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from app.enrichment.schemas import (
     CaseEnrichmentOutput,
     RecommendationCopyItem,
+    SourceField,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,63 @@ logger = logging.getLogger(__name__)
 MAX_TAG_COUNT = 10
 MAX_SUMMARY_LENGTH = 200
 OUTPUT_VERSION = "1.0"
+
+_VALID_SOURCE_FIELD_VALUES: frozenset[str] = frozenset(
+    e.value for e in SourceField
+)
+
+# 推荐文案 LLM 常返回与案例增强输出同名的字段别名，映射到 SourceField 契约值
+_RECOMMENDATION_SOURCE_REF_ALIASES: dict[str, str] = {
+    "problem_summary": SourceField.PROBLEM_DESCRIPTION.value,
+    "solution_summary": SourceField.OUTCOME.value,
+    "core_solution_steps": SourceField.SOLUTION_STEPS.value,
+    "structured_suggestions": SourceField.CONTEXT.value,
+    "tag_suggestions": SourceField.CONTEXT.value,
+    "tag_suggestion": SourceField.CONTEXT.value,
+    "applicable_scenarios": SourceField.CONTEXT.value,
+    "root_cause_category": SourceField.ROOT_CAUSE.value,
+    "problem_type_suggestion": SourceField.PROBLEM_DESCRIPTION.value,
+}
+
+
+def _canonical_source_field_token(token: str) -> str | None:
+    """将 LLM 输出的来源字段标记规范化为 SourceField 枚举值。"""
+    cleaned = token.strip()
+    if not cleaned:
+        return None
+    key = cleaned.lower().replace(" ", "_").replace("-", "_")
+    if key in _VALID_SOURCE_FIELD_VALUES:
+        return key
+    mapped = _RECOMMENDATION_SOURCE_REF_ALIASES.get(key)
+    return mapped
+
+
+def _normalize_recommendation_source_references(raw: object) -> list[str]:
+    """解析并规范化推荐文案中的 source_references 列表。"""
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for ref in raw:
+        if isinstance(ref, dict):
+            ref = ref.get("field_name") or ref.get("field")
+        if not isinstance(ref, str):
+            continue
+        canon = _canonical_source_field_token(ref)
+        if canon:
+            out.append(canon)
+    return out
+
+
+def _coerce_recommendation_copy_item_raw(item_raw: object) -> object:
+    """在校验前修正 LLM 常见漂移字段（不改排序、不删 case_id）。"""
+    if not isinstance(item_raw, dict):
+        return item_raw
+    coerced = dict(item_raw)
+    if "source_references" in coerced:
+        coerced["source_references"] = _normalize_recommendation_source_references(
+            coerced["source_references"],
+        )
+    return coerced
 
 
 # =============================================================================
@@ -216,7 +274,7 @@ class OutputValidator:
                 "JSON 解析失败: case_id=%s, error=%s, content_preview=%s",
                 case_id,
                 str(exc),
-                raw_content[:200],
+                raw_content, #raw_content[:200],
             )
             raise OutputValidationException(
                 error_code=ValidationErrorCode.LLM_INVALID_RESPONSE,
@@ -349,7 +407,8 @@ class OutputValidator:
         errors: list[ValidationError] = []
         for i, item_raw in enumerate(items_raw):
             try:
-                item = RecommendationCopyItem.model_validate(item_raw)
+                coerced = _coerce_recommendation_copy_item_raw(item_raw)
+                item = RecommendationCopyItem.model_validate(coerced)
                 validated_items.append(item)
             except Exception as exc:
                 item_errors = self._extract_pydantic_errors(exc)

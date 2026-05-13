@@ -14,7 +14,7 @@ Boundary: BusinessScoreCalculator
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -401,27 +401,40 @@ class BusinessScoreCalculator:
         if not candidate_updated_at:
             return 0.0, "候选无更新时间"
 
-        now = datetime.now()
-        age_days = (now - candidate_updated_at).days
+        # 与 ORM/Pydantic 中 timezone-aware 的 case_updated_at 对齐，避免 naive/aware 相减
+        now = datetime.now(timezone.utc)
+        candidate_at = candidate_updated_at
+        if candidate_at.tzinfo is None:
+            candidate_at = candidate_at.replace(tzinfo=timezone.utc)
+        age_days = (now - candidate_at).days
 
         # 计算衰减分
         # 使用指数衰减：score = 0.5 ^ (age / half_life)
         import math
         score = math.pow(0.5, age_days / self._recency_half_life_days)
 
-        # 如果有时间范围限制，检查是否在范围内
-        if query_date_from and candidate_updated_at < query_date_from:
-            return (
-                0.0,
-                f"候选时间 {candidate_updated_at.date()} "
-                f"早于查询起始 {query_date_from.date()}",
-            )
-        if query_date_to and candidate_updated_at > query_date_to:
-            return (
-                0.0,
-                f"候选时间 {candidate_updated_at.date()} "
-                f"晚于查询结束 {query_date_to.date()}",
-            )
+        # 如果有时间范围限制，检查是否在范围内（统一为 UTC 再比较）
+        def _to_utc_bound(dt: datetime) -> datetime:
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
+        if query_date_from:
+            q_from = _to_utc_bound(query_date_from)
+            if candidate_at < q_from:
+                return (
+                    0.0,
+                    f"候选时间 {candidate_at.date()} "
+                    f"早于查询起始 {q_from.date()}",
+                )
+        if query_date_to:
+            q_to = _to_utc_bound(query_date_to)
+            if candidate_at > q_to:
+                return (
+                    0.0,
+                    f"候选时间 {candidate_at.date()} "
+                    f"晚于查询结束 {q_to.date()}",
+                )
 
         return (
             score,

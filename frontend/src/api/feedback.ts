@@ -1,5 +1,5 @@
 /**
- * 推荐反馈 API service：消费 openapi-typescript 生成的契约类型；MVP 注入匿名 actor 与后台渠道。
+ * 推荐反馈 API service：消费 openapi-typescript 生成的契约类型；MVP 将匿名 actor 写入 `X-Actor-Id` 请求头并默认 `admin_web` 渠道。
  * 满足 requirements.md § 5.1–5.4、6.1、6.3；design.md § FeedbackApiService、反馈错误映射
  */
 
@@ -27,9 +27,12 @@ export type FeedbackUpsertTargetKey = Pick<
   'recommendation_run_id' | 'recommendation_item_id'
 >
 
-/** 页面/控件侧输入：actor_id、source_channel 由 service 统一补全 */
-export type FeedbackSubmitInput = Omit<FeedbackCreateRequest, 'actor_id' | 'source_channel'> &
-  Partial<Pick<FeedbackCreateRequest, 'actor_id' | 'source_channel'>>
+/**
+ * 页面/控件侧输入：`source_channel` 可由 service 默认；可选 `actor_id` 仅写入请求头 `X-Actor-Id`，不得出现在 JSON body。
+ */
+export type FeedbackSubmitInput = FeedbackCreateRequest & {
+  actor_id?: string
+}
 
 /** 反馈控件局部错误展示（不清空推荐结果，design.md § 5.4） */
 export interface FeedbackControlErrorState {
@@ -70,12 +73,15 @@ export function feedbackControlStateFromApiError(error: ApiError): FeedbackContr
 export function createFeedbackApiService(client: ApiClient) {
   return {
     submit(body: FeedbackSubmitInput): Promise<ApiResult<FeedbackResponse>> {
+      const { actor_id: actorOverride, ...rest } = body
       const payload: FeedbackCreateRequest = {
-        ...body,
-        actor_id: body.actor_id ?? MVP_ANONYMOUS_ACTOR,
-        source_channel: body.source_channel ?? MVP_SOURCE_CHANNEL,
+        ...rest,
+        source_channel: rest.source_channel ?? MVP_SOURCE_CHANNEL,
       }
-      return client.post<FeedbackCreateRequest, FeedbackResponse>(FEEDBACK_PATH, payload)
+      const actorHeader = actorOverride ?? MVP_ANONYMOUS_ACTOR
+      return client.post<FeedbackCreateRequest, FeedbackResponse>(FEEDBACK_PATH, payload, {
+        headers: { 'X-Actor-Id': actorHeader },
+      })
     },
   }
 }

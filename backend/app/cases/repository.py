@@ -113,6 +113,7 @@ class A3CaseCreateData:
     root_cause: str
     solution_steps: list[dict[str, Any]]
     outcome: dict[str, Any]
+    status: str = "draft"
 
 
 @dataclass
@@ -229,7 +230,7 @@ class CaseRepository:
             root_cause=case_data.root_cause,
             solution_steps=json.dumps(case_data.solution_steps, ensure_ascii=False),
             outcome=json.dumps(case_data.outcome, ensure_ascii=False),
-            status="draft",
+            status=case_data.status,
             created_at=now,
             updated_at=now,
         )

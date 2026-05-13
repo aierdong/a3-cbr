@@ -16,6 +16,8 @@ paths:
       tags: [RecommendationFeedback]
       summary: 提交或更新推荐反馈
       operationId: submitRecommendationFeedback
+      parameters:
+        - $ref: '#/components/parameters/XActorId'
       requestBody:
         required: true
         content:
@@ -154,6 +156,14 @@ components:
       schema:
         type: string
         maxLength: 64
+    XActorId:
+      name: X-Actor-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        maxLength: 64
+      description: 反馈提交者标识（与服务端 HTTP 头一致；不得再放入请求体）
     Usefulness:
       name: usefulness
       in: query
@@ -258,7 +268,6 @@ components:
       required:
         - recommendation_run_id
         - usefulness
-        - actor_id
       properties:
         recommendation_run_id:
           type: string
@@ -274,10 +283,6 @@ components:
           type: string
           nullable: true
           maxLength: 2000
-        actor_id:
-          type: string
-          maxLength: 64
-          description: 反馈提交者标识
         source_channel:
           $ref: '#/components/schemas/SourceChannel'
       additionalProperties: false

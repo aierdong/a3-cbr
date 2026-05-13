@@ -129,7 +129,8 @@ class CreateCaseRequest(BaseModel):
 
     必填字段：problem_description, store_id, problem_type,
               context, root_cause, solution_steps, outcome
-    不包含：case_id, status, created_at, updated_at
+    可选：status（仅 draft 或 active，默认 draft）
+    不包含：case_id, created_at, updated_at
     """
 
     problem_description: str = Field(..., min_length=1, description="问题描述")
@@ -147,12 +148,22 @@ class CreateCaseRequest(BaseModel):
         description="有序解决步骤列表",
     )
     outcome: OutcomeSchema = Field(..., description="效果结果")
+    status: CaseStatus = Field(
+        default=CaseStatus.DRAFT,
+        description="创建时初始状态，仅允许 draft 或 active",
+    )
 
-    # 禁止字段：case_id, status, created_at, updated_at
+    # 禁止字段：case_id, created_at, updated_at
     case_id: None = Field(None, description="禁止字段")
-    status: None = Field(None, description="禁止字段")
     created_at: None = Field(None, description="禁止字段")
     updated_at: None = Field(None, description="禁止字段")
+
+    @model_validator(mode="after")
+    def reject_archived_on_create(self) -> "CreateCaseRequest":
+        """创建时不允许直接以 archived 落库。"""
+        if self.status == CaseStatus.ARCHIVED:
+            raise ValueError("status on create must be draft or active, not archived")
+        return self
 
     @field_validator("solution_steps")
     @classmethod
@@ -225,6 +236,7 @@ class CaseDetailResponse(BaseModel):
     """案例详情响应。
 
     包含全部基础字段和关联的 StoreInfo 字段。
+    tag_suggestions 来自 llm-case-enrichment 派生结果（规范化标签字符串数组）。
     排除：embedding, summary, recommendation_reason,
           similarity_score, feedback
     """
@@ -241,6 +253,10 @@ class CaseDetailResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     store: StoreInfoSummary = Field(..., description="关联门店信息")
+    tag_suggestions: list[str] = Field(
+        default_factory=list,
+        description="LLM 规范化标签建议（案例增强）；无增强结果时为空数组",
+    )
 
     model_config = ConfigDict(extra="forbid")
 

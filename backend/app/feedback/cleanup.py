@@ -35,8 +35,10 @@ def load_feedback_cleanup_config(
     """从 ``cleanup.yaml`` 读取 ``feedback_cleanup`` 段，缺失则用默认值。"""
     path = Path(config_path)
     if not path.exists():
-        logger.warning("清理配置文件不存在: %s，反馈清理使用默认配置", config_path)
-        return FeedbackCleanupConfig()
+        path = Path("backend/" + config_path)
+        if not path.exists():
+            logger.warning("清理配置文件不存在: %s，反馈清理使用默认配置", config_path)
+            return FeedbackCleanupConfig()
 
     try:
         with open(path, encoding="utf-8") as f:

@@ -62,8 +62,10 @@ def _build_vector_index_stack(
     config = get_app_config()
     case_repository = CaseRepository(session)
     case_validator = CaseValidator()
-    case_service = CaseService(case_repository, case_validator)
     enrichment_repository = EnrichmentRepository(session)
+    case_service = CaseService(
+        case_repository, case_validator, enrichment_repository
+    )
     source_provider = CaseIndexSourceProvider(case_service, enrichment_repository)
     composer = EmbeddingInputComposer()
     embedding_client = EmbeddingClient(config.embedding)
@@ -147,6 +149,7 @@ def get_vector_search_service(
 async def refresh_case_vector_index(
     case_id: str,
     request: RefreshVectorIndexRequest,
+    session: Annotated[AsyncSession, Depends(get_db)],
     svc: Annotated[VectorIndexService, Depends(get_vector_index_service)],
 ) -> VectorIndexJobResponse:
     """同步执行案例向量刷新并返回任务终态。
@@ -154,13 +157,19 @@ async def refresh_case_vector_index(
     Args:
         case_id: 案例标识。
         request: 刷新请求体。
+        session: 请求级数据库会话（与 svc 共享同一实例）。
         svc: 向量索引服务。
 
     Returns:
         向量索引任务响应。
+
+    Note:
+        在返回前显式 ``commit``：FastAPI 对 ``yield`` 型依赖的 teardown（含 ``get_db`` 内
+        的 commit）可能在响应已送达客户端之后才执行，客户端立即 GET 状态时会读不到
+        刚写入的向量与任务行（见 fastapi#3620）。
     """
     try:
-        return await svc.refresh_case_index(case_id, request)
+        result = await svc.refresh_case_index(case_id, request)
     except LLMClientError as exc:
         raise ErrorMapper().to_http_exception(exc)
     except RuntimeError as exc:
@@ -172,6 +181,8 @@ async def refresh_case_vector_index(
                 message=str(exc),
             ).model_dump(),
         )
+    await session.commit()
+    return result
 
 
 @router.get(
@@ -217,19 +228,21 @@ async def get_case_vector_index_status(
 )
 async def delete_case_vectors(
     request: DeleteVectorIndexRequest,
+    session: Annotated[AsyncSession, Depends(get_db)],
     svc: Annotated[VectorIndexService, Depends(get_vector_index_service)],
 ) -> DeleteVectorIndexResponse:
     """按案例或向量标识删除索引（幂等）。
 
     Args:
         request: 删除请求。
+        session: 请求级数据库会话（与 svc 共享同一实例）。
         svc: 向量索引服务。
 
     Returns:
         删除结果。
     """
     try:
-        return await svc.delete_case_vector(request)
+        result = await svc.delete_case_vector(request)
     except ValueError as exc:
         logger.warning("删除向量索引参数无效: %s", exc)
         raise HTTPException(
@@ -248,6 +261,8 @@ async def delete_case_vectors(
                 message=str(exc),
             ).model_dump(),
         )
+    await session.commit()
+    return result
 
 
 @router.post(
@@ -261,19 +276,21 @@ async def delete_case_vectors(
 )
 async def retry_vector_index_job(
     job_id: str,
+    session: Annotated[AsyncSession, Depends(get_db)],
     runner: Annotated[VectorJobRunner, Depends(get_vector_job_runner)],
 ) -> VectorIndexJobResponse:
     """对可重试的失败任务发起强制刷新重试。
 
     Args:
         job_id: 历史任务标识。
+        session: 请求级数据库会话（与 runner 共享同一实例）。
         runner: 向量任务编排器。
 
     Returns:
         新刷新任务响应。
     """
     try:
-        return await runner.retry_job(job_id)
+        result = await runner.retry_job(job_id)
     except VectorIndexJobNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -301,6 +318,8 @@ async def retry_vector_index_job(
                 message=str(exc),
             ).model_dump(),
         )
+    await session.commit()
+    return result
 
 
 @router.post(

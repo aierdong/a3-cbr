@@ -173,7 +173,8 @@ class TestSchemaValidationLayer:
 class TestCaseValidatorStoreId:
     """校验 store_id 存在性（业务逻辑校验）。"""
 
-    def test_store_id_must_exist(self):
+    @pytest.mark.asyncio
+    async def test_store_id_must_exist(self):
         """store_id 必须在 store_infos 中存在。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
@@ -188,11 +189,12 @@ class TestCaseValidatorStoreId:
         def store_exists(sid: str) -> bool:
             return sid == "store_001"
 
-        errors = validate_create_case(request, store_exists)
+        errors = await validate_create_case(request, store_exists)
         field_names = [e.field for e in errors]
         assert "store_id" in field_names
 
-    def test_store_id_exists_passes(self):
+    @pytest.mark.asyncio
+    async def test_store_id_exists_passes(self):
         """存在的 store_id 应通过校验。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
@@ -207,10 +209,11 @@ class TestCaseValidatorStoreId:
         def store_exists(sid: str) -> bool:
             return sid == "store_001"
 
-        errors = validate_create_case(request, store_exists)
+        errors = await validate_create_case(request, store_exists)
         assert len(errors) == 0
 
-    def test_valid_request_passes(self):
+    @pytest.mark.asyncio
+    async def test_valid_request_passes(self):
         """所有字段有效时通过校验。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
@@ -229,14 +232,15 @@ class TestCaseValidatorStoreId:
         def store_exists(sid: str) -> bool:
             return sid == "store_001"
 
-        errors = validate_create_case(request, store_exists)
+        errors = await validate_create_case(request, store_exists)
         assert len(errors) == 0
 
 
 class TestCaseValidatorUpdate:
     """校验 UpdateCaseRequest（业务逻辑校验）。"""
 
-    def test_update_valid_request_passes(self):
+    @pytest.mark.asyncio
+    async def test_update_valid_request_passes(self):
         """有效的更新请求应通过校验。"""
         request = UpdateCaseRequest(
             problem_description="更新后的描述",
@@ -252,16 +256,18 @@ class TestCaseValidatorUpdate:
         def store_exists(sid: str) -> bool:
             return sid in ("store_001", "store_002")
 
-        errors = validate_update_case(request, store_exists)
+        errors = await validate_update_case(request, store_exists)
         assert len(errors) == 0
 
-    def test_update_empty_request_passes(self):
+    @pytest.mark.asyncio
+    async def test_update_empty_request_passes(self):
         """空更新请求应通过校验（所有字段可选）。"""
         request = UpdateCaseRequest()
-        errors = validate_update_case(request, lambda sid: True)
+        errors = await validate_update_case(request, lambda sid: True)
         assert len(errors) == 0
 
-    def test_update_store_id_not_exists_fails(self):
+    @pytest.mark.asyncio
+    async def test_update_store_id_not_exists_fails(self):
         """更新的 store_id 不存在时失败。"""
         request = UpdateCaseRequest(
             store_id="nonexistent_store",
@@ -270,7 +276,7 @@ class TestCaseValidatorUpdate:
         def store_exists(sid: str) -> bool:
             return False
 
-        errors = validate_update_case(request, store_exists)
+        errors = await validate_update_case(request, store_exists)
         field_names = [e.field for e in errors]
         assert "store_id" in field_names
 
@@ -315,7 +321,8 @@ class TestCaseValidatorUpdate:
 class TestCaseValidatorFieldErrorFormat:
     """校验 FieldError 格式。"""
 
-    def test_field_error_has_field_and_message(self):
+    @pytest.mark.asyncio
+    async def test_field_error_has_field_and_message(self):
         """FieldError 应包含 field 和 message。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
@@ -330,7 +337,7 @@ class TestCaseValidatorFieldErrorFormat:
         def store_exists(sid: str) -> bool:
             return False
 
-        errors = validate_create_case(request, store_exists)
+        errors = await validate_create_case(request, store_exists)
         assert len(errors) > 0
         error = errors[0]
         assert hasattr(error, "field")
@@ -339,7 +346,8 @@ class TestCaseValidatorFieldErrorFormat:
         assert isinstance(error.message, str)
         assert error.field == "store_id"
 
-    def test_multiple_field_errors(self):
+    @pytest.mark.asyncio
+    async def test_multiple_field_errors(self):
         """可返回多个字段错误。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
@@ -354,7 +362,7 @@ class TestCaseValidatorFieldErrorFormat:
         def store_exists(sid: str) -> bool:
             return False
 
-        errors = validate_create_case(request, store_exists)
+        errors = await validate_create_case(request, store_exists)
         # 只有 store_id 错误，因为其他字段都通过了 Schema 层校验
         assert len(errors) >= 1
 
@@ -362,8 +370,9 @@ class TestCaseValidatorFieldErrorFormat:
 class TestCaseValidatorClass:
     """CaseValidator 类封装测试。"""
 
-    def test_validate_create_static_method(self):
-        """CaseValidator.validate_create 为静态方法。"""
+    @pytest.mark.asyncio
+    async def test_validate_create_static_method(self):
+        """CaseValidator.validate_create 为异步静态方法。"""
         request = CreateCaseRequest(
             problem_description="问题描述",
             store_id="store_001",
@@ -377,11 +386,12 @@ class TestCaseValidatorClass:
         def store_exists(sid: str) -> bool:
             return True
 
-        errors = CaseValidator.validate_create(request, store_exists)
+        errors = await CaseValidator.validate_create(request, store_exists)
         assert len(errors) == 0
 
-    def test_validate_update_static_method(self):
-        """CaseValidator.validate_update 为静态方法。"""
+    @pytest.mark.asyncio
+    async def test_validate_update_static_method(self):
+        """CaseValidator.validate_update 为异步静态方法。"""
         request = UpdateCaseRequest(
             problem_description="更新描述",
         )
@@ -389,14 +399,15 @@ class TestCaseValidatorClass:
         def store_exists(sid: str) -> bool:
             return True
 
-        errors = CaseValidator.validate_update(request, store_exists)
+        errors = await CaseValidator.validate_update(request, store_exists)
         assert len(errors) == 0
 
 
 class TestCaseValidatorOutcomeResult:
     """校验 outcome.result 枚举值。"""
 
-    def test_valid_outcome_results(self):
+    @pytest.mark.asyncio
+    async def test_valid_outcome_results(self):
         """所有有效的 outcome.result 枚举值应通过校验。"""
         for result_value in ["improved", "no_change", "unknown"]:
             request = CreateCaseRequest(
@@ -408,7 +419,7 @@ class TestCaseValidatorOutcomeResult:
                 solution_steps=[{"order": 1, "content": "步骤"}],
                 outcome={"result": result_value, "notes": "备注"},
             )
-            errors = validate_create_case(request, lambda sid: True)
+            errors = await validate_create_case(request, lambda sid: True)
             assert len(errors) == 0, f"result={result_value} should pass"
 
     def test_invalid_outcome_result_rejected_at_schema(self):

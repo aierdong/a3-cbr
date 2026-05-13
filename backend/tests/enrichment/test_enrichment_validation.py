@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from app.enrichment.schemas import BlockingLevel
+from app.enrichment.schemas import BlockingLevel, SourceField
 from app.enrichment.validators import (
     MAX_TAG_COUNT,
     OutputValidator,
@@ -653,6 +653,32 @@ class TestValidateRecommendationCopy:
         assert len(result) == 2
         assert result[0].case_id == "case_001"
         assert result[1].case_id == "case_002"
+
+    def test_source_reference_aliases_are_normalized(self):
+        """LLM 返回增强字段别名（problem_summary 等）时应映射为 SourceField。"""
+        data = _valid_recommendation_items()
+        data["items"][0]["source_references"] = [
+            "problem_summary",
+            "solution_summary",
+            "problem_description",
+        ]
+        data["items"][1]["source_references"] = [
+            "structured_suggestions",
+            "core_solution_steps",
+        ]
+        result = self.validator.validate_recommendation_copy(
+            json.dumps(data),
+            ["case_001", "case_002"],
+        )
+        assert result[0].source_references == [
+            SourceField.PROBLEM_DESCRIPTION,
+            SourceField.OUTCOME,
+            SourceField.PROBLEM_DESCRIPTION,
+        ]
+        assert result[1].source_references == [
+            SourceField.CONTEXT,
+            SourceField.SOLUTION_STEPS,
+        ]
 
     def test_single_candidate(self):
         """单候选应正常处理。"""

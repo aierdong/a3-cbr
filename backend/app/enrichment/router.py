@@ -12,6 +12,7 @@ Requirements: 1.1, 1.2, 1.3, 1.4, 4.4, 4.5, 6.4, 7.1, 7.3, 7.5
 Boundary: EnrichmentRouter
 """
 import logging
+import time
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -85,7 +86,7 @@ def get_enrichment_job_runner(
 
     case_repository = CaseRepository(session)
     case_validator = CaseValidator()
-    case_service = CaseService(case_repository, case_validator)
+    case_service = CaseService(case_repository, case_validator, repository)
     case_provider = CaseSnapshotProvider(case_service)
 
     return EnrichmentJobRunner(
@@ -206,7 +207,17 @@ async def create_enrichment_run(
     Returns:
         EnrichmentRunResponse: 增强运行响应
     """
-    return await job_runner.run_enrichment(case_id, request)
+    t0 = time.perf_counter()
+    response = await job_runner.run_enrichment(case_id, request)
+    total_ms = (time.perf_counter() - t0) * 1000
+    logger.info(
+        "创建增强运行 API 总耗时: case_id=%s, run_id=%s, status=%s, total_ms=%.1f",
+        case_id,
+        response.run_id,
+        response.status,
+        total_ms,
+    )
+    return response
 
 
 @router.get(

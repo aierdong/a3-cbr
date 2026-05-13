@@ -76,8 +76,6 @@ export interface components {
             recommendation_item_id?: string | null;
             usefulness: components["schemas"]["Usefulness"];
             comment?: string | null;
-            /** @description 反馈提交者标识 */
-            actor_id: string;
             source_channel?: components["schemas"]["SourceChannel"];
         };
         FeedbackResponse: {
@@ -221,6 +219,8 @@ export interface components {
         RecommendationRunId: string;
         RecommendationItemId: string;
         ActorId: string;
+        /** @description 反馈提交者标识（与服务端 HTTP 头一致；不得再放入请求体） */
+        XActorId: string;
         Usefulness: components["schemas"]["Usefulness"];
         SourceChannel: components["schemas"]["SourceChannel"];
         CreatedFrom: string;
@@ -270,7 +270,10 @@ export interface operations {
     submitRecommendationFeedback: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description 反馈提交者标识（与服务端 HTTP 头一致；不得再放入请求体） */
+                "X-Actor-Id": components["parameters"]["XActorId"];
+            };
             path?: never;
             cookie?: never;
         };

@@ -2,29 +2,28 @@
   <article class="recommendation-card" :data-testid="`card-${item.rank}`">
     <header class="card-head">
       <h4 class="card-title">排序 #{{ item.rank }}</h4>
-      <p class="sub">推荐项标识：{{ item.recommendation_item_id ?? '—（运行级占位）' }}</p>
+      <p class="sub">推荐项标识：<span class="mono">{{ item.recommendation_item_id }}</span></p>
       <p class="sub">案例标识：<span class="mono">{{ item.case_id }}</span></p>
     </header>
 
     <section class="section">
       <h5>案例引用</h5>
-      <p><strong>标题预览：</strong>{{ item.case_reference.title_preview }}</p>
-      <p><strong>描述预览：</strong>{{ item.case_reference.description_preview }}</p>
+      <p><strong>标题预览：</strong>{{ caseTitleLine(item) }}</p>
+      <p><strong>描述预览：</strong>{{ caseDescriptionLine(item) }}</p>
       <p v-if="item.case_reference.brand_summary"><strong>品牌摘要：</strong>{{ item.case_reference.brand_summary }}</p>
       <p v-if="item.case_reference.store_summary"><strong>门店摘要：</strong>{{ item.case_reference.store_summary }}</p>
       <p v-if="item.case_reference.filter_summary"><strong>过滤摘要：</strong>{{ item.case_reference.filter_summary }}</p>
-      <p><strong>案例更新时间：</strong>{{ item.case_reference.case_updated_at }}</p>
+      <p><strong>案例更新时间：</strong>{{ caseUpdatedAtLine(item) }}</p>
     </section>
 
     <section class="section">
       <h5>核心步骤与效果</h5>
-      <ul v-if="item.core_solution_steps?.length">
-        <li v-for="(s, i) in item.core_solution_steps" :key="i">{{ s }}</li>
-      </ul>
+      <p v-if="item.core_solution_steps" class="steps-text">{{ item.core_solution_steps }}</p>
       <p v-else class="muted">无核心步骤</p>
       <p><strong>效果摘要：</strong>{{ item.outcome_summary ?? '—' }}</p>
       <p v-if="item.structured_suggestions_summary">
-        <strong>结构化建议摘要：</strong>{{ item.structured_suggestions_summary }}
+        <strong>结构化建议摘要：</strong>
+        <span class="mono">{{ formatJson(item.structured_suggestions_summary) }}</span>
       </p>
     </section>
 
@@ -46,10 +45,10 @@
         <li><strong>最终聚合分：</strong>{{ formatScore(item.final_score) }}</li>
       </ul>
       <p class="muted small">
-        分值来源：<span class="mono">{{ item.score_breakdown.final_score_source }}</span>
+        分值来源：<span class="mono">{{ item.score_metadata.final_score_source }}</span>
       </p>
-      <p v-if="item.score_breakdown.weights && Object.keys(item.score_breakdown.weights).length" class="muted small">
-        权重明细：<span class="mono">{{ formatJson(item.score_breakdown.weights) }}</span>
+      <p v-if="effectiveWeightsLine(item)" class="muted small">
+        有效权重：<span class="mono">{{ formatJson(effectiveWeightsLine(item)!) }}</span>
       </p>
 
       <p><strong>解释状态：</strong>{{ item.explanation_status }} <span v-if="explanationHint" class="hint">— {{ explanationHint }}</span></p>
@@ -96,17 +95,49 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { FeedbackApiService } from '@/api/feedback'
-import type { DegradedReason, ExplanationStatus, RecommendationItem } from '@/api/recommendations'
+import type { ExplanationStatus, RecommendationItem } from '@/api/recommendations'
 import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 
 const props = defineProps<{
   item: RecommendationItem
-  /** 运行级降级原因，用于与 `explanation_status` 组合提示 */
-  runDegradedReason?: DegradedReason | null
+  /** 运行级降级原因（与响应 `degraded_reason` 字符串一致） */
+  runDegradedReason?: string | null
   /** 与列表页传入一致，用于推荐项级反馈 */
   recommendationRunId?: string
   feedbackApi?: FeedbackApiService
 }>()
+
+function caseRefRecord(item: RecommendationItem): Record<string, unknown> {
+  return item.case_reference as unknown as Record<string, unknown>
+}
+
+function caseTitleLine(item: RecommendationItem): string {
+  const r = caseRefRecord(item)
+  const tp = r.title_preview
+  if (typeof tp === 'string' && tp.trim()) return tp
+  const cid = r.case_id
+  if (typeof cid === 'string' && cid.trim()) return `案例 ${cid}`
+  return '—'
+}
+
+function caseDescriptionLine(item: RecommendationItem): string {
+  const r = caseRefRecord(item)
+  const dp = r.description_preview
+  if (typeof dp === 'string' && dp.trim()) return dp
+  return '（暂无摘要预览，仅返回案例标识）'
+}
+
+function caseUpdatedAtLine(item: RecommendationItem): string {
+  const r = caseRefRecord(item)
+  const u = r.case_updated_at
+  if (typeof u === 'string' && u.trim()) return u
+  return '—'
+}
+
+function effectiveWeightsLine(item: RecommendationItem): Record<string, number> | null {
+  const w = item.score_metadata.effective_weights
+  return w && Object.keys(w).length > 0 ? w : null
+}
 
 function formatScore(n: number): string {
   return Number.isFinite(n) ? n.toFixed(4) : String(n)
@@ -196,5 +227,10 @@ const explanationHint = computed(() => explanationHints[props.item.explanation_s
 .hint {
   color: #555;
   font-size: 12px;
+}
+
+.steps-text {
+  margin: 0;
+  white-space: pre-wrap;
 }
 </style>

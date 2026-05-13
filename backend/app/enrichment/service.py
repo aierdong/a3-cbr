@@ -10,6 +10,7 @@ Boundary: EnrichmentService
 """
 
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -27,6 +28,7 @@ from app.enrichment.schemas import (
     EnrichmentStatus,
     ErrorStage,
     LLMCompletionRequest,
+    LLM_RESPONSE_FORMAT_JSON_OBJECT,
     RequestPurpose,
     TaskType,
 )
@@ -110,6 +112,15 @@ class EnrichmentService:
             LLMClientError: LLM 调用失败（不可重试时）。
         """
         case_id = input_snapshot.case_id
+        t_wall = time.perf_counter()
+        t_seg = time.perf_counter()
+
+        def _elapsed_ms() -> float:
+            nonlocal t_seg
+            now = time.perf_counter()
+            delta = (now - t_seg) * 1000
+            t_seg = now
+            return delta
 
         # -----------------------------------------------------------
         # 1. 注入风险检测
@@ -117,6 +128,7 @@ class EnrichmentService:
         is_blocked, reason = self._prompt_catalog.check_enrichment_injection(
             input_snapshot,
         )
+        ms_injection = _elapsed_ms()
         if is_blocked:
             logger.warning(
                 "注入风险阻断: case_id=%s, run_id=%s, reason=%s",
@@ -138,12 +150,14 @@ class EnrichmentService:
         # 2. 构造 Prompt
         # -----------------------------------------------------------
         prompt_text = self._prompt_catalog.build_enrichment_prompt(input_snapshot)
+        ms_build_prompt = _elapsed_ms()
 
         llm_request = LLMCompletionRequest(
             prompt=prompt_text,
             model_id=self._config.model_id,
             task_type=TaskType.CASE_ENRICHMENT,
             request_purpose=request_purpose,
+            response_format=LLM_RESPONSE_FORMAT_JSON_OBJECT,
         )
 
         # -----------------------------------------------------------
@@ -152,12 +166,26 @@ class EnrichmentService:
         try:
             llm_result = await self._llm_client.complete_json(llm_request)
         except LLMClientError as exc:
+            ms_llm = _elapsed_ms()
+            logger.info(
+                "增强服务分阶段耗时(至 LLM 失败): case_id=%s, run_id=%s, "
+                "injection_ms=%.1f, build_prompt_ms=%.1f, llm_ms=%.1f, service_total_ms=%.1f",
+                case_id,
+                run_id,
+                ms_injection,
+                ms_build_prompt,
+                ms_llm,
+                (time.perf_counter() - t_wall) * 1000,
+            )
             logger.warning(
-                "LLM 调用失败: case_id=%s, run_id=%s, error_code=%s, retryable=%s",
+                "LLM 调用失败: case_id=%s, run_id=%s, error_code=%s, retryable=%s, "
+                "http_status=%s, message=%s",
                 case_id,
                 run_id,
                 exc.error_code,
                 exc.retryable,
+                exc.status_code,
+                exc.message,
             )
             error_stage = self._map_llm_error_stage(exc.error_code)
             if exc.retryable:
@@ -173,6 +201,7 @@ class EnrichmentService:
                     error_stage=error_stage,
                 )
             raise
+        ms_llm = _elapsed_ms()
 
         # -----------------------------------------------------------
         # 4. 校验输出
@@ -183,6 +212,19 @@ class EnrichmentService:
                 case_id,
             )
         except OutputValidationException as exc:
+            ms_validate = _elapsed_ms()
+            logger.info(
+                "增强服务分阶段耗时(至校验失败): case_id=%s, run_id=%s, "
+                "injection_ms=%.1f, build_prompt_ms=%.1f, llm_ms=%.1f, validate_ms=%.1f, "
+                "service_total_ms=%.1f",
+                case_id,
+                run_id,
+                ms_injection,
+                ms_build_prompt,
+                ms_llm,
+                ms_validate,
+                (time.perf_counter() - t_wall) * 1000,
+            )
             logger.warning(
                 "输出校验失败: case_id=%s, run_id=%s, error_code=%s, message=%s",
                 case_id,
@@ -196,6 +238,7 @@ class EnrichmentService:
                 error_stage=ErrorStage.VALIDATE,
             )
             raise
+        ms_validate = _elapsed_ms()
 
         # -----------------------------------------------------------
         # 5. 写入结果（仓储层保证事务原子性）
@@ -218,6 +261,20 @@ class EnrichmentService:
         try:
             await self._repository.complete_run(run_id, result_create)
         except Exception as exc:
+            ms_persist = _elapsed_ms()
+            logger.info(
+                "增强服务分阶段耗时(至持久化失败): case_id=%s, run_id=%s, "
+                "injection_ms=%.1f, build_prompt_ms=%.1f, llm_ms=%.1f, validate_ms=%.1f, "
+                "persist_ms=%.1f, service_total_ms=%.1f",
+                case_id,
+                run_id,
+                ms_injection,
+                ms_build_prompt,
+                ms_llm,
+                ms_validate,
+                ms_persist,
+                (time.perf_counter() - t_wall) * 1000,
+            )
             logger.error(
                 "结果持久化失败: case_id=%s, run_id=%s, error=%s",
                 case_id,
@@ -230,20 +287,38 @@ class EnrichmentService:
                 error_stage=ErrorStage.PERSIST,
             )
             raise
+        ms_persist = _elapsed_ms()
 
         logger.info(
-            "增强完成: case_id=%s, run_id=%s, enrichment_id=%s",
+            "增强完成: case_id=%s, run_id=%s, enrichment_id=%s, "
+            "injection_ms=%.1f, build_prompt_ms=%.1f, llm_ms=%.1f, validate_ms=%.1f, "
+            "persist_ms=%.1f",
             case_id,
             run_id,
             enrichment_id,
+            ms_injection,
+            ms_build_prompt,
+            ms_llm,
+            ms_validate,
+            ms_persist,
         )
 
         # 从仓储查询并返回完整结果
         result = await self._repository.get_current_result(case_id)
+        ms_fetch_result = _elapsed_ms()
         if result is None:
             raise RuntimeError(
                 f"增强结果写入后查询失败: case_id={case_id}, enrichment_id={enrichment_id}"
             )
+        service_total_ms = (time.perf_counter() - t_wall) * 1000
+        logger.info(
+            "增强服务分阶段耗时(成功): case_id=%s, run_id=%s, fetch_result_ms=%.1f, "
+            "service_total_ms=%.1f",
+            case_id,
+            run_id,
+            ms_fetch_result,
+            service_total_ms,
+        )
         return result
 
     async def delete_enrichment_data(

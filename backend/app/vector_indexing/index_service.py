@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -45,8 +47,19 @@ from app.vector_indexing.schemas import (
 from app.vector_indexing.source_models import IndexSourceSnapshot
 from app.vector_indexing.source_provider import CaseIndexSourceProvider
 
+logger = logging.getLogger(__name__)
+
+
+def _truncate_for_log(text: str, limit: int = 500) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
 
 INPUT_TEMPLATE_VERSION = "case_embedding_v1"
+
+# 状态查询慢请求 INFO 阈值（秒）；低于此值仅在 DEBUG 打印分阶段耗时
+_VECTOR_STATUS_SLOW_SEC = 0.5
 
 
 def _utc_now() -> datetime:
@@ -339,6 +352,54 @@ class VectorIndexService:
         assert fin is not None
         return _job_to_response(fin)
 
+    async def _finish_job_after_embedding_llm_error(
+        self,
+        job_id: str,
+        case_id: str,
+        exc: LLMClientError,
+    ) -> VectorIndexJobResponse:
+        """Embedding 调用失败后写任务终态并打诊断日志。
+
+        Args:
+            job_id: 当前刷新任务 id。
+            case_id: 案例 id。
+            exc: 嵌入客户端异常。
+
+        Returns:
+            失败或重试态任务响应。
+        """
+        stage = VectorErrorStage.EMBEDDING_CALL.value
+        if exc.error_code in (
+            ErrorCode.EMBEDDING_INVALID_RESPONSE,
+            ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
+        ):
+            stage = VectorErrorStage.VALIDATE_EMBEDDING.value
+        retryable = embedding_failure_retryable(exc.error_code)
+        cause = exc.__cause__
+        cause_note = ""
+        if cause is not None:
+            cause_note = (
+                " cause="
+                + _truncate_for_log(f"{type(cause).__name__}: {cause!s}")
+            )
+        logger.warning(
+            "向量索引任务失败 job_id=%s case_id=%s stage=%s error_code=%s "
+            "http_status=%s detail=%s%s",
+            job_id,
+            case_id,
+            stage,
+            exc.error_code,
+            exc.status_code,
+            exc.message,
+            cause_note,
+        )
+        return await self._finish_job_failure(
+            job_id,
+            exc.error_code,
+            stage,
+            retryable=retryable,
+        )
+
     async def refresh_case_index(
         self,
         case_id: str,
@@ -423,19 +484,7 @@ class VectorIndexService:
         try:
             emb_res = await self._embedding.embed_for_index(emb_req)
         except LLMClientError as exc:
-            stage = VectorErrorStage.EMBEDDING_CALL.value
-            if exc.error_code in (
-                ErrorCode.EMBEDDING_INVALID_RESPONSE,
-                ErrorCode.EMBEDDING_DIMENSION_MISMATCH,
-            ):
-                stage = VectorErrorStage.VALIDATE_EMBEDDING.value
-            retryable = embedding_failure_retryable(exc.error_code)
-            return await self._finish_job_failure(
-                job_id,
-                exc.error_code,
-                stage,
-                retryable=retryable,
-            )
+            return await self._finish_job_after_embedding_llm_error(job_id, case_id, exc)
 
         return await self._persist_refreshed_vector(job_id, case_id, snap, sv, composed, emb_res)
 
@@ -524,8 +573,25 @@ class VectorIndexService:
         Returns:
             ``VectorIndexStatusResponse``。
         """
+        t0 = time.perf_counter()
+        t1 = time.perf_counter()
         latest = await self._repo.get_latest_job_for_case(case_id)
-        cur = await self._repo.get_current_vector(case_id)
+        ms_latest = (time.perf_counter() - t1) * 1000.0
+        t2 = time.perf_counter()
+        cur = await self._repo.get_current_vector_for_status(case_id)
+        ms_cur = (time.perf_counter() - t2) * 1000.0
+        total_ms = (time.perf_counter() - t0) * 1000.0
+        total_sec = total_ms / 1000.0
+        log_msg = (
+            "vector-index GET status timings case_id=%s get_latest_job_ms=%.1f "
+            "get_current_vector_ms=%.1f total_ms=%.1f"
+        )
+        log_args = (case_id, ms_latest, ms_cur, total_ms)
+        if total_sec >= _VECTOR_STATUS_SLOW_SEC:
+            logger.info(log_msg, *log_args)
+        else:
+            logger.debug(log_msg, *log_args)
+
         latest_resp = _job_to_response(latest) if latest else None
 
         if latest is None and cur is None:

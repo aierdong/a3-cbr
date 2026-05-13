@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field, ValidationError
 from app.core.llm_client import LLMClient, LLMClientError
 from app.core.config import NormalizerLLMConfig
 from app.core.errors import ErrorCode
-from app.enrichment.schemas import LLMCompletionRequest, RequestPurpose, TaskType
+from app.enrichment.schemas import (
+    LLMCompletionRequest,
+    LLM_RESPONSE_FORMAT_JSON_OBJECT,
+    RequestPurpose,
+    TaskType,
+)
 from app.retrieval.schemas import (
     BusinessWeights,
     NormalizedRetrievalQuery,
@@ -162,6 +167,7 @@ class QueryNormalizer:
             model_id=self._config.model_id,
             task_type=TaskType.CASE_ENRICHMENT,
             request_purpose=RequestPurpose.RETRIEVAL_QUERY_NORMALIZE,
+            response_format=LLM_RESPONSE_FORMAT_JSON_OBJECT,
         )
 
         # 2. 执行 LLM 调用

@@ -124,6 +124,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description 与 llm-case-enrichment 派生结果中的规范化标签一致；无有效增强结果时为空数组。 */
+            tag_suggestions: string[];
         };
         CaseListItem: {
             case_id: string;

@@ -242,12 +242,19 @@ class ErrorMapper:
 
         public_message = _EMBEDDING_PUBLIC_MESSAGES.get(exc.error_code)
         if public_message is not None:
-            logger.warning("LLM 调用失败: error_code=%s", exc.error_code)
+            logger.warning(
+                "LLM 调用失败: error_code=%s, http_status=%s, detail=%s",
+                exc.error_code,
+                exc.status_code,
+                exc.message,
+            )
             api_message = public_message
         else:
             logger.warning(
-                "LLM 调用失败: error_code=%s, message=%s",
+                "LLM 调用失败: error_code=%s, http_status=%s, retryable=%s, message=%s",
                 exc.error_code,
+                exc.status_code,
+                exc.retryable,
                 exc.message,
             )
             api_message = exc.message

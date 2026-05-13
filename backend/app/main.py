@@ -1,7 +1,10 @@
 """A3 案例管理后端应用入口。"""
 import logging
+import sys
+import time
 
 from fastapi import FastAPI
+from starlette.requests import Request
 
 from app.cases.router import router as case_router
 from app.core.config import get_app_config, settings
@@ -16,7 +19,39 @@ from app.feedback.router import admin_router as feedback_admin_router
 from app.feedback.router import router as feedback_router
 from app.retrieval.router import router as retrieval_router
 
+from contextlib import asynccontextmanager
+
 logger = logging.getLogger(__name__)
+
+_app_logging_configured = False
+
+
+def configure_app_logging() -> None:
+    """将 ``app.*`` 命名空间日志输出到 stderr，并带时间戳。
+
+    Uvicorn 默认只配置自身与 access 日志；未配置根日志时 ``app`` 下
+    ``logger.info`` 不会出现在控制台。此处为 ``app`` 增加独立 Handler，
+    避免与 uvicorn access 混用且可带 ``%(asctime)s``。
+    """
+    global _app_logging_configured
+    if _app_logging_configured:
+        return
+    app_log = logging.getLogger("app")
+    if app_log.handlers:
+        _app_logging_configured = True
+        return
+    app_log.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        ),
+    )
+    app_log.addHandler(handler)
+    app_log.propagate = False
+    _app_logging_configured = True
+
 
 # 清理服务实例（模块级别，供 startup/shutdown 钩子使用）
 cleanup_service: EnrichmentCleanupService | None = None
@@ -26,11 +61,30 @@ feedback_cleanup_service: FeedbackCleanupBackgroundService | None = None
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用实例。"""
+    configure_app_logging()
     app = FastAPI(
         title="A3 案例管理系统",
         description="提供 A3 案例的创建、编辑、详情、列表查询和删除能力",
         version="0.1.0",
     )
+
+    @app.middleware("http")
+    async def log_vector_index_get_wall_time(request: Request, call_next):
+        """记录 ``GET .../vector-index`` 的墙钟耗时（含依赖、commit、响应序列化）。"""
+        is_status_get = (
+            request.method == "GET"
+            and request.url.path.rstrip("/").endswith("/vector-index")
+        )
+        start = time.perf_counter() if is_status_get else 0.0
+        response = await call_next(request)
+        if is_status_get:
+            wall_ms = (time.perf_counter() - start) * 1000.0
+            logger.info(
+                "HTTP GET vector-index wall_ms=%.1f path=%s",
+                wall_ms,
+                request.url.path,
+            )
+        return response
 
     # 注册案例路由
     app.include_router(case_router)
@@ -54,8 +108,8 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
-@app.on_event("startup")
-async def start_cleanup_service():
+@asynccontextmanager
+async def start_cleanup_service(app: FastAPI):
     """启动增强清理服务后台任务。
 
     加载清理配置，创建 EnrichmentCleanupService 实例，
@@ -97,14 +151,13 @@ async def start_cleanup_service():
     except Exception:
         logger.exception("反馈悬空清理后台任务启动失败，不影响应用正常运行")
 
+    yield  # 👈 这里是分割点。yield 之前是启动，yield 之后是关闭
 
-@app.on_event("shutdown")
-async def stop_cleanup_service():
     """停止增强清理服务。
 
     优雅停止清理服务后台任务。
     """
-    global feedback_cleanup_service, vector_cleanup_service
+
     if cleanup_service is not None:
         await cleanup_service.stop()
         logger.info("增强清理服务已停止")

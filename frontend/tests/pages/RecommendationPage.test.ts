@@ -47,7 +47,16 @@ describe('RecommendationPage', () => {
                 },
                 vector_similarity_score: 0.88,
                 final_score: 0.91,
-                score_breakdown: { final_score_source: 'aggregated' },
+                score_metadata: {
+                  vector_similarity_score: 0.88,
+                  semantic_similarity_score: null,
+                  structured_similarity_score: null,
+                  business_score: null,
+                  final_score: 0.91,
+                  final_score_source: 'aggregated',
+                  normalized_scores: {},
+                  effective_weights: {},
+                },
                 explanation_status: 'generated',
                 missing_fields: [],
               },
@@ -107,9 +116,9 @@ describe('RecommendationPage', () => {
       expect.objectContaining({
         recommendation_run_id: 'run-page-1',
         recommendation_item_id: null,
-        actor_id: 'anonymous_user',
         source_channel: 'admin_web',
-      })
+      }),
+      { headers: { 'X-Actor-Id': 'anonymous_user' } }
     )
     expect(w.find('[data-testid="feedback-run"] [data-testid="feedback-success"]').exists()).toBe(
       true

@@ -13,7 +13,7 @@
         <span class="label">问题类型</span>
         <select v-model="problemTypeModel">
           <option value="">全部</option>
-          <option v-for="opt in problemTypeOptions" :key="opt.value" :value="opt.value">
+          <option v-for="opt in CASE_PROBLEM_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </option>
         </select>
@@ -60,6 +60,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import type { CaseListFilters } from '@/composables/useCases'
+import { CASE_PROBLEM_TYPE_OPTIONS } from '@/domain/caseProblemType'
 
 const props = defineProps<{
   /** 与父级同步的筛选（例如重载后回显） */
@@ -70,15 +71,6 @@ const emit = defineEmits<{
   'update:modelValue': [value: CaseListFilters]
   submit: [value: CaseListFilters]
 }>()
-
-const problemTypeOptions = [
-  { value: 'service', label: '服务' },
-  { value: 'quality', label: '质量' },
-  { value: 'operation', label: '运营' },
-  { value: 'hygiene', label: '卫生' },
-  { value: 'staffing', label: '人力' },
-  { value: 'other', label: '其他' },
-] as const
 
 const draft = reactive<CaseListFilters>({ ...emptyFilters(), ...props.modelValue })
 

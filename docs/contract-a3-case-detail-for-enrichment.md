@@ -147,20 +147,25 @@
 
 ---
 
-## 6. 增强触发条件
+## 6. 增强触发条件与「提交且摘要」跨规格编排
+
+本节是 **「提交且摘要」** 的唯一维护正文，涉及 `a3-case-management`、`llm-case-enrichment` 与 `case-vector-indexing`；各 `.kiro/specs/*/design.md` 仅保留指向本文的链接。
 
 ### 6.1 触发职责
 
-**触发主体**：前端（`mvp-admin-frontend`）
+**触发主体**：前端（`mvp-admin-frontend`）。
 
-**触发时机**：用户在前端执行"提交且摘要"操作时，前端依次调用：
-1. `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}` 保存案例
-2. 案例保存成功（HTTP 200）后，前端调用 `POST /api/a3-cases/{case_id}/enrichment-runs` 触发增强
+**「提交且摘要」调用顺序**（**前一步 HTTP 成功且满足条件后，才执行下一步**）：
 
-**触发条件**：
-- **首次创建案例**：用户点击"提交且摘要"按钮，案例状态从 `draft` 变为 `active`，触发首次增强。
-- **编辑已有案例**：用户修改案例后点击"提交且摘要"按钮，若 A3 核心内容字段（见 §6.2）发生变更，触发重新增强。
-- **手动重试**：用户在管理后台查看增强失败的案例，点击"重新生成"按钮，调用 `POST /api/enrichment-runs/{run_id}/retry` 触发重试。
+1. `POST /api/a3-cases` 或 `PUT /api/a3-cases/{case_id}`：**保存案例**。若失败则停止，不向用户隐藏保存错误。
+2. `POST /api/a3-cases/{case_id}/enrichment-runs`：**触发并完成一次增强运行**（当前实现为请求内跑完 LLM 流水线并返回终态，见 §6.4）。若 HTTP 失败或响应体中运行状态非 `succeeded`，则 **不执行第 3 步**。
+3. 仅当第 2 步响应中 **`status === succeeded`**（对齐 `EnrichmentRunResponse`）时：`POST /api/a3-cases/{case_id}/vector-index/refresh`，请求体至少 `{ "force_rebuild": false }`，可附带 `requested_by`（如 `submit-with-summary`）便于审计。若本步 HTTP 失败，案例与增强结果仍以服务端状态为准，前端须单独提示向量化失败。
+
+**业务触发条件**：
+
+- **首次创建案例**：用户点击「提交且摘要」，案例保存后执行增强；增强成功后再执行向量刷新。
+- **编辑已有案例**：同上；是否在内容未变时仍触发由产品决定（MVP 可依按钮意图一律触发或由前端 diff §6.2 字段后决定）。
+- **手动重试**：用户在详情或编辑页对失败步骤重试——增强可再次 `POST .../enrichment-runs`，或若存在 `retryable` 运行则使用 `POST /api/enrichment-runs/{run_id}/retry`（见 `llm-case-enrichment` OpenAPI）；向量可对失败任务 `POST /api/vector-index/jobs/{job_id}/retry` 或直接再次 `POST .../vector-index/refresh`（见 `case-vector-indexing` OpenAPI）。
 
 ### 6.2 触发条件：字段变更范围
 
@@ -182,9 +187,29 @@
 
 ### 6.3 失败处理
 
-- **增强失败不回滚案例更新**：案例已保存且可查看，增强运行记录标记为 `failed` 或 `validation_failed`。
-- **用户可手动重试**：通过管理后台或重试接口（`POST /api/enrichment-runs/{run_id}/retry`）手动触发重新增强。
-- **下游消费约定**：下游只消费 `status=valid` 的派生结果，不需要检查时间戳或过期标志。案例与派生结果的一致性由上游流程保证（案例修改后通过运营流程或管理后台显式触发重新增强）。
+- **增强失败不回滚案例更新**：案例已保存且可查看，增强运行记录可为 `failed`、`validation_failed`、`retryable` 等（见 `EnrichmentRunStatus`）。
+- **向量刷新失败不回滚案例与增强**：已向量化失败或跳过（增强未 `succeeded`）时，前端应在详情中展示状态并提供重试。
+- **用户可手动重试**：见 §6.1「手动重试」。
+- **下游消费约定**：向量索引与检索侧只应依赖一致快照；派生结果消费侧只消费 `current_result.status=valid`（详情查询见 §6.5）。
+
+### 6.4 请求内终态语义（与历史「纯异步」文案的纠偏）
+
+当前后端实现中，`POST .../enrichment-runs` 与 `POST .../vector-index/refresh` 均在**单次 HTTP 请求内执行至可返回的终态**（成功或失败），前端在「提交且摘要」流程中**会等待**这两步完成后再跳转或结束 loading。此前若文档写「触发后立即返回、后台异步、无需轮询」，以**本节为准**。
+
+### 6.5 详情态：增强与向量『是否成功』（不写回 `CaseDetailResponse`）
+
+管理后台案例详情需要区分 **增强是否成功**、**向量化是否成功**，**不**扩展 `GET /api/a3-cases/{case_id}` 的合同最小集时，前端在已加载案例本体后**并行**请求：
+
+- `GET /api/a3-cases/{case_id}/enrichment` → `CaseEnrichmentStatusResponse`：`latest_run`、`current_result`。
+- `GET /api/a3-cases/{case_id}/vector-index` → `VectorIndexStatusResponse`：`status`、`latest_job`、`last_error_code`、`message`。
+
+**建议展示规则**：
+
+- **增强成功**：`latest_run?.status === succeeded` 且 `current_result?.status === valid`（枚举以 `llm-case-enrichment` OpenAPI 为准）。
+- **向量化成功**：聚合 `status` 为 `published` 或 `succeeded`（枚举以 `case-vector-indexing` OpenAPI 为准）；`degraded`、`unsearchable` 等单列说明，避免与「成功检索」混淆。
+- 任一侧点不可用时，详情页仍可展示案例基础字段，仅在派生区块提示加载失败并重试加载。
+
+契约细节见 `docs/contracts/llm-case-enrichment.openapi.yaml`、`docs/contracts/case-vector-indexing.openapi.yaml`。
 
 ---
 
@@ -193,8 +218,9 @@
 
 | 文档                                          | 用途                                                 |
 | ------------------------------------------- | -------------------------------------------------- |
-| `.kiro/specs/a3-case-management/design.md`  | 案例域 API、`CaseService`、`CaseDetailResponse` 总体设计    |
-| `.kiro/specs/llm-case-enrichment/design.md` | `CaseSnapshotProvider`、`CaseInputSnapshot` 入口与映射逻辑、增强触发流程 |
+| `.kiro/specs/a3-case-management/design.md`  | 案例域 API、`CaseService`、`CaseDetailResponse` 总体设计 |
+| `.kiro/specs/llm-case-enrichment/design.md` | `CaseSnapshotProvider`、`CaseInputSnapshot`、增强模块边界 |
+| `.kiro/specs/case-vector-indexing/design.md` | 向量索引、`VectorIndexService`、刷新与状态语义 |
 
 
 **维护约定**：当上游详情 schema 与本文冲突时，以 intentional 变更为准：**先更新本文**，再改实现，并通知下游回归测试。

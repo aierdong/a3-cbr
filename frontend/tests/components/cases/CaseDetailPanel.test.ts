@@ -17,7 +17,7 @@ const sample: CaseDetailResponse = {
     city: '北京',
     city_tier: 'tier1',
   },
-  problem_type: 'quality',
+  problem_type: 'product_quality',
   context: { scene: '晚市高峰', extra_note: '靠窗位' },
   root_cause: '后厨产能不足',
   solution_steps: [{ order: 1, content: '预制备菜' }],
@@ -25,6 +25,7 @@ const sample: CaseDetailResponse = {
   status: 'active',
   created_at: '2026-03-01T08:00:00Z',
   updated_at: '2026-03-02T09:00:00Z',
+  tag_suggestions: [],
 }
 
 describe('CaseDetailPanel', () => {
@@ -43,9 +44,19 @@ describe('CaseDetailPanel', () => {
     expect(html).not.toContain('vector')
   })
 
-  it('标签区在契约无字段时应显示占位', () => {
+  it('标签为空时显示占位符', () => {
     const w = mount(CaseDetailPanel, { props: { detail: sample } })
     expect(w.text()).toContain('标签')
     expect(w.text()).toContain('—')
+  })
+
+  it('标签区使用契约字段 tag_suggestions', () => {
+    const w = mount(CaseDetailPanel, {
+      props: {
+        detail: { ...sample, tag_suggestions: ['客诉', '卫生'] },
+      },
+    })
+    expect(w.text()).toContain('客诉')
+    expect(w.text()).toContain('卫生')
   })
 })

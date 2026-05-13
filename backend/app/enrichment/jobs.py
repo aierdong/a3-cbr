@@ -12,7 +12,9 @@ Boundary: EnrichmentJobRunner
 """
 
 import logging
+import time
 import uuid
+from typing import Optional
 
 from app.core.llm_client import LLMClientError
 from app.core.config import EnrichmentLLMConfig
@@ -24,6 +26,7 @@ from app.enrichment.case_snapshot import (
 )
 from app.enrichment.repository import EnrichmentRepository
 from app.enrichment.schemas import (
+    CaseInputSnapshot,
     CreateEnrichmentRunRequest,
     EnrichmentErrorData,
     EnrichmentRunCreate,
@@ -92,10 +95,44 @@ class EnrichmentJobRunner:
         Returns:
             增强运行响应，包含 run_id 和最终状态。
         """
+        wall_start = time.perf_counter()
+        run_id, ms_create_run = await self._create_running_run_record(case_id)
+        loaded = await self._load_snapshot_for_run(
+            case_id,
+            run_id,
+            wall_start=wall_start,
+            ms_create_run=ms_create_run,
+        )
+        if isinstance(loaded, EnrichmentRunResponse):
+            return loaded
+        snapshot, ms_load_snapshot = loaded
+        t0 = time.perf_counter()
+        await self._execute_enrichment_swallowing_errors(
+            case_id, run_id, snapshot,
+        )
+        ms_execute = (time.perf_counter() - t0) * 1000
+        t0 = time.perf_counter()
+        response = await self._build_run_response(run_id)
+        ms_build_response = (time.perf_counter() - t0) * 1000
+        self._log_run_enrichment_timings(
+            case_id=case_id,
+            run_id=run_id,
+            wall_start=wall_start,
+            ms_create_run=ms_create_run,
+            ms_load_snapshot=ms_load_snapshot,
+            ms_execute=ms_execute,
+            ms_build_response=ms_build_response,
+            note="complete",
+        )
+        return response
+
+    async def _create_running_run_record(
+        self,
+        case_id: str,
+    ) -> tuple[str, float]:
+        """创建 status=running 的运行记录并返回 run_id 与耗时（毫秒）。"""
         run_id = str(uuid.uuid4())
         now = self._now_utc()
-
-        # 1. 创建运行记录（status=running）
         run_create = EnrichmentRunCreate(
             run_id=run_id,
             case_id=case_id,
@@ -105,34 +142,71 @@ class EnrichmentJobRunner:
             request_purpose=RequestPurpose.CASE_ENRICHMENT,
             case_updated_at=now,
         )
+        t0 = time.perf_counter()
         await self._repository.create_run(run_create)
+        return run_id, (time.perf_counter() - t0) * 1000
 
-        # 2. 加载案例快照
+    async def _load_snapshot_for_run(
+        self,
+        case_id: str,
+        run_id: str,
+        *,
+        wall_start: float,
+        ms_create_run: float,
+    ) -> EnrichmentRunResponse | tuple[CaseInputSnapshot, float]:
+        """加载案例快照；失败时记录耗时并返回已构造的运行响应。"""
+        t0 = time.perf_counter()
         try:
             snapshot = await self._case_provider.load_snapshot(case_id)
+            return snapshot, (time.perf_counter() - t0) * 1000
         except EnrichmentCaseNotFoundError as exc:
+            ms_load_snapshot = (time.perf_counter() - t0) * 1000
+            self._log_run_enrichment_timings(
+                case_id=case_id,
+                run_id=run_id,
+                wall_start=wall_start,
+                ms_create_run=ms_create_run,
+                ms_load_snapshot=ms_load_snapshot,
+                ms_execute=None,
+                ms_build_response=None,
+                note="snapshot_error",
+            )
             return await self._handle_snapshot_error(
                 run_id, case_id, exc,
                 error_code=ErrorCode.CASE_NOT_FOUND,
                 error_stage=ErrorStage.LOAD_CASE,
             )
         except EnrichmentStateConflictError as exc:
+            ms_load_snapshot = (time.perf_counter() - t0) * 1000
+            self._log_run_enrichment_timings(
+                case_id=case_id,
+                run_id=run_id,
+                wall_start=wall_start,
+                ms_create_run=ms_create_run,
+                ms_load_snapshot=ms_load_snapshot,
+                ms_execute=None,
+                ms_build_response=None,
+                note="snapshot_error",
+            )
             return await self._handle_snapshot_error(
                 run_id, case_id, exc,
                 error_code=ErrorCode.ENRICHMENT_STATE_CONFLICT,
                 error_stage=ErrorStage.LOAD_CASE,
             )
 
-        # 3. 委托 Service 执行增强
-        #    Service 内部已处理 LLM/校验/持久化失败（fail_run 或 mark_retryable）
+    async def _execute_enrichment_swallowing_errors(
+        self,
+        case_id: str,
+        run_id: str,
+        snapshot: CaseInputSnapshot,
+    ) -> None:
+        """委托 Service 执行增强；异常已在内部分支处理，不向调用方抛出。"""
         try:
             await self._service.execute_enrichment(snapshot, run_id)
         except LLMClientError as exc:
             if exc.retryable:
                 await self._mark_run_retryable(run_id, exc)
-            # 非 retryable 时 Service 已调用 fail_run，无需额外处理
         except OutputValidationException:
-            # Service 已调用 fail_run，无需额外处理
             pass
         except Exception as exc:
             logger.error(
@@ -144,9 +218,6 @@ class EnrichmentJobRunner:
                 error_stage=ErrorStage.PERSIST,
             )
             await self._repository.fail_run(run_id, error)
-
-        # 4. 返回运行响应
-        return await self._build_run_response(run_id)
 
     async def retry_run(self, run_id: str) -> EnrichmentRunResponse:
         """重试已失败的增强运行。
@@ -215,29 +286,46 @@ class EnrichmentJobRunner:
             await self._repository.fail_run(new_run_id, error)
             return await self._build_run_response(new_run_id)
 
-        try:
-            await self._service.execute_enrichment(snapshot, new_run_id)
-        except LLMClientError as exc:
-            if exc.retryable:
-                await self._mark_run_retryable(new_run_id, exc)
-        except OutputValidationException:
-            pass
-        except Exception as exc:
-            logger.error(
-                "重试执行异常: original_run_id=%s, new_run_id=%s, error=%s",
-                run_id, new_run_id, str(exc),
-            )
-            error = EnrichmentErrorData(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                error_stage=ErrorStage.PERSIST,
-            )
-            await self._repository.fail_run(new_run_id, error)
+        await self._execute_enrichment_swallowing_errors(
+            original_run.case_id, new_run_id, snapshot,
+        )
 
         return await self._build_run_response(new_run_id)
 
     # ------------------------------------------------------------------
     # 内部辅助方法
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _log_run_enrichment_timings(
+        *,
+        case_id: str,
+        run_id: str,
+        wall_start: float,
+        ms_create_run: float,
+        ms_load_snapshot: float,
+        ms_execute: Optional[float],
+        ms_build_response: Optional[float],
+        note: str,
+    ) -> None:
+        """记录单次增强运行各阶段耗时，便于定位慢请求。"""
+        total_ms = (time.perf_counter() - wall_start) * 1000
+        exec_part = (
+            f"execute_enrichment_ms={ms_execute:.1f}, build_response_ms={ms_build_response:.1f}, "
+            if ms_execute is not None and ms_build_response is not None
+            else ""
+        )
+        logger.info(
+            "增强运行分阶段耗时 [%s]: case_id=%s, run_id=%s, create_run_ms=%.1f, "
+            "load_snapshot_ms=%.1f, %stotal_ms=%.1f",
+            note,
+            case_id,
+            run_id,
+            ms_create_run,
+            ms_load_snapshot,
+            exec_part,
+            total_ms,
+        )
 
     async def _handle_snapshot_error(
         self,
