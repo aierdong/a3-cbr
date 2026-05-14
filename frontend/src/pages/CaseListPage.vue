@@ -24,6 +24,15 @@
 
     <template v-else-if="listPhase === 'empty'">
       <EmptyState :title="emptyStateTitle" :description="emptyStateDescription">
+        <template #action>
+          <router-link
+            :to="{ name: 'case-create' }"
+            class="btn-create-inline"
+            data-testid="case-create-empty-cta"
+          >
+            创建案例
+          </router-link>
+        </template>
       </EmptyState>
       <p v-if="lastPageMeta" class="page-meta-footer" data-testid="empty-page-meta">
         {{ emptyPageMetaLine }}

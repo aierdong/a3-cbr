@@ -37,3 +37,22 @@ export function listItemProblemPreview(row: CaseListRowApi): string {
   const v = row.problem_description_preview ?? row.problem_description ?? ''
   return typeof v === 'string' ? v : ''
 }
+
+/** 从列表行的 `context`（对象或 JSON 字符串）中取 `scene` 展示文案。 */
+export function listItemContextScene(row: CaseListRowApi): string {
+  const ctx = row.context
+  if (ctx == null) return ''
+  if (typeof ctx === 'string') {
+    try {
+      const o = JSON.parse(ctx) as { scene?: unknown }
+      return typeof o.scene === 'string' ? o.scene : ''
+    } catch {
+      return ''
+    }
+  }
+  if (typeof ctx === 'object' && 'scene' in ctx) {
+    const s = (ctx as { scene?: unknown }).scene
+    return typeof s === 'string' ? s : ''
+  }
+  return ''
+}

@@ -60,7 +60,7 @@ _ENRICHMENT_OUTPUT_SCHEMA_INSTRUCTION = """\
 输出必须是有效的 JSON 对象，严格包含以下字段：
 {
   "problem_summary": "string|null, 最大200字, 不足时null",
-  "solution_summary": "string|null, 最大200字, 不足时null",
+  "solution_summary": "string|null, 最大200字, 不足时null。多条方案必须用中文分号'；'分隔，禁止使用英文分号、句号等。例如：'推出晚市极速套餐精简菜单；部署KDS系统超时预警推送；平板实时控台'",
   "structured_suggestions": {
     "problem_type_suggestion": "string, 问题类型建议(必填)",
     "root_cause_category": "string, 根因类别建议(必填)",

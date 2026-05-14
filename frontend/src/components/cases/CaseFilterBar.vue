@@ -1,13 +1,23 @@
 <template>
   <section class="case-filter-bar" aria-label="案例列表筛选">
-    <div class="filter-grid">
+    <div class="filter-row">
       <label class="field">
-        <span class="label">品牌 ID</span>
-        <input v-model.trim="draft.brand_id" type="text" autocomplete="off" placeholder="brand_id" />
+        <span class="label">品牌</span>
+        <select v-model="brandSelectModel">
+          <option value="">全部</option>
+          <option v-for="b in DEMO_BRAND_OPTIONS" :key="b.brand_id" :value="b.brand_id">
+            {{ b.brand_name }}
+          </option>
+        </select>
       </label>
       <label class="field">
-        <span class="label">门店 ID</span>
-        <input v-model.trim="draft.store_id" type="text" autocomplete="off" placeholder="store_id" />
+        <span class="label">门店</span>
+        <select v-model="storeSelectModel">
+          <option value="">全部</option>
+          <option v-for="s in availableStores" :key="s.store_id" :value="s.store_id">
+            {{ s.store_name }}
+          </option>
+        </select>
       </label>
       <label class="field">
         <span class="label">问题类型</span>
@@ -27,7 +37,7 @@
           <option value="archived">归档</option>
         </select>
       </label>
-      <label class="field wide">
+      <label class="field field-tags">
         <span class="label">标签关键词（逗号分隔）</span>
         <input
           v-model.trim="draft.tags"
@@ -37,22 +47,10 @@
           title="在当前已加载结果中按标签或预览文本筛选；服务端标签筛选待契约扩展后接入"
         />
       </label>
-      <label class="field">
-        <span class="label">创建时间起（含）</span>
-        <input v-model="createdFromLocal" type="datetime-local" />
-      </label>
-      <label class="field">
-        <span class="label">创建时间止（含）</span>
-        <input v-model="createdToLocal" type="datetime-local" />
-      </label>
-      <label class="field checkbox-field">
-        <input v-model="draft.include_archived" type="checkbox" />
-        <span class="label inline">包含归档案例</span>
-      </label>
-    </div>
-    <div class="actions">
-      <button type="button" class="btn primary" data-testid="filter-submit" @click="submit">查询</button>
-      <button type="button" class="btn" data-testid="filter-reset" @click="reset">重置</button>
+      <div class="actions">
+        <button type="button" class="btn primary" data-testid="filter-submit" @click="submit">查询</button>
+        <button type="button" class="btn" data-testid="filter-reset" @click="reset">重置</button>
+      </div>
     </div>
   </section>
 </template>
@@ -60,6 +58,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import type { CaseListFilters } from '@/composables/useCases'
+import { DEMO_BRAND_OPTIONS, DEMO_STORE_ROWS, demoStoresForBrand } from '@/domain/caseFilterDemoStores'
 import { CASE_PROBLEM_TYPE_OPTIONS } from '@/domain/caseProblemType'
 
 const props = defineProps<{
@@ -124,6 +123,30 @@ const statusModel = computed({
   },
 })
 
+const availableStores = computed(() => [...demoStoresForBrand(draft.brand_id ?? '')])
+
+const brandSelectModel = computed({
+  get: () => draft.brand_id ?? '',
+  set: (v: string) => {
+    draft.brand_id = v
+    if (v && draft.store_id) {
+      const st = DEMO_STORE_ROWS.find((s) => s.store_id === draft.store_id)
+      if (!st || st.brand_id !== v) draft.store_id = ''
+    }
+  },
+})
+
+const storeSelectModel = computed({
+  get: () => draft.store_id ?? '',
+  set: (v: string) => {
+    draft.store_id = v
+    if (v) {
+      const st = DEMO_STORE_ROWS.find((s) => s.store_id === v)
+      if (st) draft.brand_id = st.brand_id
+    }
+  },
+})
+
 watch(
   () => props.modelValue,
   (v) => {
@@ -171,15 +194,22 @@ function reset(): void {
   border-radius: 6px;
 }
 
-.filter-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+.filter-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
   gap: 0.75rem 1rem;
-  align-items: end;
+  overflow-x: auto;
 }
 
-.field.wide {
-  grid-column: 1 / -1;
+.field {
+  flex: 0 0 auto;
+  min-width: 7.5rem;
+}
+
+.field.field-tags {
+  flex: 1 1 12rem;
+  min-width: 10rem;
 }
 
 .field.checkbox-field {
@@ -210,9 +240,11 @@ function reset(): void {
 }
 
 .actions {
-  margin-top: 1rem;
+  flex-shrink: 0;
   display: flex;
   gap: 0.5rem;
+  align-items: flex-end;
+  padding-bottom: 1px;
 }
 
 .btn {

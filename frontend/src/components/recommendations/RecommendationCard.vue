@@ -8,8 +8,7 @@
 
     <section class="section">
       <h5>案例引用</h5>
-      <p><strong>标题预览：</strong>{{ caseTitleLine(item) }}</p>
-      <p><strong>描述预览：</strong>{{ caseDescriptionLine(item) }}</p>
+      <p><strong>描述摘要：</strong>{{ caseDescriptionLine(item) }}</p>
       <p v-if="item.case_reference.brand_summary"><strong>品牌摘要：</strong>{{ item.case_reference.brand_summary }}</p>
       <p v-if="item.case_reference.store_summary"><strong>门店摘要：</strong>{{ item.case_reference.store_summary }}</p>
       <p v-if="item.case_reference.filter_summary"><strong>过滤摘要：</strong>{{ item.case_reference.filter_summary }}</p>
@@ -18,13 +17,23 @@
 
     <section class="section">
       <h5>核心步骤与效果</h5>
-      <p v-if="item.core_solution_steps" class="steps-text">{{ item.core_solution_steps }}</p>
+      <p class="cautions-block"><strong>推荐理由：</strong></p>
+      <p>{{ item.recommendation_reason ?? '—' }}</p>
+      <p class="cautions-block"><strong>解决步骤：</strong></p>
+      <ol v-if="coreSolutionStepsLine(item).length" class="solution">
+        <li v-for="(step, idx) in coreSolutionStepsLine(item)" :key="idx" class="steps-text">
+          {{ step.trim() }}
+        </li>
+      </ol>
       <p v-else class="muted">无核心步骤</p>
-      <p><strong>效果摘要：</strong>{{ item.outcome_summary ?? '—' }}</p>
-      <p v-if="item.structured_suggestions_summary">
-        <strong>结构化建议摘要：</strong>
-        <span class="mono">{{ formatJson(item.structured_suggestions_summary) }}</span>
-      </p>
+      <p class="top-space cautions-block"><strong>效果摘要：</strong></p>
+      <p>{{ item.outcome_summary ?? '—' }}</p>
+      <div v-if="item.cautions?.length" class="cautions-block">
+        <p><strong>注意事项：</strong></p>
+        <ul class="bullet-list">
+          <li v-for="(c, i) in item.cautions" :key="`caution-${i}`">{{ c }}</li>
+        </ul>
+      </div>
     </section>
 
     <section class="section">
@@ -43,36 +52,18 @@
         </li>
         <li><strong>业务参数分：</strong>{{ item.business_score != null ? formatScore(item.business_score) : '—' }}</li>
         <li><strong>最终聚合分：</strong>{{ formatScore(item.final_score) }}</li>
+        <li><strong>分值来源：</strong><span class="mono">{{ item.score_metadata.final_score_source }}</span></li>
+        <li v-if="effectiveWeightsLine(item)">
+          <strong>有效权重：</strong>
+          <span class="mono">{{ formatJson(effectiveWeightsLine(item)!) }}</span></li>
+        <li><strong>解释状态：</strong>{{ item.explanation_status }} <span v-if="explanationHint" class="hint">— {{ explanationHint }}</span></li>
+        <li v-if="runDegradedReason === 'explanation_fallback'">
+          <strong>运行级降级：</strong>
+          <span class="mono">explanation_fallback</span>
+          <span class="hint">（解释生成降级，展示可能为回退文案）</span>
+        </li>
       </ul>
-      <p class="muted small">
-        分值来源：<span class="mono">{{ item.score_metadata.final_score_source }}</span>
-      </p>
-      <p v-if="effectiveWeightsLine(item)" class="muted small">
-        有效权重：<span class="mono">{{ formatJson(effectiveWeightsLine(item)!) }}</span>
-      </p>
 
-      <p><strong>解释状态：</strong>{{ item.explanation_status }} <span v-if="explanationHint" class="hint">— {{ explanationHint }}</span></p>
-      <p v-if="runDegradedReason === 'explanation_fallback'" class="muted small">
-        运行级降级：<span class="mono">explanation_fallback</span>（解释生成降级，展示可能为回退文案）
-      </p>
-
-      <p><strong>推荐理由：</strong>{{ item.recommendation_reason ?? '—' }}</p>
-    </section>
-
-    <section class="section">
-      <h5>参考点 / 注意事项 / 来源</h5>
-      <ul v-if="item.reference_points?.length">
-        <li v-for="(p, i) in item.reference_points" :key="`rp-${i}`">{{ p }}</li>
-      </ul>
-      <p v-else class="muted">无可参考解决点</p>
-      <ul v-if="item.cautions?.length">
-        <li v-for="(c, i) in item.cautions" :key="`c-${i}`">{{ c }}</li>
-      </ul>
-      <p v-else class="muted">无注意事项</p>
-      <ul v-if="item.source_references?.length">
-        <li v-for="(s, i) in item.source_references" :key="`sr-${i}`">{{ s }}</li>
-      </ul>
-      <p v-else class="muted">无来源引用</p>
     </section>
 
     <section v-if="item.missing_fields.length" class="section warn" data-testid="card-missing">
@@ -111,26 +102,50 @@ function caseRefRecord(item: RecommendationItem): Record<string, unknown> {
   return item.case_reference as unknown as Record<string, unknown>
 }
 
-function caseTitleLine(item: RecommendationItem): string {
+function caseEnrichmentBlock(item: RecommendationItem): Record<string, unknown> | null {
   const r = caseRefRecord(item)
-  const tp = r.title_preview
-  if (typeof tp === 'string' && tp.trim()) return tp
-  const cid = r.case_id
-  if (typeof cid === 'string' && cid.trim()) return `案例 ${cid}`
-  return '—'
+  const cer = r.case_enrichment_results
+  if (cer && typeof cer === 'object' && !Array.isArray(cer)) {
+    return cer as Record<string, unknown>
+  }
+  return null
 }
 
 function caseDescriptionLine(item: RecommendationItem): string {
   const r = caseRefRecord(item)
   const dp = r.description_preview
   if (typeof dp === 'string' && dp.trim()) return dp
+  const en = caseEnrichmentBlock(item)
+  const ps = en?.problem_summary
+  if (typeof ps === 'string' && ps.trim()) return ps
   return '（暂无摘要预览，仅返回案例标识）'
+}
+
+function coreSolutionStepsLine(item: RecommendationItem): string[] {
+  const s = item.core_solution_steps
+  if (typeof s === 'string' && s.trim()) {
+    return s.split('；').filter(t => t.trim())
+  }
+  const en = caseEnrichmentBlock(item)
+  const ss = en?.solution_summary
+  if (typeof ss === 'string' && ss.trim()) {
+    return ss.split('；').filter(t => t.trim())
+  }
+  return []
 }
 
 function caseUpdatedAtLine(item: RecommendationItem): string {
   const r = caseRefRecord(item)
   const u = r.case_updated_at
-  if (typeof u === 'string' && u.trim()) return u
+  if (typeof u === 'string' && u.trim()) {
+    // Example input: "2026-05-14T07:42:02.467614+00:00"
+    // Desired output: "2026-05-14 07:42:02"
+    const match = u.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/)
+    if (match) {
+      return `${match[1]} ${match[2]}`
+    }
+    return u
+  }
   return '—'
 }
 
@@ -232,5 +247,30 @@ const explanationHint = computed(() => explanationHints[props.item.explanation_s
 .steps-text {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.subheading {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
+}
+
+.cautions-block {
+  margin-top: 8px;
+}
+
+.bullet-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.solution {
+  margin-left: 14px;
+}
+
+h5 {
+  background-color: rgba(135, 206, 235, 0.5);
+  min-height: 18px;
 }
 </style>

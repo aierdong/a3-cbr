@@ -242,8 +242,14 @@ class RecommendationCaseProvider:
             structured_suggestions = None
             missing_fields.append("structured_suggestions")
 
-        # 核心解决步骤：来自案例 solution_steps
-        if case_detail.solution_steps:
+        enrichment_solution_summary: str | None = None
+        if enrichment_result and enrichment_result.solution_summary:
+            enrichment_solution_summary = enrichment_result.solution_summary
+
+        # 核心解决步骤：优先增强 solution_summary，其次案例 solution_steps
+        if enrichment_solution_summary:
+            core_solution_steps = enrichment_solution_summary
+        elif case_detail.solution_steps:
             core_solution_steps = self._serialize_solution_steps(
                 case_detail.solution_steps
             )
@@ -271,6 +277,7 @@ class RecommendationCaseProvider:
             vector_similarity_score=float(similarity_score),
             problem_summary=problem_summary,
             problem_description=problem_description,
+            enrichment_solution_summary=enrichment_solution_summary,
             core_solution_steps=core_solution_steps,
             outcome_summary=outcome_summary,
             structured_suggestions=structured_suggestions,

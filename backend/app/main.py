@@ -59,55 +59,6 @@ vector_cleanup_service: VectorCleanupService | None = None
 feedback_cleanup_service: FeedbackCleanupBackgroundService | None = None
 
 
-def create_app() -> FastAPI:
-    """创建并配置 FastAPI 应用实例。"""
-    configure_app_logging()
-    app = FastAPI(
-        title="A3 案例管理系统",
-        description="提供 A3 案例的创建、编辑、详情、列表查询和删除能力",
-        version="0.1.0",
-    )
-
-    @app.middleware("http")
-    async def log_vector_index_get_wall_time(request: Request, call_next):
-        """记录 ``GET .../vector-index`` 的墙钟耗时（含依赖、commit、响应序列化）。"""
-        is_status_get = (
-            request.method == "GET"
-            and request.url.path.rstrip("/").endswith("/vector-index")
-        )
-        start = time.perf_counter() if is_status_get else 0.0
-        response = await call_next(request)
-        if is_status_get:
-            wall_ms = (time.perf_counter() - start) * 1000.0
-            logger.info(
-                "HTTP GET vector-index wall_ms=%.1f path=%s",
-                wall_ms,
-                request.url.path,
-            )
-        return response
-
-    # 注册案例路由
-    app.include_router(case_router)
-
-    # 注册增强路由
-    app.include_router(enrichment_router)
-
-    # 注册向量索引与搜索路由
-    app.include_router(vector_router)
-
-    # 注册检索推荐路由
-    app.include_router(retrieval_router)
-
-    # 推荐反馈 API
-    app.include_router(feedback_router)
-    app.include_router(feedback_admin_router)
-
-    return app
-
-
-app = create_app()
-
-
 @asynccontextmanager
 async def start_cleanup_service(app: FastAPI):
     """启动增强清理服务后台任务。
@@ -169,6 +120,66 @@ async def start_cleanup_service(app: FastAPI):
     if feedback_cleanup_service is not None:
         await feedback_cleanup_service.stop()
         logger.info("反馈悬空清理后台任务已停止")
+
+
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    """应用生命周期：先初始化推荐 HTTP 单例，再启动清理后台任务。"""
+    from app.core.retrieval_http_singletons import init_retrieval_http_singletons
+
+    init_retrieval_http_singletons()
+    async with start_cleanup_service(app):
+        yield
+
+
+def create_app() -> FastAPI:
+    """创建并配置 FastAPI 应用实例。"""
+    configure_app_logging()
+    app = FastAPI(
+        title="A3 案例管理系统",
+        description="提供 A3 案例的创建、编辑、详情、列表查询和删除能力",
+        version="0.1.0",
+        lifespan=_app_lifespan,
+    )
+
+    @app.middleware("http")
+    async def log_vector_index_get_wall_time(request: Request, call_next):
+        """记录 ``GET .../vector-index`` 的墙钟耗时（含依赖、commit、响应序列化）。"""
+        is_status_get = (
+            request.method == "GET"
+            and request.url.path.rstrip("/").endswith("/vector-index")
+        )
+        start = time.perf_counter() if is_status_get else 0.0
+        response = await call_next(request)
+        if is_status_get:
+            wall_ms = (time.perf_counter() - start) * 1000.0
+            logger.info(
+                "HTTP GET vector-index wall_ms=%.1f path=%s",
+                wall_ms,
+                request.url.path,
+            )
+        return response
+
+    # 注册案例路由
+    app.include_router(case_router)
+
+    # 注册增强路由
+    app.include_router(enrichment_router)
+
+    # 注册向量索引与搜索路由
+    app.include_router(vector_router)
+
+    # 注册检索推荐路由
+    app.include_router(retrieval_router)
+
+    # 推荐反馈 API
+    app.include_router(feedback_router)
+    app.include_router(feedback_admin_router)
+
+    return app
+
+
+app = create_app()
 
 
 @app.get("/health")

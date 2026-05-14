@@ -29,15 +29,10 @@ class CaseStatus(str, enum.Enum):
 class ProblemType(str, enum.Enum):
     """问题类型枚举（MVP 受控枚举）。"""
 
-    CUSTOMER_COMPLAINT = "customer_complaint"
     SERVICE_QUALITY = "service_quality"
     OPERATIONS = "operations"
-    ENVIRONMENT = "environment"
-    PRODUCT_QUALITY = "product_quality"
-    SAFETY_HYGIENE = "safety_hygiene"
     STAFF_TRAINING = "staff_training"
     EQUIPMENT_MAINTENANCE = "equipment_maintenance"
-    OTHER = "other"
 
 
 class OutcomeResult(str, enum.Enum):

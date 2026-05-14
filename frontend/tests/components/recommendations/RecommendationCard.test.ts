@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import RecommendationCard from '../../../src/components/recommendations/RecommendationCard.vue'
-import FeedbackControls from '../../../src/components/recommendations/FeedbackControls.vue'
 import type { RecommendationItem } from '../../../src/api/recommendations'
 
 function baseScoreMetadata(
@@ -86,6 +85,60 @@ describe('RecommendationCard', () => {
     item.score_metadata = baseScoreMetadata({ final_score_source: 'default_zero_not_aggregated' })
     const w = mount(RecommendationCard, { props: { item } })
     expect(w.html()).toContain('default_zero_not_aggregated')
+  })
+
+  it('无 description_preview 时应回退 case_enrichment_results.problem_summary', () => {
+    const item: RecommendationItem = {
+      ...baseItem(),
+      case_reference: {
+        case_id: 'c1',
+        case_enrichment_results: { problem_summary: '增强问题摘要' },
+      },
+    }
+    delete (item.case_reference as { description_preview?: string }).description_preview
+    const w = mount(RecommendationCard, { props: { item } })
+    expect(w.html()).toContain('增强问题摘要')
+  })
+
+  it('无 core_solution_steps 时应回退 case_enrichment_results.solution_summary', () => {
+    const item: RecommendationItem = {
+      ...baseItem(),
+      core_solution_steps: null,
+      case_reference: {
+        case_id: 'c1',
+        case_enrichment_results: { solution_summary: '增强方案摘要' },
+      },
+    }
+    const w = mount(RecommendationCard, { props: { item } })
+    expect(w.html()).toContain('增强方案摘要')
+  })
+
+  it('无 title_preview 时应以 description_preview 作为标题预览', () => {
+    const longDesc = '晚市高峰期出餐慢、等位严重、翻台低。烤炉超负荷,主菜等待超30分钟,前后场信息断层,催菜滞后。'
+    const item: RecommendationItem = {
+      ...baseItem(),
+      case_reference: {
+        case_id: 'case_x',
+        description_preview: longDesc,
+        case_updated_at: '2026-05-13T01:41:10.836693+00:00',
+        case_enrichment_results: { problem_summary: longDesc },
+      },
+    }
+    delete (item.case_reference as { title_preview?: string }).title_preview
+    const w = mount(RecommendationCard, { props: { item } })
+    expect(w.html()).toContain('晚市高峰期出餐慢')
+    expect(w.html()).not.toContain('案例 case_x')
+  })
+
+  it('注意事项应展示在效果摘要之后', () => {
+    const w = mount(RecommendationCard, { props: { item: baseItem() } })
+    const html = w.html()
+    const iEffect = html.indexOf('效果摘要')
+    const iCautionHeading = html.indexOf('注意事项')
+    const iCautionText = html.indexOf('注意 B')
+    expect(iEffect).toBeGreaterThan(-1)
+    expect(iCautionHeading).toBeGreaterThan(iEffect)
+    expect(iCautionText).toBeGreaterThan(iCautionHeading)
   })
 
   it('case_reference 仅含 case_id 时应展示回退标题', () => {

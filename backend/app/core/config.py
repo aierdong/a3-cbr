@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # 数据库配置
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/a3_cases"
     database_url_sync: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/a3_cases"
+    test_database_url: str = ""
 
     # 应用配置
     app_host: str = "0.0.0.0"

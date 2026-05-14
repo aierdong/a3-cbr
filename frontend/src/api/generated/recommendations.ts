@@ -91,12 +91,19 @@ export interface components {
             filters?: components["schemas"]["RecommendationFilters"];
             business_weights?: components["schemas"]["BusinessWeights"];
         };
-        /** @description 案例引用快照（对应后端 `RecommendationItemResponse.case_reference: dict`）。 相似案例检索成功路径常仅返回 `case_id`；详情完整时可包含标题/描述预览等字段。 */
+        /** @description 可消费增强结果字段投影（对应库表 case_enrichment_results 的摘要列）， 用于前端在 description_preview / core_solution_steps 缺省时的回显。 */
+        CaseEnrichmentSnapshot: {
+            problem_summary?: string | null;
+            solution_summary?: string | null;
+        };
+        /** @description 案例引用快照（对应后端 `RecommendationItemResponse.case_reference: dict`）。 相似案例检索成功路径常仅返回 `case_id`；详情完整时可包含标题/描述预览等字段。 `description_preview` 在无独立标题文案时，常与增强结果 `problem_summary` 或案例问题描述对齐。 */
         CaseReference: {
             /** @description 案例标识（最小引用时常仅返回此项）。 */
             case_id?: string;
             title_preview?: string;
+            /** @description 描述预览；优先来自增强 problem_summary，否则可为案例问题描述。 */
             description_preview?: string;
+            case_enrichment_results?: components["schemas"]["CaseEnrichmentSnapshot"];
             brand_summary?: string | null;
             store_summary?: string | null;
             filter_summary?: string | null;
@@ -131,7 +138,7 @@ export interface components {
             case_id: string;
             rank: number;
             case_reference: components["schemas"]["CaseReference"];
-            /** @description 核心解决步骤文本（后端为 Optional[str]，非字符串数组）。 */
+            /** @description 核心解决步骤展示文本（单字符串）。 成功路径下优先与 `case_enrichment_results.solution_summary` 对齐， 增强缺失时回退为案例 `solution_steps` 的序列化文本。 */
             core_solution_steps?: string | null;
             outcome_summary?: string | null;
             /** @description 结构化建议摘要（后端为 Optional[dict]）。 */

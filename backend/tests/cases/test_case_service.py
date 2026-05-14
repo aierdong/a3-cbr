@@ -717,6 +717,7 @@ class TestCaseServiceListCases:
         assert isinstance(result, PaginatedCaseListResponse)
         assert len(result.items) == 1
         assert result.items[0].case_id == "case_list_001"
+        assert result.items[0].context.scene == "测试场景"
 
     @pytest.mark.asyncio
     async def test_list_cases_excludes_ai_derived_fields(self):

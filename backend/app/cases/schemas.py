@@ -32,15 +32,10 @@ class OutcomeResult(str, Enum):
 class ProblemType(str, Enum):
     """问题类型枚举（MVP 受控枚举）。"""
 
-    CUSTOMER_COMPLAINT = "customer_complaint"
     SERVICE_QUALITY = "service_quality"
     OPERATIONS = "operations"
-    ENVIRONMENT = "environment"
-    PRODUCT_QUALITY = "product_quality"
-    SAFETY_HYGIENE = "safety_hygiene"
     STAFF_TRAINING = "staff_training"
     EQUIPMENT_MAINTENANCE = "equipment_maintenance"
-    OTHER = "other"
 
 
 class CaseStatus(str, Enum):
@@ -272,6 +267,7 @@ class CaseListItem(BaseModel):
     problem_description: str = Field(..., description="问题描述（摘要）")
     store_id: str = Field(..., description="关联门店 ID")
     problem_type: ProblemType = Field(..., description="问题类型")
+    context: ContextSchema = Field(..., description="场景上下文（含 scene，供列表场景列展示）")
     status: CaseStatus = Field(..., description="案例状态")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")

@@ -12,7 +12,7 @@
             :class="{ active: isCaseRoute }"
             data-nav="cases"
           >
-            案例管理
+            案例知识库
           </router-link>
         </li>
         <li>
@@ -42,7 +42,7 @@
           class="breadcrumb-back"
           data-testid="breadcrumb-to-cases"
         >
-          案例管理
+          案例知识库
         </router-link>
         <span class="breadcrumb-text">{{ breadcrumbText }}</span>
       </div>

@@ -132,6 +132,8 @@ export interface components {
             problem_description_preview: string;
             store_profile: components["schemas"]["StoreProfile"];
             problem_type: components["schemas"]["ProblemType"];
+            /** @description 与详情接口 `CaseDetailResponse.context` 结构一致的最小场景上下文； 列表用于展示 `scene` 等字段，不返回 root_cause、solution_steps、outcome 等全文。 */
+            context: components["schemas"]["Context"];
             status: components["schemas"]["CaseStatus"];
             /** Format: date-time */
             created_at: string;

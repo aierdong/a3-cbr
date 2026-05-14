@@ -55,9 +55,9 @@ describe('CaseListPage', () => {
     })
     await flushPromises()
 
-    const brandInput = w.find('.case-filter-bar .field input[type="text"]')
-    expect(brandInput.exists()).toBe(true)
-    await brandInput.setValue('brand-x')
+    const brandSelect = w.find('.case-filter-bar .field select')
+    expect(brandSelect.exists()).toBe(true)
+    await brandSelect.setValue('brand-001')
     await w.find('[data-testid="filter-submit"]').trigger('click')
     await flushPromises()
 

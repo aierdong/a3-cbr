@@ -636,8 +636,8 @@ class TestCaseProviderCandidateMapping:
         assert snapshot.outcome_summary is not None
 
     @pytest.mark.asyncio
-    async def test_core_solution_steps_from_case(self):
-        """core_solution_steps 从案例 solution_steps 字段派生。"""
+    async def test_core_solution_steps_prefers_enrichment_solution_summary(self):
+        """core_solution_steps 优先来自增强结果 solution_summary，否则来自案例步骤。"""
         if not _is_case_provider_enabled():
             pytest.skip("RecommendationCaseProvider 功能未启用")
 
@@ -660,8 +660,38 @@ class TestCaseProviderCandidateMapping:
         result = await provider.load_candidates(vector_candidates)
 
         snapshot = result[0]
-        # core_solution_steps 应该有值（来自案例）
+        assert snapshot.enrichment_solution_summary == "方案摘要 for case-001"
+        assert snapshot.core_solution_steps == "方案摘要 for case-001"
+
+    @pytest.mark.asyncio
+    async def test_core_solution_steps_falls_back_to_case_when_no_solution_summary(self):
+        """增强无 solution_summary 时 core_solution_steps 来自案例 solution_steps。"""
+        if not _is_case_provider_enabled():
+            pytest.skip("RecommendationCaseProvider 功能未启用")
+
+        mock_case_service = MagicMock()
+        mock_case_service.get_case = AsyncMock(
+            return_value=_make_case_detail_response("case-001")
+        )
+
+        enr = _make_enrichment_result("case-001")
+        enr.solution_summary = None
+
+        mock_enrichment_repo = MagicMock()
+        mock_enrichment_repo.get_current_result = AsyncMock(return_value=enr)
+
+        provider = RecommendationCaseProvider(
+            case_service=mock_case_service,
+            enrichment_repository=mock_enrichment_repo,
+        )
+
+        vector_candidates = _make_vector_candidates(["case-001"])
+        result = await provider.load_candidates(vector_candidates)
+
+        snapshot = result[0]
+        assert snapshot.enrichment_solution_summary is None
         assert snapshot.core_solution_steps is not None
+        assert "步骤1" in snapshot.core_solution_steps
 
     @pytest.mark.asyncio
     async def test_filter_fields_from_case_store(self):

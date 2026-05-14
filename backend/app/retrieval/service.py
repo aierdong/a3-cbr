@@ -396,7 +396,7 @@ class RecommendationService:
                     degraded_reason=degraded_reason,
                     latency_ms=self._compute_latency_ms(start_time),
                     explanation_result=explanation_result,
-                    scored_candidates=scored_candidates,
+                    snapshots=snapshots,
                 )
 
             except Exception as exc:
@@ -822,6 +822,24 @@ class RecommendationService:
             degraded_reason="no_candidates",
         )
 
+    @staticmethod
+    def _case_reference_from_snapshot(snapshot: CandidateSnapshot) -> dict[str, Any]:
+        """由候选快照组装 case_reference（含增强结果投影）。"""
+        ref: dict[str, Any] = {"case_id": snapshot.case_id}
+        if snapshot.problem_summary:
+            ref["description_preview"] = snapshot.problem_summary
+        elif snapshot.problem_description:
+            ref["description_preview"] = snapshot.problem_description
+        ref["case_updated_at"] = snapshot.case_updated_at.isoformat()
+        enrichment_block: dict[str, Any] = {}
+        if snapshot.problem_summary:
+            enrichment_block["problem_summary"] = snapshot.problem_summary
+        if snapshot.enrichment_solution_summary:
+            enrichment_block["solution_summary"] = snapshot.enrichment_solution_summary
+        if enrichment_block:
+            ref["case_enrichment_results"] = enrichment_block
+        return ref
+
     def _build_success_response(
         self,
         run_id: str,
@@ -832,16 +850,24 @@ class RecommendationService:
         degraded_reason: Optional[str],
         latency_ms: int,
         explanation_result: "ExplanationResult",
-        scored_candidates: list[ScoredCandidate],
+        snapshots: list[CandidateSnapshot],
     ) -> RecommendationResponse:
         """构建成功响应。"""
+        snapshot_map = {s.case_id: s for s in snapshots}
         # 构建推荐项响应
         item_responses = []
-        for i, item in enumerate(items):
-            # 获取对应候选的 snapshot 以构建 case_reference
-            case_ref = {
-                "case_id": item.case_id,
-            }
+        for item in items:
+            snapshot = snapshot_map.get(item.case_id)
+            if snapshot is not None:
+                case_ref = self._case_reference_from_snapshot(snapshot)
+                core_solution_steps = snapshot.core_solution_steps
+                outcome_summary = snapshot.outcome_summary
+                structured_suggestions_summary = snapshot.structured_suggestions
+            else:
+                case_ref = {"case_id": item.case_id}
+                core_solution_steps = None
+                outcome_summary = None
+                structured_suggestions_summary = None
 
             # 构建 score_metadata
             score_breakdown = item.score_breakdown or {}
@@ -870,9 +896,9 @@ class RecommendationService:
                 case_id=item.case_id,
                 rank=item.rank,
                 case_reference=case_ref,
-                core_solution_steps=None,
-                outcome_summary=None,
-                structured_suggestions_summary=None,
+                core_solution_steps=core_solution_steps,
+                outcome_summary=outcome_summary,
+                structured_suggestions_summary=structured_suggestions_summary,
                 missing_fields=item.missing_fields,
                 vector_similarity_score=item.vector_similarity_score,
                 semantic_similarity_score=item.semantic_similarity_score,

@@ -14,6 +14,7 @@ from app.cases.schemas import (
     CaseListItem,
     CaseListQuery,
     CaseStatus,
+    ContextSchema,
     CreateCaseRequest,
     DeleteCaseReason,
     DeleteCaseRequest,
@@ -334,6 +335,7 @@ class TestCaseListItem:
             problem_description="顾客投诉服务员态度",
             store_id="store_001",
             problem_type="customer_complaint",
+            context=ContextSchema(scene="堂食高峰期排队"),
             status="active",
             created_at=datetime.now(),
             updated_at=datetime.now(),
@@ -353,6 +355,7 @@ class TestCaseListItem:
         assert item.case_id == "case_001"
         assert item.problem_description == "顾客投诉服务员态度"
         assert item.store.store_name == "测试门店"
+        assert item.context.scene == "堂食高峰期排队"
 
     def test_excludes_derived_fields(self):
         """应排除派生字段。"""
@@ -385,6 +388,7 @@ class TestPaginatedCaseListResponse:
             problem_description="test",
             store_id="store_001",
             problem_type="customer_complaint",
+            context=ContextSchema(scene="场景"),
             status="active",
             created_at=datetime.now(),
             updated_at=datetime.now(),

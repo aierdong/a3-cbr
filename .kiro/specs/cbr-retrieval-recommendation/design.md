@@ -6,7 +6,7 @@
 
 本设计沿用 Python + FastAPI + PostgreSQL。推荐服务自持查询、候选、评分、运行记录与响应契约。`ScoreAggregator` 仅对已返回的候选集做归一化、重加权与加权求和，不向全量 SQL casebase 另行发起检索。推荐解释优先调用 `llm-case-enrichment` 的推荐文案；失败则降级为基于结构化候选信息的说明。
 
-**重要说明**: 当前仓库中 `backend/` 目录尚未建立，本设计文档作为**目标架构蓝图**，描述后端脚手架建立后的模块组织、接口契约和集成模式。
+**重要说明**：仓库已实现 `backend/` 与本规格主体代码；下文描述模块组织、接口契约与集成模式，并与**当前实现**对齐维护。若与代码冲突，以代码与 OpenAPI 契约为准。
 
 **前置依赖保证（第 1 次强调）**：依据 `.kiro/steering/roadmap.md`，本规格依赖 `a3-case-management`、`llm-case-enrichment`、`case-vector-indexing`，以及它们提供的基础设施（FastAPI 脚手架、统一配置、共享 LLM 客户端、数据库与错误处理）。**实施本规格时，上述能力视为已就绪**。设计评审与实施计划**不应把「前置未就绪」列为本规格的风险**。验收条目见 `Migration Strategy`。
 
@@ -48,7 +48,7 @@
 ### Allowed Dependencies
 
 - `a3-case-management` 的案例读取契约：`case_id`、基础 A3 字段、状态、过滤字段、解决步骤、效果结果、`updated_at`。
-- `llm-case-enrichment` 的 `RecommendationCopyService` 或等价 API，**仅**用于解释已排序候选，且不得改变排序；**不得**与本规格的查询 LLM normalizer 复用同一 LLM 客户端实现或工厂（保持 spec 边界独立；见下方 `NormalizerLLMClient` 快照）。
+- `llm-case-enrichment` 的 `RecommendationCopyService` 或等价 API，**仅**用于解释已排序候选，且不得改变排序；**不得**将查询 LLM normalizer 与推荐文案混用为**同一** `LLMClient` **实例**或**同一**配置命名空间（须保持 `NormalizerLLMConfig` 与 `EnrichmentLLMConfig` 隔离）。实现上二者均为共享 `LLMClient` **类**的独立进程单例，由 `backend/app/core/retrieval_http_singletons.py` 按各自配置分别构造（见「推荐路由 HTTP 客户端与 FastAPI 依赖注入」）。
 - `case-vector-indexing` 的 `VectorSearchService` 或 `/api/vector-search`：标准化用户问题、过滤条件、Top-K 问题语义候选、向量分值和索引元数据。
 - `recommendation-feedback` 的删除接口（DELETE `/api/recommendation-feedback`）：删除推荐运行或推荐项快照时，**必须**同步调用该接口清理关联反馈记录，确保不产生悬空引用。
 - Python 3.11+、FastAPI、Pydantic、SQLAlchemy、Alembic、pytest。
@@ -95,7 +95,7 @@
 
 #### Query Normalizer LLM 调用（使用共享 LLM 客户端）
 
-- **实现方式**：`QueryNormalizer` 通过 `backend/app/core/llm_client.py` 提供的共享 `LLMClient` 类执行 LLM 外呼。
+- **实现方式**：`QueryNormalizer` 通过 `backend/app/core/llm_client.py` 提供的共享 `LLMClient` 类执行 LLM 外呼；**HTTP 客户端实例**由 `retrieval_http_singletons` 中绑定 `NormalizerLLMConfig` 的进程单例提供，避免在每个 FastAPI 请求依赖中重复构造。
 - **配置独立**：仅绑定「LLM normalizer」配置段（`api_key` / `model_id` / `base_url` / timeout / retry 等），与 `llm-case-enrichment` 的文案 LLM、embedding、reranker 三套配置彼此独立。**多模型配置隔离基础设施由 `llm-case-enrichment` 规格建立**（详见该规格的「多模型配置隔离策略」章节），本规格复用该基础设施并使用 `NormalizerLLMConfig` 配置类。
 - **共享客户端职责**：HTTP 调用、重试逻辑、超时处理、错误映射（timeout/rate-limited/provider-error/invalid-response）等基础设施能力。
 - **本规格职责**：定义 LLM normalizer 的 prompt 模板、输入输出 schema、结果校验逻辑；单次外呼返回可被 Pydantic 校验的结构化结果，包含标准化检索文本与 `query_structured_suggestions`；失败语义对齐 Requirement `1.7` / Failure Mode Matrix 中 LLM normalizer 失败路径。
@@ -122,7 +122,7 @@
 
 ### Target Architecture Foundation
 
-**重要说明**: 当前仓库中 `backend/` 目录尚未建立，本设计文档作为**目标架构蓝图**，描述后端脚手架建立后的集成模式。
+**重要说明**：`backend/` 与 `app.retrieval` 已落地；本节描述目标集成模式，并与当前 FastAPI 装配方式一致。
 
 **前置依赖保证（第 2 次说明）**：实施本规格时，前置规格（`a3-case-management`、`llm-case-enrichment`、`case-vector-indexing`）**须已提供** `backend/app/cases`、`backend/app/enrichment`、`backend/app/vector_indexing`、统一配置、错误映射、数据库会话与迁移基础。本规格新增 `backend/app/retrieval`，仅经公开服务或 API 端口读取上游能力，**不得**直接改动上游表或内部状态。
 
@@ -162,8 +162,16 @@ flowchart TB
 - Selected pattern: 轻量分层 FastAPI 模块 + Ports/Adapters。领域服务对齐系统契约；`ScoreAggregator`、向量搜索、`NormalizerLLMClient`（仅用于查询规范化）、推荐文案、结构化局部评分、业务评分与 reranker 均经端口或独立适配层隔离。
 - Domain/feature boundaries: `RecommendationService` 承载端到端检索推荐；`VectorSearchPort` 只消费候选；`StructuredSimilarityScorer` 与 `BusinessScoreCalculator` 只产出评分明细；`RecommendationExplainer` 只产出解释，**不得**改动排序。
 - Existing patterns preserved: 沿用上游 FastAPI、Pydantic、SQLAlchemy/Alembic、统一错误响应、数据库会话与隐私日志策略。
-- New components rationale: 推荐须独立记录运行；自实现 `ScoreAggregator` 负责加权聚合；reranker 与查询规范化 LLM 与 enrichment 文案 LLM **不复用客户端**；业务参数分与结构化局部相似度须显式落库/落响应，并与「解释 vs 排序」职责分离。
-- Dependency direction（依赖方向）: 配置与契约靠内层；**`RecommendationService`** 编排 `QueryNormalizer`、`VectorSearchPort`、`RecommendationCaseProvider`、`StructuredSimilarityScorer`、`BusinessScoreCalculator`、`RerankerClient`、`ScoreAggregator`、`RecommendationExplainer`、`RecommendationRepository`；**`RetrievalRouter` 仅依赖 `RecommendationService`**。Ports、Aggregator、Repository 等均由 Service 注入或调用，**不是**「Repository 驱动 Service」的倒置分层。`retrieval` 可读 `cases`、`vector_indexing`、`enrichment` 的公开契约，**不得**反向修改其实现或持久化。
+- New components rationale: 推荐须独立记录运行；自实现 `ScoreAggregator` 负责加权聚合；reranker 与查询规范化 LLM 与 enrichment 文案 LLM **不复用同一客户端实例或同一配置段**（各为独立配置与独立 HTTP 单例；见下节）；业务参数分与结构化局部相似度须显式落库/落响应，并与「解释 vs 排序」职责分离。
+- Dependency direction（依赖方向）: 配置与契约靠内层；**`RecommendationService`** 编排 `QueryNormalizer`、`VectorSearchPort`、`RecommendationCaseProvider`、`StructuredSimilarityScorer`、`BusinessScoreCalculator`、`RerankerClient`、`ScoreAggregator`、`RecommendationExplainer`、`RecommendationRepository`；**`RetrievalRouter` 经 `Depends(get_recommendation_service)` 按请求构造 `RecommendationService`**（会话与仓储仍按请求绑定），**重型 HTTP 客户端（LLM / rerank 底层）为进程级单例**，不在每个请求内重复 `new AsyncOpenAI`。Ports、Aggregator、Repository 等均由 Service 注入或调用，**不是**「Repository 驱动 Service」的倒置分层。`retrieval` 可读 `cases`、`vector_indexing`、`enrichment` 的公开契约，**不得**反向修改其实现或持久化。
+
+#### 推荐路由 HTTP 客户端与 FastAPI 依赖注入（实现）
+
+- **背景**：若在 `get_recommendation_service` 内对每个请求同步 `new LLMClient(...)` / 新建 rerank 底层 `AsyncOpenAI`，则仅 **FastAPI 依赖注入阶段**即可耗时数秒（与后续 LLM `chat.completions` HTTP 无关）；日志上表现为 `get_recommendation_service timings_ms` 中 `normalizer_llm_client`、`reranker_client`、`enrichment_llm_explainer` 分段各约秒级。
+- **实现**：`backend/app/core/retrieval_http_singletons.py` 在应用 **lifespan 启动**时调用 `init_retrieval_http_singletons()`，按 `get_app_config()` 一次性构造：（1）绑定 `NormalizerLLMConfig` 的 `LLMClient`；（2）绑定 `EnrichmentLLMConfig` 的 `LLMClient`（供 `RecommendationCopyService` / 推荐文案链路）；（3）`app.core.llm_client.RerankerClient`（rerank HTTP 适配，与 `app.retrieval.reranker_client.RerankerClient` 外层包装区分）。启动日志可含 `retrieval_http_singletons_init_ms`。
+- **路由装配**：`router.get_recommendation_service` 从上述模块取单例注入 `QueryNormalizer` 与 `RecommendationCopyService`；`app.retrieval.reranker_client.RerankerClient` **每个请求仍 `new` 一层薄实例**，并通过可选参数 `_shared_inner` 注入共享底层 `AsyncOpenAI` 适配器，以保留 `last_latency_ms` 等 **按次调用** 语义并避免并发写同一包装实例字段。
+- **无 lifespan 场景**（部分单测）：首次进入依赖时调用 `ensure_retrieval_http_singletons_initialized()` 惰性补建单例。
+- **可观测性**：依赖内可对「单例已就绪后的纯装配」分段记 `get_recommendation_service timings_ms`（正常应为亚毫秒级）；与业务 LLM `elapsed_ms` 日志互补排障。
 
 ### Technology Stack
 
@@ -190,7 +198,8 @@ backend/
 │   ├── core/
 │   │   ├── config.py                         # 增加 retrieval、ScoreAggregator、LLM normalizer/reranker/embedding 独立配置、Top-K、超时、重试和隐私配置
 │   │   ├── errors.py                         # 增加 RETRIEVAL_*、RERANKER_*、AGGREGATION_* 错误码
-│   │   └── llm_client.py                     # 共享 LLM 客户端：HTTP 调用、重试、超时、错误映射等基础设施
+│   │   ├── llm_client.py                     # 共享 LLM 客户端：HTTP 调用、重试、超时、错误映射等基础设施
+│   │   └── retrieval_http_singletons.py      # 推荐路由专用：normalizer / enrichment LLM 与 rerank 底层 HTTP 进程单例；lifespan 初始化 + 可选惰性回退
 │   ├── db/
 │   │   └── base.py                           # 纳入 retrieval ORM metadata
 │   ├── cases/
@@ -208,7 +217,7 @@ backend/
 │       ├── structured_similarity.py          # structured_suggestions 局部相似度评分
 │       ├── business_scoring.py               # 业态、门店等级、时间等业务参数分
 │       ├── score_aggregator.py               # 自实现的归一化、重加权和加权聚合
-│       ├── reranker_client.py                # qwen3-reranker-8b 远程重排适配
+│       ├── reranker_client.py                # qwen3-reranker-8b 远程重排适配（可注入共享底层 HTTP 客户端）
 │       ├── explainer.py                      # 调用推荐文案并生成降级解释
 │       ├── repository.py                     # 推荐运行、候选分值和降级状态持久化
 │       ├── service.py                        # 端到端检索推荐流程编排
@@ -230,7 +239,8 @@ backend/
 
 ### Modified Files
 
-- `backend/app/main.py` — 仅追加注册 `RetrievalRouter`，不改写应用入口基础实现。
+- `backend/app/main.py` — 注册 `RetrievalRouter`；挂接 **应用 lifespan**（启动时 `init_retrieval_http_singletons()`，并与清理类后台任务生命周期嵌套，如 `start_cleanup_service`）；不改写与本规格无关的中间件与路由惯例。
+- `backend/app/core/retrieval_http_singletons.py` — 本规格新增：推荐链路 LLM / rerank HTTP 进程单例、启动初始化与测试用重置入口。
 - `backend/app/core/config.py` — 仅追加推荐检索开关、Top-K 上限、默认聚合权重，以及 `NormalizerLLMConfig` 和 `RerankerConfig` 配置类（复用 `llm-case-enrichment` 建立的多模型配置隔离基础设施）；不拥有共享配置基础设施。
 - `backend/app/core/errors.py` — 仅追加检索推荐、分值聚合和 reranker 错误码映射，不拥有 `ErrorMapper` 基础实现。
 - `backend/app/core/llm_client.py` — 共享 LLM 客户端基础设施，供 `llm-case-enrichment` 和本规格共同使用；本规格不拥有该文件，只定义调用契约和配置命名空间。
@@ -238,6 +248,7 @@ backend/
 - `backend/app/vector_indexing/search.py` — 不改变向量搜索契约，仅供 `VectorSearchPort` 调用。
 - `backend/app/enrichment/recommendation_copy.py` — 不改变文案契约，仅供 `RecommendationExplainer` 调用。
 - `backend/app/cases/service.py` — 不改变案例契约，仅供 `RecommendationCaseProvider` 读取详情。
+- `backend/app/retrieval/router.py` — `get_recommendation_service` 注入进程级 LLM 单例与 rerank 共享底层；可选 `get_recommendation_service timings_ms` 分段诊断日志。
 
 ## System Flows
 
@@ -1152,6 +1163,7 @@ class RerankerClient:
 ```
 
 - Default config: `api_key`、`model_id="qwen3-reranker-8b"`、`base_url`、timeout、max_candidates、privacy_acknowledged；仅用于 Reranker，不复用 LLM 或 Embedding 配置。
+- **实现补充**：底层与 `app.core.llm_client.RerankerClient`（rerank HTTP）对齐；进程内 **共享一条底层 HTTP 客户端单例**（由 `retrieval_http_singletons` 初始化），外层 `app.retrieval.reranker_client.RerankerClient` 可按请求实例化并注入 `_shared_inner`，以隔离 `last_latency_ms` 等按次状态。
 - Input: 标准化查询文本、可选 instruction、按向量候选顺序排列的候选问题画像文档和 `case_id`。
 - Output: one semantic relevance score per input candidate, normalized to `0..1` when provider supports it; raw score kept in metadata when needed.
 - Errors: `RERANKER_TIMEOUT`、`RERANKER_RATE_LIMITED`、`RERANKER_PROVIDER_ERROR`、`RERANKER_INVALID_RESPONSE`、`RERANKER_CONFIG_MISSING`。
@@ -1629,7 +1641,7 @@ flowchart TD
 1. **AddConfig**: 在 `backend/app/core/config.py` 中追加推荐检索配置（Top-K 上限、LLM normalizer/embedding/reranker 独立配置）
 2. **CreateTables**: 通过 Alembic 新增 `recommendation_runs` 和 `recommendation_item_snapshots` 表
 3. **CreateIndexes**: 创建运行查询和候选关联索引
-4. **RegisterRouter**: 在 `backend/app/main.py` 中注册 `RetrievalRouter`
+4. **RegisterRouter**: 在 `backend/app/main.py` 中注册 `RetrievalRouter`，并确保应用 lifespan 在启动阶段初始化 `retrieval_http_singletons`（避免每请求重复创建 `AsyncOpenAI`）
 5. **RunTests**: 执行单元测试、集成测试和契约测试
 
 ### 回滚策略

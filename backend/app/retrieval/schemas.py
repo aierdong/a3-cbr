@@ -169,6 +169,10 @@ class CandidateSnapshot(BaseModel):
     vector_similarity_score: float = Field(..., description="向量相似度分值")
     problem_summary: Optional[str] = Field(None, description="问题摘要")
     problem_description: Optional[str] = Field(None, description="问题描述")
+    enrichment_solution_summary: Optional[str] = Field(
+        None,
+        description="增强结果方案摘要（case_enrichment_results.solution_summary）",
+    )
     core_solution_steps: Optional[str] = Field(None, description="核心解决步骤")
     outcome_summary: Optional[str] = Field(None, description="效果摘要")
     structured_suggestions: Optional[dict[str, Any]] = Field(None, description="结构化建议")

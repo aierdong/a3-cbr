@@ -120,23 +120,27 @@ class RerankerClient:
         config: RerankerConfig,
         *,
         _async_client=None,
+        _shared_inner: SharedRerankerClient | None = None,
     ) -> None:
         """初始化 RerankerClient。
 
         Args:
             config: RerankerConfig 配置对象（由 llm-case-enrichment 定义）。
             _async_client: 可选注入 AsyncOpenAI（单测使用）。
+            _shared_inner: 可选注入进程级共享的 ``SharedRerankerClient``（生产推荐路由使用）。
         """
         self._config = config
         self._model_id = config.model_id
         self._timeout_ms = config.timeout_ms
         self._latency_ms: int | None = None
 
-        # 使用共享的 RerankerClient（基于 AsyncOpenAI）
-        self._client = SharedRerankerClient(
-            config=config,
-            _async_client=_async_client,
-        )
+        if _shared_inner is not None:
+            self._client = _shared_inner
+        else:
+            self._client = SharedRerankerClient(
+                config=config,
+                _async_client=_async_client,
+            )
 
     async def rerank(
         self,

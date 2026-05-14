@@ -31,12 +31,22 @@
         </label>
 
         <label class="field">
-          <span class="label">品牌 ID</span>
-          <input v-model.trim="localDraft.brand_id" type="text" autocomplete="off" />
+          <span class="label">品牌</span>
+          <select v-model="brandSelectModel">
+            <option value="">全部</option>
+            <option v-for="b in DEMO_BRAND_OPTIONS" :key="b.brand_id" :value="b.brand_id">
+              {{ b.brand_name }}
+            </option>
+          </select>
         </label>
         <label class="field">
-          <span class="label">门店 ID</span>
-          <input v-model.trim="localDraft.store_id" type="text" autocomplete="off" />
+          <span class="label">门店</span>
+          <select v-model="storeSelectModel">
+            <option value="">全部</option>
+            <option v-for="s in availableStores" :key="s.store_id" :value="s.store_id">
+              {{ s.store_name }}
+            </option>
+          </select>
         </label>
         <label class="field">
           <span class="label">问题类型</span>
@@ -56,29 +66,44 @@
             <option value="archived">归档</option>
           </select>
         </label>
-        <label class="field wide">
+        <label class="field">
           <span class="label">标签（逗号分隔）</span>
           <input v-model.trim="localDraft.tags" type="text" autocomplete="off" placeholder="例如：客诉, 卫生" />
         </label>
         <label class="field">
           <span class="label">业态</span>
-          <input v-model.trim="localDraft.business_type" type="text" autocomplete="off" />
+          <select v-model="localDraft.business_type">
+            <option value="">不限</option>
+            <option v-for="opt in BUSINESS_TYPE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
         </label>
         <label class="field">
           <span class="label">门店规模</span>
-          <input v-model.trim="localDraft.store_scale" type="text" autocomplete="off" />
+          <select v-model="localDraft.store_scale">
+            <option value="">不限</option>
+            <option v-for="opt in STORE_SCALE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
         </label>
         <label class="field">
           <span class="label">加盟类型</span>
-          <input v-model.trim="localDraft.franchise_type" type="text" autocomplete="off" />
+          <select v-model="localDraft.franchise_type">
+            <option value="">不限</option>
+            <option v-for="opt in FRANCHISE_TYPE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
         </label>
         <label class="field">
           <span class="label">城市</span>
-          <input v-model.trim="localDraft.city" type="text" autocomplete="off" />
+          <select v-model="localDraft.city">
+            <option value="">不限</option>
+            <option v-for="opt in CITY_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
         </label>
         <label class="field">
-          <span class="label">城市层级</span>
-          <input v-model.trim="localDraft.city_tier" type="text" autocomplete="off" />
+          <span class="label">城市规模</span>
+          <select v-model="localDraft.city_tier">
+            <option value="">不限</option>
+            <option v-for="opt in CITY_TIER_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
         </label>
         <label class="field">
           <span class="label">创建时间起</span>
@@ -100,10 +125,17 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import type { RecommendationSearchDraft } from '@/composables/useRecommendations'
 import { defaultRecommendationSearchDraft } from '@/composables/useRecommendations'
+import { DEMO_BRAND_OPTIONS, DEMO_STORE_ROWS, demoStoresForBrand } from '@/domain/caseFilterDemoStores'
 import { CASE_PROBLEM_TYPE_OPTIONS } from '@/domain/caseProblemType'
+
+const BUSINESS_TYPE_OPTIONS = ['火锅', '咖啡奶茶', '烘焙', '正餐', '小吃快餐'] as const
+const STORE_SCALE_OPTIONS = ['大型', '中型', '小型'] as const
+const FRANCHISE_TYPE_OPTIONS = ['直营', '加盟'] as const
+const CITY_OPTIONS = ['北京', '上海', '长沙'] as const
+const CITY_TIER_OPTIONS = ['一线', '二线', '三线'] as const
 
 const props = defineProps<{
   modelValue: RecommendationSearchDraft
@@ -119,6 +151,30 @@ const emit = defineEmits<{
 const localDraft = reactive<RecommendationSearchDraft>({
   ...defaultRecommendationSearchDraft(),
   ...props.modelValue,
+})
+
+const availableStores = computed(() => [...demoStoresForBrand(localDraft.brand_id ?? '')])
+
+const brandSelectModel = computed({
+  get: () => localDraft.brand_id ?? '',
+  set: (v: string) => {
+    localDraft.brand_id = v
+    if (v && localDraft.store_id) {
+      const st = DEMO_STORE_ROWS.find((s) => s.store_id === localDraft.store_id)
+      if (!st || st.brand_id !== v) localDraft.store_id = ''
+    }
+  },
+})
+
+const storeSelectModel = computed({
+  get: () => localDraft.store_id ?? '',
+  set: (v: string) => {
+    localDraft.store_id = v
+    if (v) {
+      const st = DEMO_STORE_ROWS.find((s) => s.store_id === v)
+      if (st) localDraft.brand_id = st.brand_id
+    }
+  },
 })
 
 watch(

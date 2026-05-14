@@ -17,6 +17,7 @@ from app.cases.schemas import (
     CaseListItem,
     CaseListQuery,
     CaseStatus as SchemaCaseStatus,
+    ContextSchema,
     CreateCaseRequest,
     DeleteCaseResponse,
     PaginatedCaseListResponse,
@@ -144,6 +145,7 @@ def _record_to_list_item(record: A3CaseRecord) -> CaseListItem:
         problem_type=SchemaProblemType(record.problem_type)
         if isinstance(record.problem_type, str)
         else record.problem_type,
+        context=ContextSchema.model_validate(record.context),
         status=SchemaCaseStatus(record.status)
         if isinstance(record.status, str)
         else record.status,

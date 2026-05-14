@@ -85,7 +85,7 @@ describe('createCaseApiService', () => {
     expect(asApiField.field).toBe('problem_description')
   })
 
-  it('CaseListItem 为列表项契约形状（含预览与门店档案）', () => {
+  it('CaseListItem 为列表项契约形状（含预览、门店档案与场景上下文）', () => {
     const row: CaseListItem = {
       case_id: 'c1',
       problem_description_preview: '预览…',
@@ -100,6 +100,7 @@ describe('createCaseApiService', () => {
         city: '上海',
         city_tier: 'tier1',
       },
+      context: { scene: '门店高峰期' },
       problem_type: 'other',
       status: 'draft',
       created_at: '2026-01-01T00:00:00Z',

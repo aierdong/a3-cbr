@@ -4,34 +4,30 @@
       <table class="case-table" data-testid="case-table">
         <thead>
           <tr>
-            <th>案例标识</th>
-            <th>问题描述预览</th>
+            <th>CASE_ID</th>
+            <th>问题描述</th>
             <th>品牌</th>
-            <th>门店</th>
             <th>问题类型</th>
-            <th>状态</th>
-            <th>标签</th>
+            <th>场景</th>
             <th>创建时间</th>
-            <th>更新时间</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="row in rows" :key="row.case_id">
-            <td class="mono">{{ row.case_id }}</td>
-            <td class="preview">{{ listItemProblemPreview(row) }}</td>
-            <td>{{ formatBrandCell(row) }}</td>
-            <td>{{ formatStoreCell(row) }}</td>
-            <td>{{ formatCaseProblemType(row.problem_type) }}</td>
-            <td>{{ formatStatus(row.status) }}</td>
-            <td>{{ formatTags(row) }}</td>
-            <td class="nowrap">{{ formatDt(row.created_at) }}</td>
-            <td class="nowrap">{{ formatDt(row.updated_at) }}</td>
-            <td>
-              <router-link class="link" :to="{ name: 'case-detail', params: { id: row.case_id } }">
-                详情
+            <td>{{ row.case_id }}</td>
+            <td class="preview-cell">
+              <router-link
+                class="preview-link"
+                :to="{ name: 'case-detail', params: { id: row.case_id } }"
+                :title="listItemProblemPreview(row) || '查看案例详情'"
+              >
+                {{ problemDescCellText(row) }}
               </router-link>
             </td>
+            <td class="brand">{{ formatBrandName(row) }}</td>
+            <td class="problem-type">{{ formatCaseProblemType(row.problem_type) }}</td>
+            <td class="scene">{{ formatScene(row) }}</td>
+            <td class="nowrap time">{{ formatDt(row.created_at) }}</td>
           </tr>
         </tbody>
       </table>
@@ -62,6 +58,7 @@ import { computed } from 'vue'
 import type { PaginatedCaseListResponse } from '@/api/cases'
 import ErrorNotice from '@/components/common/ErrorNotice.vue'
 import {
+  listItemContextScene,
   listItemProblemPreview,
   listItemStore,
   type CaseListRowApi,
@@ -106,31 +103,19 @@ const pageMetaLine = computed(() => {
   return `每页 ${m.limit} 条 · ${next} · 排序：${m.sort}`
 })
 
-const statusLabels: Record<string, string> = {
-  draft: '草稿',
-  active: '生效',
-  archived: '归档',
+function problemDescCellText(row: CaseListRow): string {
+  const t = listItemProblemPreview(row).trim()
+  return t || '（无摘要）'
 }
 
-function formatStatus(v: string): string {
-  return statusLabels[v] ?? v
-}
-
-function formatTags(row: CaseListRow): string {
-  if (row.tags?.length) return row.tags.join('、')
-  return '—'
-}
-
-function formatBrandCell(row: CaseListRow): string {
+function formatBrandName(row: CaseListRow): string {
   const s = listItemStore(row)
-  if (!s) return '—'
-  return `${s.brand_name} (${s.brand_id})`
+  return s?.brand_name?.trim() ? s.brand_name : '—'
 }
 
-function formatStoreCell(row: CaseListRow): string {
-  const s = listItemStore(row)
-  if (!s) return '—'
-  return `${s.store_name} (${s.store_id})`
+function formatScene(row: CaseListRow): string {
+  const s = listItemContextScene(row).trim()
+  return s || '—'
 }
 
 function formatDt(iso: string): string {
@@ -157,28 +142,60 @@ function formatDt(iso: string): string {
 }
 
 .case-table {
-  min-width: 960px;
+  min-width: 640px;
 }
 
-.mono {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-}
-
-.preview {
+.preview-cell {
   max-width: 280px;
-  white-space: nowrap;
+  vertical-align: top;
+}
+
+.preview-link {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
+  line-height: 1.35;
+  color: #1976d2;
+  text-decoration: none;
+  white-space: normal;
+}
+
+.preview-link:hover {
+  text-decoration: underline;
+}
+
+.brand {
+  width: 100px;
+  min-width: 100px;
+  max-width: 100px;
+}
+
+.problem-type {
+  width: 100px;
+  min-width: 100px;
+  max-width: 100px;
+}
+
+.scene {
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.time {
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
 }
 
 .nowrap {
   white-space: nowrap;
   font-size: 12px;
-}
-
-.link {
-  color: #1976d2;
 }
 
 .load-more-row {

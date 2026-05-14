@@ -14,6 +14,7 @@ Boundary: RetrievalRouter
 from __future__ import annotations
 
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,8 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cases.repository import CaseRepository
 from app.cases.service import CaseService
 from app.cases.validators import CaseValidator
-from app.core.llm_client import LLMClient
 from app.core.config import get_app_config
+from app.core.retrieval_http_singletons import (
+    ensure_retrieval_http_singletons_initialized,
+    get_singleton_enrichment_llm_client,
+    get_singleton_normalizer_llm_client,
+    get_singleton_shared_rerank_http_client,
+)
 from app.core.errors import (
     ErrorCode,
     ErrorResponse,
@@ -57,9 +63,12 @@ from app.vector_indexing.search import VectorSearchService
 
 logger = logging.getLogger(__name__)
 
+# 依赖注入阶段分段耗时：仅当总耗时超过该阈值（毫秒）时打 INFO，否则 DEBUG
+_RECOMMENDATION_DI_LOG_INFO_MS = 100.0
+
 router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
 
-
+# readability-exception: bulk-assignment
 def get_recommendation_service(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RecommendationService:
@@ -71,19 +80,26 @@ def get_recommendation_service(
     Returns:
         推荐服务实例。
     """
+    ensure_retrieval_http_singletons_initialized()
+    t0 = time.perf_counter()
+
+    t_cfg = time.perf_counter()
     config = get_app_config()
     retrieval_config = config.retrieval
+    cfg_ms = (time.perf_counter() - t_cfg) * 1000.0
 
-    # Repository
+    t_repo = time.perf_counter()
     repository = RecommendationRepository(session)
+    repo_ms = (time.perf_counter() - t_repo) * 1000.0
 
-    # QueryNormalizer
+    t_norm = time.perf_counter()
     normalizer = QueryNormalizer(
-        llm_client=LLMClient(config=config.normalizer_llm),
+        llm_client=get_singleton_normalizer_llm_client(),
         config=config.normalizer_llm,
     )
+    normalizer_ms = (time.perf_counter() - t_norm) * 1000.0
 
-    # VectorSearchPort
+    t_vec = time.perf_counter()
     composer = EmbeddingInputComposer()
     embedding_client = EmbeddingClient(config=config.embedding)
     vector_repo = VectorRepository(session)
@@ -93,8 +109,9 @@ def get_recommendation_service(
         repository=vector_repo,
     )
     vector_port = VectorSearchPort(search_service=search_service)
+    vector_ms = (time.perf_counter() - t_vec) * 1000.0
 
-    # Case + Enrichment providers
+    t_case = time.perf_counter()
     case_repository = CaseRepository(session)
     case_validator = CaseValidator()
     enrichment_repository = EnrichmentRepository(session)
@@ -105,30 +122,39 @@ def get_recommendation_service(
         case_service=case_service,
         enrichment_repository=enrichment_repository,
     )
+    case_ms = (time.perf_counter() - t_case) * 1000.0
 
-    # Scoring
+    t_score = time.perf_counter()
     structured_scorer = StructuredSimilarityScorer()
     business_scorer = BusinessScoreCalculator()
+    score_ms = (time.perf_counter() - t_score) * 1000.0
 
-    # Reranker
-    reranker = RerankerClient(config=config.reranker)
+    t_rerank = time.perf_counter()
+    reranker = RerankerClient(
+        config=config.reranker,
+        _shared_inner=get_singleton_shared_rerank_http_client(),
+    )
+    reranker_ms = (time.perf_counter() - t_rerank) * 1000.0
 
-    # ScoreAggregator
+    t_agg = time.perf_counter()
     aggregator = ScoreAggregator(
         default_weights=retrieval_config.default_score_weights,
     )
+    agg_ms = (time.perf_counter() - t_agg) * 1000.0
 
-    # RecommendationCopy + Explainer（llm-case-enrichment）
+    t_copy = time.perf_counter()
     recommendation_copy_service = RecommendationCopyService(
-        llm_client=LLMClient(config=config.enrichment_llm),
+        llm_client=get_singleton_enrichment_llm_client(),
         prompt_catalog=PromptCatalog(),
         validator=OutputValidator(),
         repository=enrichment_repository,
         config=config.enrichment_llm,
     )
     explainer = RecommendationExplainer(copy_service=recommendation_copy_service)
+    copy_explainer_ms = (time.perf_counter() - t_copy) * 1000.0
 
-    return RecommendationService(
+    t_wrap = time.perf_counter()
+    service = RecommendationService(
         repository=repository,
         normalizer=normalizer,
         vector_port=vector_port,
@@ -140,6 +166,34 @@ def get_recommendation_service(
         explainer=explainer,
         config=retrieval_config,
     )
+    wrap_ms = (time.perf_counter() - t_wrap) * 1000.0
+    total_ms = (time.perf_counter() - t0) * 1000.0
+
+    msg = (
+        "get_recommendation_service timings_ms total=%.1f cfg=%.1f repo=%.1f "
+        "normalizer_llm_client=%.1f vector_stack=%.1f case_stack=%.1f "
+        "scoring=%.1f reranker_client=%.1f aggregator=%.1f "
+        "enrichment_llm_explainer=%.1f service_wrap=%.1f"
+    )
+    args = (
+        total_ms,
+        cfg_ms,
+        repo_ms,
+        normalizer_ms,
+        vector_ms,
+        case_ms,
+        score_ms,
+        reranker_ms,
+        agg_ms,
+        copy_explainer_ms,
+        wrap_ms,
+    )
+    if total_ms >= _RECOMMENDATION_DI_LOG_INFO_MS:
+        logger.info(msg, *args)
+    else:
+        logger.debug(msg, *args)
+
+    return service
 
 
 @router.post(

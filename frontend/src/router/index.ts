@@ -18,25 +18,25 @@ const routes: RouteRecordRaw[] = [
       {
         path: '',
         name: 'case-list',
-        meta: { breadcrumb: '案例管理 / 案例列表' },
+        meta: { breadcrumb: '案例知识库 / 案例列表' },
         component: CaseListPage
       },
       {
         path: 'create',
         name: 'case-create',
-        meta: { breadcrumb: '案例管理 / 创建案例' },
+        meta: { breadcrumb: '案例知识库 / 创建案例' },
         component: CaseCreatePage
       },
       {
         path: ':id/edit',
         name: 'case-edit',
-        meta: { breadcrumb: '案例管理 / 编辑案例' },
+        meta: { breadcrumb: '案例知识库 / 编辑案例' },
         component: CaseEditPage
       },
       {
         path: ':id',
         name: 'case-detail',
-        meta: { breadcrumb: '案例管理 / 案例详情' },
+        meta: { breadcrumb: '案例知识库 / 案例详情' },
         component: CaseDetailPage
       }
     ]
