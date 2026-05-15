@@ -10,6 +10,7 @@ export default defineConfig({
     }
   },
   server: {
+    host: '0.0.0.0',  // 允许所有主机访问本地开发服务器
     port: 5173,
     proxy: {
       '/api': {
