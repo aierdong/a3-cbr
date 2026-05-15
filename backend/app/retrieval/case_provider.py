@@ -1,7 +1,7 @@
 """RecommendationCaseProvider：读取上游案例详情和 CaseEnrichmentResult，补齐推荐候选快照。
 
 根据向量候选读取上游案例详情和当前可消费的 CaseEnrichmentResult，
-补齐问题摘要、结构化建议、过滤字段摘要、核心解决步骤、效果结果和更新时间。
+补齐问题摘要、结构化建议、过滤字段摘要、案例核心解决步骤、效果结果和更新时间。
 
 对齐依赖契约快照：保证 not_found 与 forbidden 可区分，单候选失败仅标记缺失而非整批失败。
 对缺失摘要、结构化建议、解决步骤或效果信息的候选标记 missing_fields，不直接移除候选。
@@ -86,7 +86,7 @@ class RecommendationCaseProvider:
     职责：
     1. 根据向量候选的 case_id 列表读取上游案例详情
     2. 读取当前可消费的 CaseEnrichmentResult
-    3. 补齐问题摘要、结构化建议、过滤字段摘要、核心解决步骤、效果结果和更新时间
+    3. 补齐问题摘要、结构化建议、过滤字段摘要、案例解决步骤、效果结果和更新时间
     4. 对齐依赖契约快照：not_found 与 forbidden 可区分
     5. 单候选失败仅标记缺失字段而非整批失败
     6. 对缺失摘要、结构化建议、解决步骤或效果信息的候选标记 missing_fields
@@ -246,22 +246,24 @@ class RecommendationCaseProvider:
         if enrichment_result and enrichment_result.solution_summary:
             enrichment_solution_summary = enrichment_result.solution_summary
 
-        # 核心解决步骤：优先增强 solution_summary，其次案例 solution_steps
-        if enrichment_solution_summary:
-            core_solution_steps = enrichment_solution_summary
-        elif case_detail.solution_steps:
+        # 核心解决步骤：仅来自案例 solution_steps（与 enrichment.solution_summary 分栏存储）
+        if case_detail.solution_steps:
             core_solution_steps = self._serialize_solution_steps(
                 case_detail.solution_steps
             )
+            if not core_solution_steps:
+                core_solution_steps = None
+                missing_fields.append("core_solution_steps")
         else:
             core_solution_steps = None
             missing_fields.append("core_solution_steps")
 
-        # 效果结果：优先使用 enrichment.solution_summary，其次使用案例 outcome
-        if enrichment_result and enrichment_result.solution_summary:
-            outcome_summary = enrichment_result.solution_summary
-        elif case_detail.outcome:
+        # 效果结果：仅来自案例 outcome（与 enrichment.solution_summary 无关）
+        if case_detail.outcome:
             outcome_summary = self._serialize_outcome(case_detail.outcome)
+            if not outcome_summary:
+                outcome_summary = None
+                missing_fields.append("outcome_summary")
         else:
             outcome_summary = None
             missing_fields.append("outcome_summary")
@@ -369,14 +371,20 @@ class RecommendationCaseProvider:
 
         return "\n".join(parts)
 
+    _OUTCOME_RESULT_LABELS: dict[str, str] = {
+        "improved": "改善",
+        "no_change": "无明显改善",
+        "unknown": "未评估",
+    }
+
     def _serialize_outcome(self, outcome: Any) -> str:
-        """序列化效果结果为字符串。
+        """将案例 outcome（result + notes）合并为可读效果摘要。
 
         Args:
-            outcome: 效果结果对象。
+            outcome: 效果结果对象（OutcomeSchema、dict 或等价结构）。
 
         Returns:
-            序列化后的字符串。
+            例如「改善效果：改善。试用期离职率降低至 8% 以内…」；无法解析时返回空串。
         """
         if not outcome:
             return ""
@@ -386,14 +394,23 @@ class RecommendationCaseProvider:
         elif isinstance(outcome, dict):
             outcome_dict = outcome
         else:
-            return str(outcome)
+            return str(outcome).strip()
 
-        result = outcome_dict.get("result", "")
-        notes = outcome_dict.get("notes", "")
+        raw_result = outcome_dict.get("result", "")
+        if hasattr(raw_result, "value"):
+            raw_result = raw_result.value
+        result_key = str(raw_result).strip() if raw_result is not None else ""
+        result_label = self._OUTCOME_RESULT_LABELS.get(result_key, result_key)
+
+        notes = outcome_dict.get("notes") or ""
+        notes = str(notes).strip()
+
+        if not result_label and not notes:
+            return ""
 
         if notes:
-            return f"{result}: {notes}"
-        return result
+            return f"改善效果：{result_label}。{notes}"
+        return f"改善效果：{result_label}"
 
     async def _map_case_error(self, case_id: str, error: Exception) -> None:
         """映射案例服务异常。

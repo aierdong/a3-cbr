@@ -217,6 +217,7 @@ backend/
 │       ├── structured_similarity.py          # structured_suggestions 局部相似度评分
 │       ├── business_scoring.py               # 业态、门店等级、时间等业务参数分
 │       ├── score_aggregator.py               # 自实现的归一化、重加权和加权聚合
+│       ├── relevance_filter.py               # 聚合后基于 reranker 原始语义分的相关性过滤
 │       ├── reranker_client.py                # qwen3-reranker-8b 远程重排适配（可注入共享底层 HTTP 客户端）
 │       ├── explainer.py                      # 调用推荐文案并生成降级解释
 │       ├── repository.py                     # 推荐运行、候选分值和降级状态持久化
@@ -232,6 +233,7 @@ backend/
         ├── test_vector_port.py               # 向量候选映射、空结果和失败测试
         ├── test_reranker_client.py           # reranker 分值、错误和超时映射测试
         ├── test_score_aggregator.py          # 归一化、重加权、聚合和降级排序测试
+        ├── test_relevance_filter.py          # 相关性过滤（语义门槛、向量降级、空结果）
         ├── test_recommendation_service.py    # 端到端组装、缺失字段和运行记录测试
         ├── test_retrieval_api.py             # API 成功、空结果、降级和错误响应测试
         └── test_retrieval_privacy.py         # 日志和运行记录敏感信息边界测试
@@ -319,6 +321,13 @@ sequenceDiagram
                 else aggregation success
                     Aggregator-->>Service: ranked candidates (aggregation_status=succeeded)
                 end
+                Service->>Service: relevance filter (semantic floor or vector fallback)
+                alt no relevant after filter
+                    Service->>Repository: complete_run (status=empty, no_relevant_candidates)
+                    Repository-->>Service: run updated
+                    Service-->>Router: empty response + run_id
+                    Router-->>Client: HTTP 200, body status empty
+                else has relevant candidates
                 Service->>Explainer: explain ranked items
                 alt explainer failure
                     Explainer-->>Service: fallback explanation
@@ -330,6 +339,7 @@ sequenceDiagram
                 Repository-->>Service: run updated
                 Service-->>Router: recommendation response
                 Router-->>Client: HTTP 200, body status succeeded/degraded
+                end
             end
         end
     end
@@ -764,6 +774,18 @@ def recommend_similar_cases(self, request: RecommendationRequest) -> Recommendat
             ranked = self._fallback_ranking(snapshots, semantic_scores, business_scores)
             aggregation_status = 'failed'
         
+        # 相关性过滤：语义绝对/相对门槛，或 reranker 失败时向量降级
+        filter_result = filter_relevant_candidates(
+            ranked, reranker_ok=(reranker_status == 'succeeded'), top_k=normalized.top_k
+        )
+        if not filter_result.candidates:
+            self.repository.complete_run(
+                run_id=run_id,
+                result=RunResult(status='empty', degraded_reason='no_relevant_candidates', ...)
+            )
+            return RecommendationResponse(status='empty', items=[], degraded_reason='no_relevant_candidates')
+        ranked = filter_result.candidates
+
         # 解释失败触发文案降级，但不影响排序
         try:
             explained = self.explainer.explain(normalized, ranked)
@@ -1101,6 +1123,65 @@ class ScoreAggregator:
     3. `vector_similarity_score_norm`
     4. `case_updated_at`（新者优先；若缺失则使用 `created_at` 替代）
     5. `case_id` 字典序（保证稳定输出；若缺失则记录错误并按候选列表原始顺序保持稳定）
+
+#### RelevanceFilter
+
+
+| Field        | Detail                  |
+| ------------ | ----------------------- |
+| Intent       | 聚合排序后剔除低相关候选，避免误用 batch 相对 `final_score` 做主过滤 |
+| Requirements | 5.1, 6.5（可追溯、可解释的空结果与元数据） |
+
+
+**背景**：`ScoreAggregator` 在 batch 内 min-max 归一化后加权求和，`final_score` 在向量分挤占窄区间、语义分长尾极小时会失真（语义近零的候选仍可有 0.25~0.50 的 `final_score`）。**不得**用 `final_score`、`business_score` 或单独 `vector_similarity_score` 做主过滤。
+
+**主信号与时机**
+
+- **主信号**：reranker 原始分 `score_breakdown.semantic_similarity_score`（0~1）。
+- **时机**：`ScoreAggregator` 输出 `sorted_items` 之后、截取 Top-K 与调用 `RecommendationExplainer` 之前。
+- **落点**：`backend/app/retrieval/relevance_filter.py`；由 `RecommendationService` 编排，**不在** `ScoreAggregator` 内实现。
+
+**阈值（默认可经 `RetrievalConfig` 覆盖）**
+
+| 参数 | 默认 | 用途 |
+| ---- | ---- | ---- |
+| `semantic_absolute_floor` | `0.10` | 低于此视为无关 |
+| `semantic_relative_ratio` | `0.35` | 相对阈值：`top_semantic * ratio` |
+| `semantic_low_confidence` | `0.25` | 低可信分层（可选 UI 元数据） |
+| `vector_fallback_floor` | `0.75` | 仅 reranker 失败时退回向量分过滤 |
+
+**有效语义门槛**（`reranker_status=succeeded`）：
+
+```text
+sem_floor = max(semantic_absolute_floor, top_semantic * semantic_relative_ratio)
+保留条件: semantic_similarity_score >= sem_floor
+```
+
+**降级路径**（`reranker_status=failed` 或 `skipped`）：`vector_similarity_score >= vector_fallback_floor`。
+
+**Service Interface**
+
+```python
+@dataclass(frozen=True)
+class RelevanceFilterResult:
+    candidates: list[AggregatedCandidate]
+    applied_floor: float | None
+    filter_mode: str  # "semantic" | "vector_fallback"
+    input_count: int
+    output_count: int
+
+def filter_relevant_candidates(
+    sorted_items: Sequence[AggregatedCandidate],
+    *,
+    reranker_ok: bool,
+    top_k: int | None = None,
+    config: RelevanceFilterConfig | None = None,
+) -> RelevanceFilterResult: ...
+```
+
+- 幸存者**保持**聚合后的 `final_score` 排序，再按 `top_k` 截取。
+- 过滤后为空：`RunStatus.EMPTY`，`degraded_reason=no_relevant_candidates`，`vector_candidate_count` 仍反映向量召回数量（与 `no_candidates` 区分）。
+- 可选：`classify_semantic_confidence()` 将原始语义分分为 `irrelevant` / `low_confidence` / `confident` / `high_confidence`。
 
 #### RecommendationExplainer
 

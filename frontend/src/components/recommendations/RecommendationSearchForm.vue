@@ -17,6 +17,13 @@
           </p>
         </label>
 
+        <details
+          class="more-filters"
+          :open="moreFiltersOpen"
+          @toggle="onMoreFiltersToggle"
+        >
+          <summary class="more-filters-summary">更多检索条件</summary>
+          <div class="filter-grid more-filters-grid">
         <label class="field">
           <span class="label">Top-K</span>
           <input
@@ -113,6 +120,8 @@
           <span class="label">创建时间止</span>
           <input v-model="localDraft.created_at_to_local" type="datetime-local" />
         </label>
+          </div>
+        </details>
       </div>
 
       <div class="actions">
@@ -125,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { RecommendationSearchDraft } from '@/composables/useRecommendations'
 import { defaultRecommendationSearchDraft } from '@/composables/useRecommendations'
 import { DEMO_BRAND_OPTIONS, DEMO_STORE_ROWS, demoStoresForBrand } from '@/domain/caseFilterDemoStores'
@@ -152,6 +161,22 @@ const localDraft = reactive<RecommendationSearchDraft>({
   ...defaultRecommendationSearchDraft(),
   ...props.modelValue,
 })
+
+/** 更多筛选默认折叠；Top-K 报错时展开以便看到字段错误提示 */
+const moreFiltersOpen = ref(false)
+
+function onMoreFiltersToggle(e: Event): void {
+  const el = e.target as HTMLDetailsElement
+  if (!(el instanceof HTMLDetailsElement)) return
+  moreFiltersOpen.value = el.open
+}
+
+watch(
+  () => props.fieldErrors.top_k,
+  (msg) => {
+    if (msg) moreFiltersOpen.value = true
+  }
+)
 
 const availableStores = computed(() => [...demoStoresForBrand(localDraft.brand_id ?? '')])
 
@@ -209,6 +234,34 @@ function onSubmit(): void {
 
 .field.wide {
   grid-column: 1 / -1;
+}
+
+.more-filters {
+  grid-column: 1 / -1;
+  margin-top: 0.25rem;
+  border: 1px dashed #d0d0d0;
+  border-radius: 6px;
+  padding: 0.35rem 0.65rem 0.65rem;
+  background: #fafafa;
+}
+
+.more-filters-summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #424242;
+  padding: 0.35rem 0;
+  list-style-position: outside;
+  margin-left: 12px;
+}
+
+.more-filters-summary::-webkit-details-marker {
+  color: #616161;
+}
+
+.more-filters-grid {
+  margin-top: 0.5rem;
 }
 
 .label {

@@ -239,6 +239,11 @@ class RetrievalConfig(BaseModel):
     max_business_weight: float = 1.0
     contract_version: str = "mvp-1"
     reranker_model_id: str = "qwen3-reranker-8b"
+    # 相关性过滤阈值（聚合后、Top-K 前）
+    semantic_absolute_floor: float = 0.10
+    semantic_relative_ratio: float = 0.35
+    semantic_low_confidence: float = 0.25
+    vector_fallback_floor: float = 0.75
 
 
 class FeedbackConfig(BaseModel):

@@ -85,7 +85,7 @@ def _make_case_detail_response(case_id: str) -> CaseDetailResponse:
         case_id=case_id,
         problem_description=f"问题描述 for {case_id}",
         store_id="store-001",
-        problem_type=ProblemType.CUSTOMER_COMPLAINT,
+        problem_type=ProblemType.SERVICE_QUALITY,
         context={"scene": f"场景 for {case_id}"},
         root_cause=f"根因 for {case_id}",
         solution_steps=[
@@ -505,7 +505,7 @@ class TestCaseProviderMissingFields:
 
     @pytest.mark.asyncio
     async def test_missing_outcome_marks_field_missing(self):
-        """缺失 outcome 时标记为缺失（当 enrichment 也没有 solution_summary 时）。"""
+        """缺失 outcome 时标记 outcome_summary 为缺失。"""
         if not _is_case_provider_enabled():
             pytest.skip("RecommendationCaseProvider 功能未启用")
 
@@ -518,7 +518,6 @@ class TestCaseProviderMissingFields:
         mock_case_service.get_case = AsyncMock(return_value=detail)
 
         mock_enrichment_repo = MagicMock()
-        # 没有 enrichment，且没有 solution_summary
         mock_enrichment_repo.get_current_result = AsyncMock(return_value=None)
 
         provider = RecommendationCaseProvider(
@@ -530,7 +529,6 @@ class TestCaseProviderMissingFields:
         result = await provider.load_candidates(vector_candidates)
 
         snapshot = result[0]
-        # outcome 和 enrichment.solution_summary 都缺失时，outcome_summary 标记为缺失
         assert "outcome_summary" in snapshot.missing_fields
 
 
@@ -609,7 +607,7 @@ class TestCaseProviderCandidateMapping:
 
     @pytest.mark.asyncio
     async def test_outcome_summary_derived_from_outcome(self):
-        """outcome_summary 从案例 outcome 字段派生。"""
+        """outcome_summary 仅从案例 outcome 字段派生，不受 enrichment 影响。"""
         if not _is_case_provider_enabled():
             pytest.skip("RecommendationCaseProvider 功能未启用")
 
@@ -632,12 +630,13 @@ class TestCaseProviderCandidateMapping:
         result = await provider.load_candidates(vector_candidates)
 
         snapshot = result[0]
-        # outcome_summary 应该有值（来自 enrichment solution_summary 或案例 outcome）
-        assert snapshot.outcome_summary is not None
+        assert snapshot.outcome_summary == "改善效果：改善。效果备注 for case-001"
+        assert snapshot.enrichment_solution_summary == "方案摘要 for case-001"
+        assert snapshot.outcome_summary != snapshot.enrichment_solution_summary
 
     @pytest.mark.asyncio
-    async def test_core_solution_steps_prefers_enrichment_solution_summary(self):
-        """core_solution_steps 优先来自增强结果 solution_summary，否则来自案例步骤。"""
+    async def test_core_solution_steps_from_case_only_enrichment_separate(self):
+        """core_solution_steps 仅来自案例 solution_steps；增强方案摘要在 enrichment_solution_summary。"""
         if not _is_case_provider_enabled():
             pytest.skip("RecommendationCaseProvider 功能未启用")
 
@@ -661,11 +660,13 @@ class TestCaseProviderCandidateMapping:
 
         snapshot = result[0]
         assert snapshot.enrichment_solution_summary == "方案摘要 for case-001"
-        assert snapshot.core_solution_steps == "方案摘要 for case-001"
+        assert snapshot.core_solution_steps is not None
+        assert "步骤1 for case-001" in snapshot.core_solution_steps
+        assert snapshot.core_solution_steps != snapshot.enrichment_solution_summary
 
     @pytest.mark.asyncio
-    async def test_core_solution_steps_falls_back_to_case_when_no_solution_summary(self):
-        """增强无 solution_summary 时 core_solution_steps 来自案例 solution_steps。"""
+    async def test_core_solution_steps_from_case_when_no_enrichment_solution_summary(self):
+        """无增强 solution_summary 时 core_solution_steps 仍来自案例 solution_steps。"""
         if not _is_case_provider_enabled():
             pytest.skip("RecommendationCaseProvider 功能未启用")
 
@@ -720,5 +721,72 @@ class TestCaseProviderCandidateMapping:
         snapshot = result[0]
         assert snapshot.brand_id == "brand-001"
         assert snapshot.store_id == "store-001"
-        assert snapshot.problem_type == ProblemType.CUSTOMER_COMPLAINT
+        assert snapshot.problem_type == ProblemType.SERVICE_QUALITY.value
         assert snapshot.tags is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: outcome 序列化
+# ---------------------------------------------------------------------------
+
+
+class TestSerializeOutcome:
+    """_serialize_outcome 将 result 与 notes 合并为中文效果摘要。"""
+
+    def test_improved_with_notes(self):
+        provider = RecommendationCaseProvider(
+            case_service=MagicMock(),
+            enrichment_repository=MagicMock(),
+        )
+        outcome = {
+            "result": "improved",
+            "notes": (
+                "试用期离职率降低至 8% 以内，员工技能达标时间缩短 25%，"
+                "人力资源成本投入产出比显著提升。"
+            ),
+        }
+        expected = (
+            "改善效果：改善。试用期离职率降低至 8% 以内，员工技能达标时间缩短 25%，"
+            "人力资源成本投入产出比显著提升。"
+        )
+        assert provider._serialize_outcome(outcome) == expected
+
+    def test_no_change_without_notes(self):
+        provider = RecommendationCaseProvider(
+            case_service=MagicMock(),
+            enrichment_repository=MagicMock(),
+        )
+        assert provider._serialize_outcome({"result": "no_change", "notes": ""}) == (
+            "改善效果：无明显改善"
+        )
+
+    @pytest.mark.asyncio
+    async def test_outcome_missing_even_when_enrichment_has_solution_summary(self):
+        """仅有 enrichment.solution_summary、无案例 outcome 时 outcome_summary 仍缺失。"""
+        if not _is_case_provider_enabled():
+            pytest.skip("RecommendationCaseProvider 功能未启用")
+
+        detail = _make_case_detail_response("case-001")
+        detail.outcome = None
+
+        mock_case_service = MagicMock()
+        mock_case_service.get_case = AsyncMock(return_value=detail)
+
+        mock_enrichment_repo = MagicMock()
+        mock_enrichment_repo.get_current_result = AsyncMock(
+            return_value=_make_enrichment_result("case-001")
+        )
+
+        provider = RecommendationCaseProvider(
+            case_service=mock_case_service,
+            enrichment_repository=mock_enrichment_repo,
+        )
+
+        result = await provider.load_candidates(_make_vector_candidates(["case-001"]))
+        snapshot = result[0]
+
+        assert snapshot.outcome_summary is None
+        assert "outcome_summary" in snapshot.missing_fields
+        assert snapshot.enrichment_solution_summary == "方案摘要 for case-001"
+        assert snapshot.core_solution_steps is not None
+        assert "步骤1 for case-001" in snapshot.core_solution_steps

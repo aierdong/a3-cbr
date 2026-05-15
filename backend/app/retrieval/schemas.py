@@ -173,7 +173,9 @@ class CandidateSnapshot(BaseModel):
         None,
         description="增强结果方案摘要（case_enrichment_results.solution_summary）",
     )
-    core_solution_steps: Optional[str] = Field(None, description="核心解决步骤")
+    core_solution_steps: Optional[str] = Field(
+        None, description="核心解决步骤（仅来自案例 solution_steps 序列化）"
+    )
     outcome_summary: Optional[str] = Field(None, description="效果摘要")
     structured_suggestions: Optional[dict[str, Any]] = Field(None, description="结构化建议")
     brand_id: Optional[str] = Field(None, description="品牌标识")
@@ -411,7 +413,9 @@ class RecommendationItemResponse(BaseModel):
     case_reference: dict[str, Any] = Field(
         ..., description="案例引用信息"
     )
-    core_solution_steps: Optional[str] = Field(None, description="核心解决步骤")
+    core_solution_steps: Optional[str] = Field(
+        None, description="核心解决步骤（仅来自案例 solution_steps 序列化）"
+    )
     outcome_summary: Optional[str] = Field(None, description="效果摘要")
     structured_suggestions_summary: Optional[dict[str, Any]] = Field(
         None, description="结构化建议摘要"
@@ -502,6 +506,7 @@ class DegradedStatus(StrEnum):
     EXPLANATION_FALLBACK = "explanation_fallback"
     PARTIAL_CANDIDATE_DATA = "partial_candidate_data"
     NO_CANDIDATES = "no_candidates"
+    NO_RELEVANT_CANDIDATES = "no_relevant_candidates"
 
 
 class DegradedRankingResponse(BaseModel):

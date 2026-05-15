@@ -23,7 +23,9 @@ if TYPE_CHECKING:
     from app.enrichment.service import EnrichmentService
 
 from app.core.errors import ErrorCode, ErrorResponse, ErrorMapper, create_error_response
-from app.db.session import AsyncSession, get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
 from app.enrichment.schemas import (
     CaseEnrichmentResultResponse,
     CaseEnrichmentStatusResponse,
@@ -193,6 +195,7 @@ async def create_enrichment_run(
     job_runner: Annotated[
         "EnrichmentJobRunner", Depends(get_enrichment_job_runner)
     ],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EnrichmentRunResponse:
     """创建增强运行。
 
@@ -203,9 +206,15 @@ async def create_enrichment_run(
         case_id: 案例标识
         request: 创建增强运行请求
         job_runner: 增强运行生命周期管理器
+        session: 与 JobRunner 内仓储共享的请求级会话（见下述 commit）。
 
     Returns:
         EnrichmentRunResponse: 增强运行响应
+
+    Note:
+        在返回前显式 ``commit``：与 ``vector_indexing`` 路由一致，避免 FastAPI
+        对 ``yield`` 型 ``get_db`` 的 teardown 在响应送达后才提交事务，客户端
+        紧接着 GET ``/enrichment`` 时读不到刚写入的运行与派生结果。
     """
     t0 = time.perf_counter()
     response = await job_runner.run_enrichment(case_id, request)
@@ -217,6 +226,7 @@ async def create_enrichment_run(
         response.status,
         total_ms,
     )
+    await session.commit()
     return response
 
 
@@ -348,6 +358,7 @@ async def retry_enrichment_run(
     job_runner: Annotated[
         "EnrichmentJobRunner", Depends(get_enrichment_job_runner)
     ],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EnrichmentRunResponse:
     """重试增强运行。
 
@@ -357,15 +368,19 @@ async def retry_enrichment_run(
     Args:
         run_id: 待重试的运行标识
         job_runner: 增强运行生命周期管理器
+        session: 与 JobRunner 内仓储共享的请求级会话。
 
     Returns:
         EnrichmentRunResponse: 新运行的增强运行响应
 
     Raises:
         HTTPException: 运行不存在 (404) 或状态不允许重试 (409)
+
+    Note:
+        返回前显式 ``commit``，理由同 ``create_enrichment_run``。
     """
     try:
-        return await job_runner.retry_run(run_id)
+        response = await job_runner.retry_run(run_id)
     except ValueError as exc:
         error_msg = str(exc)
         if "不存在" in error_msg:
@@ -377,15 +392,16 @@ async def retry_enrichment_run(
                     message=error_msg,
                 ).model_dump(),
             )
-        else:
-            logger.warning(f"重试状态不允许: {run_id}, {error_msg}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=create_error_response(
-                    code=ErrorCode.ENRICHMENT_RETRY_NOT_ALLOWED,
-                    message=error_msg,
-                ).model_dump(),
-            )
+        logger.warning(f"重试状态不允许: {run_id}, {error_msg}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=create_error_response(
+                code=ErrorCode.ENRICHMENT_RETRY_NOT_ALLOWED,
+                message=error_msg,
+            ).model_dump(),
+        )
+    await session.commit()
+    return response
 
 
 @router.post(

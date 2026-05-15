@@ -31,6 +31,10 @@ from app.retrieval.explainer import (
     is_explainer_enabled,
 )
 from app.retrieval.query import QueryNormalizer
+from app.retrieval.relevance_filter import (
+    RelevanceFilterConfig,
+    filter_relevant_candidates,
+)
 from app.retrieval.repository import RecommendationRepository
 from app.retrieval.run_context import RecommendationRunContext
 from app.retrieval.schemas import (
@@ -87,6 +91,8 @@ DEGRADED_REASON_RERANKER_FAILED = "reranker_failed"
 DEGRADED_REASON_AGGREGATION_FAILED = "aggregation_failed"
 DEGRADED_REASON_RERANKER_AND_AGGREGATION_FAILED = "reranker_and_aggregation_failed"
 DEGRADED_REASON_EXPLANATION_FALLBACK = "explanation_fallback"
+DEGRADED_REASON_NO_CANDIDATES = "no_candidates"
+DEGRADED_REASON_NO_RELEVANT_CANDIDATES = "no_relevant_candidates"
 
 # 契约版本
 CONTRACT_VERSION = "mvp-1"
@@ -178,8 +184,9 @@ class RecommendationService:
         6. 业务参数评分
         7. 语义精排（reranker）
         8. 分值聚合
-        9. 推荐解释
-        10. 结果组装
+        9. 相关性过滤（语义绝对/相对门槛或向量降级）
+        10. 推荐解释
+        11. 结果组装
 
         Args:
             request: 检索请求（已通过 schema 校验）。
@@ -256,6 +263,7 @@ class RecommendationService:
                         applied_filters=normalized.applied_filters,
                         effective_weights=normalized.effective_weights,
                         latency_ms=self._compute_latency_ms(start_time),
+                        requested_top_k=normalized.top_k,
                     )
 
                 # 步骤 3: 候选快照读取
@@ -314,9 +322,12 @@ class RecommendationService:
                 )
 
                 try:
+                    # effective_weights 为业务因子权重（business_type 等），
+                    # 与 ScoreAggregator 的 vector/semantic/structured/business 无关；
+                    # 传错会导致无法匹配分项、全部走「未聚合」占位 final_score=0。
                     agg_result = self._aggregator.aggregate(
                         candidates=scored_candidates,
-                        weights=normalized.effective_weights,
+                        weights=None,
                     )
                     ranked = agg_result.candidates
                     aggregation_status = AggregationStatus.SUCCEEDED
@@ -345,14 +356,46 @@ class RecommendationService:
                             scored_candidates
                         )
 
-                # 步骤 8: 推荐解释
+                # 步骤 8: 相关性过滤（聚合排序后、Top-K 前）
+                relevance_config = RelevanceFilterConfig(
+                    semantic_absolute_floor=self._config.semantic_absolute_floor,
+                    semantic_relative_ratio=self._config.semantic_relative_ratio,
+                    semantic_low_confidence=self._config.semantic_low_confidence,
+                    vector_fallback_floor=self._config.vector_fallback_floor,
+                )
+                filter_result = filter_relevant_candidates(
+                    ranked or [],
+                    reranker_ok=reranker_status == RerankerStatus.SUCCEEDED,
+                    top_k=normalized.top_k,
+                    config=relevance_config,
+                )
+                ranked = filter_result.candidates
+
+                if not ranked:
+                    await self._complete_relevance_filtered_empty(
+                        context=context,
+                        vector_candidate_count=len(candidate_batch.candidates),
+                        reranker_status=reranker_status,
+                        aggregation_status=aggregation_status,
+                        latency_ms=self._compute_latency_ms(start_time),
+                    )
+                    return self._build_empty_response(
+                        run_id=run_id,
+                        applied_filters=normalized.applied_filters,
+                        effective_weights=normalized.effective_weights,
+                        latency_ms=self._compute_latency_ms(start_time),
+                        requested_top_k=normalized.top_k,
+                        degraded_reason=DEGRADED_REASON_NO_RELEVANT_CANDIDATES,
+                    )
+
+                # 步骤 9: 推荐解释
                 explanation_result = await self._generate_explanation(
                     normalized,
                     ranked,  # type: ignore[arg-type]
                     snapshots,
                 )
 
-                # 步骤 9: 组装推荐项
+                # 步骤 10: 组装推荐项
                 items = self._build_recommendation_items(
                     run_id,
                     ranked=ranked,  # type: ignore
@@ -362,7 +405,7 @@ class RecommendationService:
                     explanation_result=explanation_result,
                 )
 
-                # 步骤 10: 完成运行
+                # 步骤 11: 完成运行
                 degraded_reason = self._determine_degraded_reason(
                     reranker_status=reranker_status,
                     aggregation_status=aggregation_status,
@@ -495,7 +538,28 @@ class RecommendationService:
             vector_candidate_count=0,
             reranker_status=RerankerStatus.PENDING,
             aggregation_status=AggregationStatus.SKIPPED,
-            degraded_reason="no_candidates",
+            degraded_reason=DEGRADED_REASON_NO_CANDIDATES,
+            latency_ms=latency_ms,
+            items=[],
+        )
+        await context.complete(result)
+
+    async def _complete_relevance_filtered_empty(
+        self,
+        context: RecommendationRunContext,
+        vector_candidate_count: int,
+        reranker_status: RerankerStatus,
+        aggregation_status: AggregationStatus,
+        latency_ms: int,
+    ) -> None:
+        """完成「有向量候选但相关性过滤后为空」的运行。"""
+        result = RunResult(
+            status=RunStatus.EMPTY,
+            returned_count=0,
+            vector_candidate_count=vector_candidate_count,
+            reranker_status=reranker_status,
+            aggregation_status=aggregation_status,
+            degraded_reason=DEGRADED_REASON_NO_RELEVANT_CANDIDATES,
             latency_ms=latency_ms,
             items=[],
         )
@@ -805,6 +869,8 @@ class RecommendationService:
         applied_filters: dict[str, Any],
         effective_weights: dict[str, float],
         latency_ms: int,
+        requested_top_k: int = 0,
+        degraded_reason: str = DEGRADED_REASON_NO_CANDIDATES,
     ) -> RecommendationResponse:
         """构建空结果响应。"""
         return RecommendationResponse(
@@ -814,12 +880,12 @@ class RecommendationService:
             applied_filters=applied_filters,
             score_weights=effective_weights,
             query_metadata={
-                "requested_top_k": 0,
+                "requested_top_k": requested_top_k,
                 "returned_count": 0,
                 "latency_ms": latency_ms,
             },
             items=[],
-            degraded_reason="no_candidates",
+            degraded_reason=degraded_reason,
         )
 
     @staticmethod
@@ -977,10 +1043,3 @@ class RecommendationService:
     def _compute_latency_ms(start_time: float) -> int:
         """计算耗时（毫秒）。"""
         return int((time.monotonic() - start_time) * 1000)
-
-
-# =============================================================================
-# 常量定义（避免循环引用）
-# =============================================================================
-
-DEGRADED_REASON_NO_CANDIDATES = "no_candidates"
